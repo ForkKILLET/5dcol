@@ -6,5 +6,9 @@ export default defineConfig({
 
   html: {
     title: '5D Chess Online',
-  }
+  },
+
+  output: {
+    assetPrefix: './',
+  },
 })
