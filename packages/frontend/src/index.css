@@ -1,0 +1,13 @@
+@font-face {
+  font-family: "Latin Serif";
+  src: local("Times New Roman"), local("Georgia"), local("Palatino Linotype"), local("Liberation Serif");
+}
+
+body {
+  color: #fff;
+  font-family: "Latin Serif", serif;
+}
+
+p {
+  margin: 0;
+}

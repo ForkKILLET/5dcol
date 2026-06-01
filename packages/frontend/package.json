@@ -1,0 +1,20 @@
+{
+  "name": "@5dcol/frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rsbuild build",
+    "dev": "rsbuild dev --open",
+    "preview": "rsbuild preview"
+  },
+  "dependencies": {
+    "@5dcol/core": "workspace:*",
+    "vue": "^3.5.25"
+  },
+  "devDependencies": {
+    "@rsbuild/core": "^1.6.14",
+    "@rsbuild/plugin-vue": "^1.2.1",
+    "typescript": "^5.9.3"
+  }
+}
