@@ -66,6 +66,16 @@ export namespace Mat3 {
   }
 }
 
+export namespace Scalar {
+  export const lerp = (a: number, b: number, t: number): number => (
+    a + (b - a) * t
+  )
+
+  export const clamp = (x: number, min: number, max: number): number => (
+    Math.min(Math.max(x, min), max)
+  )
+}
+
 export type Vec2 = [number, number]
 
 export namespace Vec2 {
@@ -87,6 +97,11 @@ export namespace Vec2 {
   export const length = ([x, y]: Vec2): number =>
     Math.sqrt(x * x + y * y)
 
+  export const mix = ([x0, y0]: Vec2, [x1, y1]: Vec2, t: number): Vec2 => [
+    Scalar.lerp(x0, x1, t),
+    Scalar.lerp(y0, y1, t),
+  ]
+
   export namespace curry {
     export const add = (a: Vec2) => (b: Vec2) => Vec2.add(a, b)
 
@@ -94,6 +109,15 @@ export namespace Vec2 {
 
     export const scale = (s: number) => (v: Vec2) => Vec2.scale(v, s)
   }
+}
+
+export type Rect = [pos: Vec2, size: Vec2]
+
+export const Rect = {
+  clampPoint: ([x, y]: Vec2, [[rx, ry], [rw, rh]]: Rect): Vec2 => [
+    Scalar.clamp(x, rx, rx + rw),
+    Scalar.clamp(y, ry, ry + rh),
+  ],
 }
 
 /**
@@ -111,6 +135,17 @@ export namespace Color4 {
   export const fromRgba = (r: number, g: number, b: number, a: number): Color4 => [
     r / 255, g / 255, b / 255, a
   ]
+
+  export const mix = (a: Color4, b: Color4, t: number): Color4 => [
+    Scalar.lerp(a[0], b[0], t),
+    Scalar.lerp(a[1], b[1], t),
+    Scalar.lerp(a[2], b[2], t),
+    Scalar.lerp(a[3], b[3], t),
+  ]
+
+  export const withAlpha = (color: Color4, alpha: number): Color4 => (
+    [color[0], color[1], color[2], color[3] * alpha]
+  )
 }
 
 export interface Camera {

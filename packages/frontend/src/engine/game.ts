@@ -1,7 +1,7 @@
-import { Board, Color, Coord, Line, Multiverse, Piece, Pieces, type CoordSpacelike, type Move } from '@5dcol/core'
-import { Effect, clamp } from '@/utils'
-import { Color4, Mat3, Vec2, type Camera } from '@engine/basic'
-import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes } from '@engine/constant'
+import { Board, Player, Players as CorePlayers, Coord, Line, Multiverse, Piece, Pieces, type CoordSpacelike, type Move } from '@5dcol/core'
+import { Effect } from '@/utils'
+import { Color4, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
+import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { type Logger } from '@engine/logger'
 import { CircleRenderItem, type FillStyle, type Renderer, RenderItemType } from '@engine/renderer'
 import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
@@ -19,7 +19,6 @@ interface PointerState {
   dragExceeded: boolean
 }
 
-type Rect = [pos: Vec2, size: Vec2]
 interface VerticalBounds {
   top: number
   bottom: number
@@ -57,6 +56,21 @@ interface PendingMove {
     m: number
   }
 }
+interface MoveAnimation {
+  startedAt: number
+}
+interface BoardRenderOptions {
+  activeProgress?: number
+  temporaryProgress?: number
+  pos?: Vec2
+  animatedLayer?: boolean
+  basePlayer?: Player
+}
+interface PresentColors {
+  border: Color4
+  fill: Color4
+  label: Color4
+}
 
 type ScreenRect = [pos: Vec2, size: Vec2]
 
@@ -65,7 +79,7 @@ interface ButtonConfig {
   rect: ScreenRect
   disabled: boolean
   colorPreset: ButtonColorPreset
-  turnColor: Color
+  turnPlayer: Player
   text: string
   piece: Piece | null
   effect?: 'submit-pulse'
@@ -77,6 +91,24 @@ const PRESENT_LABEL_FONT = 'Georgia, Times New Roman, serif'
 const UI_FONT = 'Georgia, Times New Roman, serif'
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
+
+const isTextInputEvent = (e: KeyboardEvent): boolean => {
+  const target = e.target
+  if (! (target instanceof HTMLElement)) return false
+  return target.isContentEditable
+    || target.tagName === 'INPUT'
+    || target.tagName === 'TEXTAREA'
+    || target.tagName === 'SELECT'
+}
+
+const isSameLocatedSquare = (
+  square: SquareHover,
+  l: number,
+  m: number,
+  coord: CoordSpacelike,
+): boolean => (
+  square.l === l && square.m === m && Coord.isSameSpace(square.coord, coord)
+)
 
 class ButtonControl {
   private buttons: ButtonConfig[] = []
@@ -100,6 +132,7 @@ class ButtonControl {
   handleMouseDown(screen: Vec2): boolean {
     const button = this.getButtonAt(screen)
     if (! button) return false
+    if (button.disabled) return true
     this.pressedId = button.id
     return true
   }
@@ -157,9 +190,9 @@ class ButtonControl {
 
   private getButtonColors(button: ButtonConfig, hovered: boolean): ButtonColorPreset {
     if (button.disabled) {
-      return button.turnColor === Color.W ? ButtonColors.DisabledWhite : ButtonColors.DisabledBlack
+      return button.turnPlayer === Player.W ? ButtonColors.DisabledWhite : ButtonColors.DisabledBlack
     }
-    if (hovered) return this.getGreenColors(button.turnColor)
+    if (hovered) return this.getGreenColors(button.turnPlayer)
     return button.colorPreset
   }
 
@@ -167,8 +200,8 @@ class ButtonControl {
     if (button.effect !== 'submit-pulse' || button.disabled) return colors.fill
 
     const phase = (Math.sin(performance.now() / 650) + 1) / 2
-    const green = button.turnColor === Color.W ? ButtonColors.Green.fill : ButtonColors.GreenBlack.fill
-    const pulseColor = this.mixColor(colors.fill, green, 0.18 + phase * 0.32)
+    const green = button.turnPlayer === Player.W ? ButtonColors.Green.fill : ButtonColors.GreenBlack.fill
+    const pulseColor = Color4.mix(colors.fill, green, 0.18 + phase * 0.32)
 
     return {
       type: 'linear-gradient',
@@ -182,17 +215,8 @@ class ButtonControl {
     }
   }
 
-  private mixColor(a: Color4, b: Color4, t: number): Color4 {
-    return [
-      a[0] + (b[0] - a[0]) * t,
-      a[1] + (b[1] - a[1]) * t,
-      a[2] + (b[2] - a[2]) * t,
-      1,
-    ]
-  }
-
-  private getGreenColors(color: Color): ButtonColorPreset {
-    return color === Color.W ? ButtonColors.Green : ButtonColors.GreenBlack
+  private getGreenColors(player: Player): ButtonColorPreset {
+    return player === Player.W ? ButtonColors.Green : ButtonColors.GreenBlack
   }
 
   private renderContent(renderer: Renderer, button: ButtonConfig, [[x, y], [w, h]]: ScreenRect) {
@@ -271,7 +295,7 @@ export class Game {
 
   private multiverseCommitted = Multiverse.createInitial()
   private multiverse = this.multiverseCommitted
-  private color: Color = Color.W
+  private player: Player = Player.W
   private actionIndex = 0
   private readonly pointer: PointerState = {
     screen: [0, 0],
@@ -286,6 +310,7 @@ export class Game {
   private hoverSquare: SquareHover | null = null
   private hoverPiece: PieceSelection | null = null
   private pendingMove: PendingMove | null = null
+  private moveAnimation: MoveAnimation | null = null
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -358,7 +383,7 @@ export class Game {
 
     this.collect(Effect.useListener(window, 'contextmenu', e => {
       e.preventDefault()
-      this.deselectPiece()
+      if (! this.isMoveAnimating()) this.deselectPiece()
       this.clearPointerDrag()
     }))
 
@@ -404,9 +429,8 @@ export class Game {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
-    if (e.repeat || this.isTextInputEvent(e)) return
+    if (e.repeat || isTextInputEvent(e)) return
 
-    console.log(e.key)
     switch (e.key) {
       case 'z':
       case 'Backspace':
@@ -449,15 +473,6 @@ export class Game {
     }
   }
 
-  private isTextInputEvent(e: KeyboardEvent): boolean {
-    const target = e.target
-    if (! (target instanceof HTMLElement)) return false
-    return target.isContentEditable
-      || target.tagName === 'INPUT'
-      || target.tagName === 'TEXTAREA'
-      || target.tagName === 'SELECT'
-  }
-
   private panCameraByKeyboard(direction: Vec2) {
     const camera = this.renderer.getCamera()
     const step = CameraControl.KeyboardPanStep / camera.scale
@@ -473,7 +488,7 @@ export class Game {
     const camera = this.renderer.getCamera()
     const targetScale = this.cameraMotion?.targetScale ?? camera.scale
     this.setCameraMotion({
-      targetScale: clamp(
+      targetScale: Scalar.clamp(
         targetScale + step,
         CameraControl.ZoomMin,
         CameraControl.ZoomMax,
@@ -559,6 +574,13 @@ export class Game {
   }
 
   private updateInteraction() {
+    if (this.isMoveAnimating()) {
+      this.hoverSquare = null
+      this.hoverPiece = null
+      this.buttonControl.set(this.getToolbarButtons())
+      return
+    }
+
     const hit = this.getActiveBoardSquareAtScreen(this.pointer.screen)
     this.hoverSquare = hit ? { l: hit.l, m: hit.m, coord: hit.coord } : null
     this.hoverPiece = this.selectedPiece || this.pendingMove || ! hit ? null : this.getPieceSelectionFromHit(hit)
@@ -575,9 +597,9 @@ export class Game {
       ? {
           id: 'deselect-piece',
           rect: [[leftX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
-          disabled: false,
+          disabled: this.isMoveAnimating(),
           colorPreset: ButtonColors.Board,
-          turnColor: this.color,
+          turnPlayer: this.player,
           text: 'Deselect',
           piece: this.selectedPiece.piece,
           onClick: () => {
@@ -589,7 +611,7 @@ export class Game {
           rect: [[leftX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
           disabled: this.pendingMove === null,
           colorPreset: ButtonColors.Yellow,
-          turnColor: this.color,
+          turnPlayer: this.player,
           text: 'Undo Move',
           piece: null,
           onClick: () => {
@@ -602,9 +624,9 @@ export class Game {
       {
         id: 'submit-moves',
         rect: [[rightX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
-        disabled: ! this.canSubmitMoves(),
+        disabled: ! this.canSubmitMoves() || this.isMoveAnimating(),
         colorPreset: ButtonColors.White,
-        turnColor: this.color,
+        turnPlayer: this.player,
         text: 'Submit Moves',
         piece: null,
         effect: 'submit-pulse',
@@ -616,6 +638,7 @@ export class Game {
   }
 
   private handleBoardClick(screen: Vec2) {
+    if (this.isMoveAnimating()) return
     if (this.tryCreateMoveAt(screen)) return
     this.selectPieceAt(screen)
   }
@@ -633,21 +656,21 @@ export class Game {
     const hit = this.getActiveBoardSquareAtScreen(screen)
     if (! hit) return false
     if (hit.l !== this.selectedPiece.l || hit.m !== this.selectedPiece.m) return false
-    if (! this.selectedPiece.targets.some(target => this.isSameSquare(target, hit.coord))) return false
+    if (! this.selectedPiece.targets.some(target => Coord.isSameSpace(target, hit.coord))) return false
 
     const move: Move = {
       from: {
         ...this.selectedPiece.from,
         l: this.selectedPiece.l,
-        t: this.getTurnFromBoardIndex(this.selectedPiece.m, this.color),
+        t: Coord.turn(this.selectedPiece.m, this.player),
       },
       to: {
         ...hit.coord,
         l: hit.l,
-        t: this.getTurnFromBoardIndex(hit.m, this.color),
+        t: Coord.turn(hit.m, this.player),
       },
     }
-    this.multiverse = Multiverse.applyMove(move, this.color, this.multiverseCommitted)
+    this.multiverse = Multiverse.applyMove(move, this.player, this.multiverseCommitted)
     this.pendingMove = {
       move,
       from: {
@@ -659,8 +682,8 @@ export class Game {
         m: hit.m + 1,
       },
     }
+    this.moveAnimation = { startedAt: performance.now() }
     this.selectedPiece = null
-    this.focusBoard(this.pendingMove.created.l, this.pendingMove.created.m)
     return true
   }
 
@@ -668,16 +691,19 @@ export class Game {
     if (! this.pendingMove) return
     this.multiverse = this.multiverseCommitted
     this.pendingMove = null
+    this.moveAnimation = null
     this.deselectPiece()
   }
 
   private submitMoves() {
+    if (this.isMoveAnimating()) return
     if (! this.canSubmitMoves()) return
 
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
+    this.moveAnimation = null
     this.deselectPiece()
-    this.color = this.getOpponentColor(this.color)
+    this.player = CorePlayers.opponent(this.player)
     this.actionIndex += 1
   }
 
@@ -689,21 +715,31 @@ export class Game {
     return this.pendingMove !== null && this.hasMovedEveryPresentBoard()
   }
 
+  private isMoveAnimating(): boolean {
+    return this.getMoveAnimationProgress() < 1
+  }
+
+  private getMoveAnimationProgress(): number {
+    if (! this.moveAnimation) return 1
+    return Scalar.clamp(
+      (performance.now() - this.moveAnimation.startedAt) / Animations.MoveAnimationDuration,
+      0,
+      1,
+    )
+  }
+
+  private getMoveAnimationEase(): number {
+    const t = this.getMoveAnimationProgress()
+    return t * t * (3 - 2 * t)
+  }
+
   private hasMovedEveryPresentBoard(): boolean {
-    const present = Multiverse.getPresent(this.multiverseCommitted, this.color)
+    const present = Multiverse.getPresent(this.multiverseCommitted, this.player)
     if (! present || ! this.pendingMove) return false
     return present.lines.every(l => (
       this.pendingMove?.from.l === l
       && this.pendingMove.from.m === present.m
     ))
-  }
-
-  private getTurnFromBoardIndex(m: number, color: Color): number {
-    return (m - color) / 2
-  }
-
-  private getOpponentColor(color: Color): Color {
-    return color === Color.W ? Color.B : Color.W
   }
 
   private getPieceSelectionAtScreen(screen: Vec2): PieceSelection | null {
@@ -716,16 +752,19 @@ export class Game {
     l: number
     m: number
     board: Board
+    previousBoard: Board | null
     coord: CoordSpacelike
   }): PieceSelection | null {
     const piece = Board.getPiece(hit.coord, hit.board)
-    if (Pieces.getColor(piece) !== this.color) return null
+    if (Pieces.getPlayer(piece) !== this.player) return null
 
     return {
       l: hit.l,
       m: hit.m,
       from: hit.coord,
-      targets: Board.getMoveTargets2D(hit.board, hit.coord),
+      targets: Board.getMoveTargets2D(hit.board, hit.coord, {
+        previousBoard: hit.previousBoard,
+      }),
       piece,
     }
   }
@@ -734,6 +773,7 @@ export class Game {
     l: number
     m: number
     board: Board
+    previousBoard: Board | null
     coord: CoordSpacelike
   } | null {
     const world = this.renderer.screenToWorld(screen)
@@ -755,7 +795,7 @@ export class Game {
       const coord = { x, y }
       if (! Coord.isInBoard(coord)) continue
 
-      return { l, m, board, coord }
+      return { l, m, board, previousBoard: line.boards[m - 1] ?? null, coord }
     }
 
     return null
@@ -860,9 +900,17 @@ export class Game {
 
   private renderMultiverse() {
     this.renderTimelineTiles()
-    this.renderPresent()
+    if (this.pendingMove && this.isMoveAnimating()) {
+      this.renderMultiversePendingAnimation(this.pendingMove, this.getMoveAnimationEase())
+      return
+    }
 
-    for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
+    this.renderPresent(this.multiverse, this.getPresentDisplayColor())
+    this.renderMultiverseStatic(this.multiverse)
+  }
+
+  private renderMultiverseStatic(multiverse: Multiverse) {
+    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
       this.renderLine(line, l)
       const activeM = Line.getLatestBoardIndex(line)
@@ -874,21 +922,94 @@ export class Game {
     }
   }
 
+  private renderMultiversePendingAnimation(pendingMove: PendingMove, progress: number) {
+    this.followPendingBoardAnimation(pendingMove, progress)
+    this.renderPresentAnimated(progress)
+
+    for (const [l, lineCommitted] of Multiverse.getLineEntries(this.multiverseCommitted)) {
+      if (! lineCommitted) continue
+
+      const linePreview = Multiverse.getLine(this.multiverse, l)
+      const isPendingLine = l === pendingMove.from.l
+      const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
+
+      if (isPendingLine && activeCommitted !== null) {
+        this.renderLineDuringMoveAnimation(lineCommitted, l, progress)
+      }
+      else {
+        this.renderLine(linePreview ?? lineCommitted, l)
+      }
+
+      for (const [m, board] of Line.getBoardEntries(lineCommitted)) {
+        if (! board) continue
+        if (isPendingLine && m === pendingMove.from.m) {
+          this.renderBoard(board, l, m, true, false, {
+            activeProgress: 1 - progress,
+          })
+          continue
+        }
+        this.renderBoard(board, l, m, m === activeCommitted, false)
+      }
+
+      if (! isPendingLine || ! linePreview) continue
+
+      const createdBoard = linePreview.boards[pendingMove.created.m]
+      if (! createdBoard) continue
+
+      const [fromPos] = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+      const [toPos] = this.getBoardRect(pendingMove.created.l, pendingMove.created.m)
+      this.renderBoard(createdBoard, pendingMove.created.l, pendingMove.created.m, true, true, {
+        activeProgress: 1,
+        temporaryProgress: progress,
+        pos: Vec2.mix(fromPos, toPos, progress),
+        animatedLayer: true,
+        basePlayer: pendingMove.from.m % 2,
+      })
+    }
+  }
+
+  private followPendingBoardAnimation(pendingMove: PendingMove, progress: number) {
+    const [fromPos, fromSize] = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+    const [toPos] = this.getBoardRect(pendingMove.created.l, pendingMove.created.m)
+    const center = Vec2.add(Vec2.mix(fromPos, toPos, progress), Vec2.scale(fromSize, 0.5))
+    this.renderer.setCamera({
+      center: this.clampCameraCenterToValidViewportIfAvailable(center),
+    })
+    this.syncCameraMotion()
+  }
+
   private isTemporaryBoard(l: number, m: number): boolean {
     return this.pendingMove !== null
       && this.pendingMove.created.l === l
       && this.pendingMove.created.m === m
   }
 
-  private renderPresent() {
-    const present = Multiverse.getPresent(this.multiverse, this.color)
+  private renderPresent(multiverse: Multiverse, displayPlayer: Player) {
+    const present = Multiverse.getPresent(multiverse, this.player)
     if (! present) return
 
-    const [[x, y], [w, h]] = this.getPresentViewportRect(present.m)
+    this.renderPresentAt(present.m, this.getPresentColors(displayPlayer))
+  }
+
+  private renderPresentAnimated(progress: number) {
+    const presentCommitted = Multiverse.getPresent(this.multiverseCommitted, this.player)
+    const presentPreview = Multiverse.getPresent(this.multiverse, this.player)
+    if (! presentCommitted || ! presentPreview) return
+
+    const [[x0]] = this.getPresentViewportRect(presentCommitted.m)
+    const [[x1]] = this.getPresentViewportRect(presentPreview.m)
+    const colors = this.mixPresentColors(
+      this.getPresentColors(this.player),
+      this.getPresentColors(CorePlayers.opponent(this.player)),
+      progress,
+    )
+    this.renderPresentAt(presentPreview.m, colors, x0 + (x1 - x0) * progress)
+  }
+
+  private renderPresentAt(m: number, colors: PresentColors, xOverride?: number) {
+    const [[xRect, y], [w, h]] = this.getPresentViewportRect(m)
+    const x = xOverride ?? xRect
     const boardBounds = this.getBoardVerticalBounds()
-    const borderColor = this.color === Color.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack
-    const fillColor = this.color === Color.W ? Colors.BoardBorderWhiteDim : Colors.BoardBorderBlackDim
-    const labelColor = this.color === Color.W ? Colors.BoardBorderBlack : Colors.BoardBorderWhite
 
     this.renderer.submit({
       type: RenderItemType.Quad,
@@ -901,25 +1022,45 @@ export class Game {
       type: RenderItemType.Quad,
       layer: RenderLayer.Present,
       mat: Mat3.transform([x + Sizes.PresentBorder, y], [w - Sizes.PresentBorder * 2, h]),
-      color: fillColor,
+      color: colors.fill,
     })
 
     this.renderer.submit({
       type: RenderItemType.Quad,
       layer: RenderLayer.Present,
       mat: Mat3.transform([x, y], [Sizes.PresentBorder, h]),
-      color: borderColor,
+      color: colors.border,
     })
     this.renderer.submit({
       type: RenderItemType.Quad,
       layer: RenderLayer.Present,
       mat: Mat3.transform([x + w - Sizes.PresentBorder, y], [Sizes.PresentBorder, h]),
-      color: borderColor,
+      color: colors.border,
     })
 
     if (boardBounds) {
-      this.renderPresentLabels(x, w, boardBounds, labelColor)
+      this.renderPresentLabels(x, w, boardBounds, colors.label)
       this.renderPresentIcons(x, w, boardBounds)
+    }
+  }
+
+  private getPresentDisplayColor(): Player {
+    return this.pendingMove ? CorePlayers.opponent(this.player) : this.player
+  }
+
+  private getPresentColors(player: Player): PresentColors {
+    return {
+      border: player === Player.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack,
+      fill: player === Player.W ? Colors.BoardBorderWhiteDim : Colors.BoardBorderBlackDim,
+      label: player === Player.W ? Colors.BoardBorderBlack : Colors.BoardBorderWhite,
+    }
+  }
+
+  private mixPresentColors(a: PresentColors, b: PresentColors, progress: number): PresentColors {
+    return {
+      border: Color4.mix(a.border, b.border, progress),
+      fill: Color4.mix(a.fill, b.fill, progress),
+      label: Color4.mix(a.label, b.label, progress),
     }
   }
 
@@ -994,7 +1135,7 @@ export class Game {
     this.renderPresentIcon(
       iconCenter,
       -1,
-      this.canCreateTimelinePresent(Color.B),
+      this.canCreateTimelinePresent(Player.B),
       Colors.BoardBorderBlack,
       Colors.BoardBorderBlackDim,
     )
@@ -1003,14 +1144,14 @@ export class Game {
     this.renderPresentIcon(
       lowerIconCenter,
       1,
-      this.canCreateTimelinePresent(Color.W),
+      this.canCreateTimelinePresent(Player.W),
       Colors.BoardBorderWhite,
       Colors.BoardBorderWhiteDim,
     )
   }
 
-  private canCreateTimelinePresent(color: Color): boolean {
-    return Multiverse.canCreateActiveTimeline(this.multiverse, color)
+  private canCreateTimelinePresent(player: Player): boolean {
+    return Multiverse.canCreateActiveTimeline(this.multiverse, player)
   }
 
   private renderPresentIcon(
@@ -1099,7 +1240,6 @@ export class Game {
       ...attrs,
     })
   }
-
 
   private renderTimelineTiles() {
     const tileViewport = this.getTimeTileViewportRect()
@@ -1213,7 +1353,7 @@ export class Game {
   private clampCameraCenterToViewport(center: Vec2, viewport: Rect): Vec2 {
     const screenWorldSize = this.getScreenWorldSize()
     const [[x, y], [w, h]] = viewport
-    return this.clampPointToRect(center, [
+    return Rect.clampPoint(center, [
       [
         x + screenWorldSize[0] / 2,
         y + screenWorldSize[1] / 2,
@@ -1225,21 +1365,33 @@ export class Game {
     ])
   }
 
-  private clampPointToRect([x, y]: Vec2, [[rx, ry], [rw, rh]]: Rect): Vec2 {
-    return [
-      clamp(x, rx, rx + rw),
-      clamp(y, ry, ry + rh),
-    ]
-  }
-
   private renderLine(line: Line, l: number) {
     const points = this.getLinePoints(line, l)
+    this.renderLinePolygon(points, 1)
+  }
+
+  private renderLineDuringMoveAnimation(line: Line, l: number, progress: number) {
+    const latestM = Line.getLatestBoardIndex(line)
+    if (latestM === null) {
+      this.renderLine(line, l)
+      return
+    }
+
+    this.renderLineStableSegment(line, l, latestM)
+    const oldSegment = this.getLineLatestSegmentGeometry(latestM, l)
+    this.renderLinePolygon(oldSegment.points, 1 - progress)
+    this.renderLineBridgeSegment(latestM, l, oldSegment.xStart, progress)
+    this.renderLinePolygon(this.getMovingLineLatestSegmentPoints(latestM, l, progress), progress)
+  }
+
+  private renderLinePolygon(points: Vec2[], alpha: number) {
+    if (alpha <= 0) return
 
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.LineShadow,
       points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
-      fill: Colors.Shadow,
+      fill: Color4.withAlpha(Colors.Shadow, alpha),
       stroke: null,
     })
 
@@ -1247,10 +1399,74 @@ export class Game {
       type: RenderItemType.Polygon,
       layer: RenderLayer.Line,
       points,
-      fill: Colors.Purple,
-      stroke: Colors.PurpleDark,
+      fill: Color4.withAlpha(Colors.Purple, alpha),
+      stroke: Color4.withAlpha(Colors.PurpleDark, alpha),
       strokeWidth: Sizes.LineBorderWidth,
     })
+  }
+
+  private renderLineStableSegment(line: Line, l: number, latestM: number) {
+    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const xStart = line.mStart * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
+    const xEnd = latestM * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
+    if (xEnd <= xStart) return
+
+    this.renderLinePolygon([
+      [xStart, y - Sizes.LineArrowRadius],
+      [xEnd, y - Sizes.LineArrowRadius],
+      [xEnd, y + Sizes.LineArrowRadius],
+      [xStart, y + Sizes.LineArrowRadius],
+    ], 1)
+  }
+
+  private renderLineBridgeSegment(m: number, l: number, xStart: number, progress: number) {
+    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const xEndFrom = m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
+    const xEndTo = (m + 1) * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
+    const xEnd = Scalar.lerp(xEndFrom, xEndTo, progress)
+    if (xEnd <= xStart) return
+
+    this.renderLinePolygon([
+      [xStart, y - Sizes.LineArrowRadius],
+      [xEnd, y - Sizes.LineArrowRadius],
+      [xEnd, y + Sizes.LineArrowRadius],
+      [xStart, y + Sizes.LineArrowRadius],
+    ], progress)
+  }
+
+  private getLineLatestSegmentGeometry(m: number, l: number): { points: Vec2[], xStart: number } {
+    const points = this.getLineLatestSegmentPoints(m, l)
+    return {
+      points,
+      xStart: points[0][0],
+    }
+  }
+
+  private getMovingLineLatestSegmentPoints(m: number, l: number, progress: number): Vec2[] {
+    const from = this.getLineLatestSegmentPoints(m, l)
+    const to = this.getLineLatestSegmentPoints(m + 1, l)
+    return from.map((point, index) => Vec2.mix(point, to[index], progress))
+  }
+
+  private getLineLatestSegmentPoints(m: number, l: number, xStartOverride?: number): Vec2[] {
+    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const yUp = y - Sizes.LineArrowRadius
+    const yDown = y + Sizes.LineArrowRadius
+    const xStart = xStartOverride ?? m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
+    const xTip = (m + 1) * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.LineArrowShaftLength
+    const yUpTip = yUp - Sizes.LineArrowTip
+    const yDownTip = yDown + Sizes.LineArrowTip
+    const xEnd = xTip + Sizes.LineArrowRadius + Sizes.LineArrowTip
+
+    return [
+      [xStart, yUp],
+      [xTip, yUp],
+      [xTip, yUpTip],
+      [xEnd, y],
+      [xTip, yDownTip],
+      [xTip, yDown],
+      [xStart, yDown],
+    ]
   }
 
   private getLinePoints(line: Line, l: number): Vec2[] {
@@ -1277,38 +1493,46 @@ export class Game {
     ]
   }
 
-  private renderBoard(board: Board, l: number, m: number, isActive: boolean, isTemporary: boolean) {
-    const boardColor = m % 2
-    const [[borderX, borderY]] = this.getBoardRect(l, m)
+  private renderBoard(
+    board: Board,
+    l: number,
+    m: number,
+    isActive: boolean,
+    isTemporary: boolean,
+    options: BoardRenderOptions = {},
+  ) {
+    const boardPlayer = options.basePlayer ?? m % 2
+    const [[boardRectX, boardRectY]] = this.getBoardRect(l, m)
+    const [borderX, borderY] = options.pos ?? [boardRectX, boardRectY]
     const x0 = borderX + Sizes.BoardBorder
     const y0 = borderY + Sizes.BoardBorder
-    const borderColor = isTemporary
-      ? ButtonColors.Yellow.border
-      : boardColor === Color.B ? Colors.BoardBorderBlack : Colors.BoardBorderWhite
-    const activeBorderFill = isTemporary
-      ? ButtonColors.Yellow.fill
-      : boardColor === Color.B ? Colors.BoardBorderBlackDim : Colors.BoardBorderWhiteDim
-    const outerBorder = isActive ? Sizes.ActiveBoardBorder + Sizes.BoardBorder : Sizes.BoardBorder
+    const baseBorderColor = boardPlayer === Player.B ? Colors.BoardBorderBlack : Colors.BoardBorderWhite
+    const baseActiveBorderFill = boardPlayer === Player.B ? Colors.BoardBorderBlackDim : Colors.BoardBorderWhiteDim
+    const temporaryProgress = options.temporaryProgress ?? (isTemporary ? 1 : 0)
+    const borderColor = Color4.mix(baseBorderColor, ButtonColors.Yellow.border, temporaryProgress)
+    const activeBorderFill = Color4.mix(baseActiveBorderFill, ButtonColors.Yellow.fill, temporaryProgress)
+    const activeProgress = options.activeProgress ?? (isActive ? 1 : 0)
+    const outerBorder = Sizes.BoardBorder + Sizes.ActiveBoardBorder * activeProgress
     const outerBorderPos: Vec2 = [x0 - outerBorder, y0 - outerBorder]
     const outerBorderSize: Vec2 = [
       Sizes.BoardWidth + outerBorder * 2,
       Sizes.BoardWidth + outerBorder * 2,
     ]
-    const innerBorderRadius = isActive ? Sizes.ActiveBoardBorderRadius : Sizes.BoardBorderRadius
-    const outerBorderRadius = isActive
-      ? Sizes.ActiveBoardBorderRadius + Sizes.BoardBorder
-      : Sizes.BoardBorderRadius
+    const innerBorderRadius = Scalar.lerp(Sizes.BoardBorderRadius, Sizes.ActiveBoardBorderRadius, activeProgress)
+    const outerBorderRadius = innerBorderRadius + Sizes.BoardBorder * activeProgress
     const boardFrame: BoardFrame = {
       pos: outerBorderPos,
       size: outerBorderSize,
       radius: outerBorderRadius,
     }
 
-    this.renderBoardShadow(boardFrame)
+    const layers = this.getBoardRenderLayers(options.animatedLayer === true)
+
+    this.renderBoardShadow(boardFrame, layers)
 
     this.renderer.submit({
       type: RenderItemType.RoundRect,
-      layer: RenderLayer.BoardBorder,
+      layer: layers.border,
       pos: outerBorderPos,
       size: outerBorderSize,
       radius: outerBorderRadius,
@@ -1316,10 +1540,10 @@ export class Game {
       stroke: null,
     })
 
-    if (isActive) {
+    if (activeProgress > 0) {
       this.renderer.submit({
         type: RenderItemType.RoundRect,
-        layer: RenderLayer.BoardBorder,
+        layer: layers.border,
         pos: [
           x0 - Sizes.ActiveBoardBorder,
           y0 - Sizes.ActiveBoardBorder,
@@ -1329,7 +1553,7 @@ export class Game {
           Sizes.BoardWidth + Sizes.ActiveBoardBorder * 2,
         ],
         radius: innerBorderRadius,
-        fill: activeBorderFill,
+        fill: Color4.withAlpha(activeBorderFill, activeProgress),
         stroke: null,
       })
     }
@@ -1347,46 +1571,65 @@ export class Game {
 
       this.renderer.submit({
         type: RenderItemType.Quad,
-        layer: RenderLayer.Board,
+        layer: layers.board,
         mat: Mat3.transform(pos, Sizes.PieceSize),
         color,
       })
 
       const piece = board.pieces[x][y]
-      if (piece !== Piece.E) this.renderPiece(piece, pos)
+      if (piece !== Piece.E) this.renderPiece(piece, pos, layers.piece)
       if (this.shouldRenderPieceGhost(l, m, coord)) this.renderPieceGhost(this.selectedPiece!.piece, pos)
     }
   }
 
+  private getBoardRenderLayers(animated: boolean): {
+    shadowBase: RenderLayer
+    shadowHigh: RenderLayer
+    border: RenderLayer
+    board: RenderLayer
+    piece: RenderLayer
+  } {
+    return animated
+      ? {
+          shadowBase: RenderLayer.BoardShadowBase,
+          shadowHigh: RenderLayer.BoardShadowHigh,
+          border: RenderLayer.AnimatedBoardBorder,
+          board: RenderLayer.AnimatedBoard,
+          piece: RenderLayer.AnimatedPiece,
+        }
+      : {
+          shadowBase: RenderLayer.BoardShadowBase,
+          shadowHigh: RenderLayer.BoardShadowHigh,
+          border: RenderLayer.BoardBorder,
+          board: RenderLayer.Board,
+          piece: RenderLayer.Piece,
+        }
+  }
+
   private isHighlightedBoardSquare(l: number, m: number, coord: CoordSpacelike): boolean {
-    if (this.hoverSquare && this.isSameLocatedSquare(this.hoverSquare, l, m, coord)) return true
+    if (this.hoverSquare && isSameLocatedSquare(this.hoverSquare, l, m, coord)) return true
 
     const selection = this.selectedPiece ?? this.hoverPiece
     if (! selection) return false
     if (selection.l !== l || selection.m !== m) return false
-    if (this.isSameSquare(selection.from, coord)) return true
-    return selection.targets.some(target => this.isSameSquare(target, coord))
+    if (Coord.isSameSpace(selection.from, coord)) return true
+    return selection.targets.some(target => Coord.isSameSpace(target, coord))
   }
 
   private shouldRenderPieceGhost(l: number, m: number, coord: CoordSpacelike): boolean {
     if (! this.selectedPiece || ! this.hoverSquare) return false
-    if (! this.isSameLocatedSquare(this.hoverSquare, l, m, coord)) return false
+    if (! isSameLocatedSquare(this.hoverSquare, l, m, coord)) return false
     if (this.selectedPiece.l !== l || this.selectedPiece.m !== m) return false
-    return this.selectedPiece.targets.some(target => this.isSameSquare(target, coord))
+    return this.selectedPiece.targets.some(target => Coord.isSameSpace(target, coord))
   }
 
-  private isSameLocatedSquare(square: SquareHover, l: number, m: number, coord: CoordSpacelike): boolean {
-    return square.l === l && square.m === m && this.isSameSquare(square.coord, coord)
-  }
-
-  private isSameSquare(a: CoordSpacelike, b: CoordSpacelike): boolean {
-    return a.x === b.x && a.y === b.y
-  }
-
-  private renderBoardShadow(frame: BoardFrame) {
+  private renderBoardShadow(
+    frame: BoardFrame,
+    layers = this.getBoardRenderLayers(false),
+  ) {
     const pos = Vec2.add(frame.pos, Sizes.BoardShadowOffset)
     const size = frame.size
-    this.renderBoardShadowRect([pos, size], frame.radius, RenderLayer.BoardShadowBase)
+    this.renderBoardShadowRect([pos, size], frame.radius, layers.shadowBase)
 
     this.renderBoardShadowRect(
       [
@@ -1394,7 +1637,7 @@ export class Game {
         Vec2.add(size, [-Sizes.ShadowShrink, -Sizes.ShadowShrink]),
       ],
       frame.radius,
-      RenderLayer.BoardShadowHigh,
+      layers.shadowHigh,
     )
   }
 
@@ -1412,10 +1655,10 @@ export class Game {
     })
   }
 
-  private renderPiece(piece: Piece, pos: Vec2) {
+  private renderPiece(piece: Piece, pos: Vec2, layer: RenderLayer = RenderLayer.Piece) {
     this.renderer.submit({
       type: RenderItemType.Texture,
-      layer: RenderLayer.Piece,
+      layer,
       mat: Mat3.transform(pos, Sizes.PieceSize),
       textureId: PIECE_TO_TEXTURE_ID.get(piece)!,
     })

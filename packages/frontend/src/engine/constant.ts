@@ -12,6 +12,9 @@ export const enum RenderLayer {
   Board,
   Piece,
   PieceGhost,
+  AnimatedBoardBorder,
+  AnimatedBoard,
+  AnimatedPiece,
   Debug,
   UIShadow,
   UI,
@@ -115,6 +118,10 @@ export namespace Colors {
 
   export const ButtonText = Color4.fromRgba(39, 39, 39, 1)
   export const ButtonDisabledText = Color4.fromRgba(188, 188, 188, 1)
+}
+
+export namespace Animations {
+  export const MoveAnimationDuration = 500
 }
 
 export interface ButtonColorPreset {
