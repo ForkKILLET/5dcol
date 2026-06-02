@@ -322,6 +322,7 @@ export class Game {
   private pendingMove: PendingMove | null = null
   private pendingMoves: PendingMove[] = []
   private moveAnimation: MoveAnimation | null = null
+  private submitRequestedDuringMoveAnimation = false
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -566,6 +567,7 @@ export class Game {
     this.updateCameraBounds()
     this.render()
     this.renderer.flush()
+    this.finalizeSubmittedMoveAfterAnimation()
     this.animationFrame = requestAnimationFrame(this.loop)
   }
 
@@ -621,7 +623,7 @@ export class Game {
       : {
           id: 'undo-move',
           rect: [[leftX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
-          disabled: this.pendingMoves.length === 0,
+          disabled: this.pendingMoves.length === 0 || this.submitRequestedDuringMoveAnimation,
           colorPreset: this.getUndoMoveButtonColor(),
           turnPlayer: this.player,
           text: 'Undo Move',
@@ -636,7 +638,7 @@ export class Game {
       {
         id: 'submit-moves',
         rect: [[rightX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
-        disabled: ! this.canSubmitMoves() || this.isMoveAnimating(),
+        disabled: ! this.canSubmitMoves() || this.submitRequestedDuringMoveAnimation,
         colorPreset: ButtonColors.White,
         turnPlayer: this.player,
         text: 'Submit Moves',
@@ -693,11 +695,13 @@ export class Game {
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
     this.moveAnimation = { startedAt: performance.now() }
+    this.submitRequestedDuringMoveAnimation = false
     this.selectedPiece = null
     return true
   }
 
   private undoMove() {
+    if (this.submitRequestedDuringMoveAnimation) return
     if (this.pendingMoves.length === 0) return
     this.pendingMoves.pop()
     this.multiverse = this.pendingMoves.reduce(
@@ -706,17 +710,34 @@ export class Game {
     )
     this.pendingMove = this.pendingMoves.at(-1) ?? null
     this.moveAnimation = null
+    this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
   }
 
   private submitMoves() {
-    if (this.isMoveAnimating()) return
     if (! this.canSubmitMoves()) return
 
+    if (this.isMoveAnimating()) {
+      this.submitRequestedDuringMoveAnimation = true
+      this.deselectPiece()
+      return
+    }
+
+    this.finalizeSubmitMoves()
+  }
+
+  private finalizeSubmittedMoveAfterAnimation() {
+    if (! this.submitRequestedDuringMoveAnimation) return
+    if (this.isMoveAnimating()) return
+    this.finalizeSubmitMoves()
+  }
+
+  private finalizeSubmitMoves() {
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
     this.moveAnimation = null
+    this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
     this.player = CorePlayers.opponent(this.player)
     this.actionIndex += 1
