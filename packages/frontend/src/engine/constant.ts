@@ -79,13 +79,15 @@ export namespace Sizes {
 }
 
 export namespace CameraControl {
-  export const ZoomStep = 0.1
+  export const WheelZoomStep = 0.1
+  export const KeyboardZoomStep = 0.18
   export const ZoomMin = 0.5
   export const ZoomMax = 4
   export const ZoomSmoothing = 0.12
   export const ZoomSnapEpsilon = 0.001
   export const BounceBackSmoothing = 0.08
   export const BounceBackSnapEpsilon = 0.1
+  export const KeyboardPanStep = 120
 }
 
 export namespace Colors {

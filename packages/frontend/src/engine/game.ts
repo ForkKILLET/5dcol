@@ -30,6 +30,7 @@ interface BoardFrame {
   radius: number
 }
 interface CameraMotion {
+  targetCenter: Vec2
   targetScale: number
   anchorScreen: Vec2
 }
@@ -355,22 +356,19 @@ export class Game {
       this.clearPointerDrag()
     }))
 
-    this.collect(Effect.useListener(window, 'contextmenu', () => {
+    this.collect(Effect.useListener(window, 'contextmenu', e => {
+      e.preventDefault()
+      this.deselectPiece()
       this.clearPointerDrag()
+    }))
+
+    this.collect(Effect.useListener(window, 'keydown', e => {
+      this.handleKeyDown(e)
     }))
 
     this.collect(Effect.useListener(window, 'wheel', e => {
       e.preventDefault()
-      const camera = this.renderer.getCamera()
-      const targetScale = this.cameraMotion?.targetScale ?? camera.scale
-      this.cameraMotion = {
-        targetScale: clamp(
-          targetScale - Math.sign(e.deltaY) * CameraControl.ZoomStep,
-          CameraControl.ZoomMin,
-          CameraControl.ZoomMax,
-        ),
-        anchorScreen: this.getViewportCenterScreen(),
-      }
+      this.zoomCameraByStep(- Math.sign(e.deltaY) * CameraControl.WheelZoomStep)
     }, { passive: false }))
   }
 
@@ -403,6 +401,93 @@ export class Game {
     this.pointer.dragStartScreen = null
     this.pointer.dragLastScreen = null
     this.pointer.dragExceeded = false
+  }
+
+  private handleKeyDown(e: KeyboardEvent) {
+    if (e.repeat || this.isTextInputEvent(e)) return
+
+    console.log(e.key)
+    switch (e.key) {
+      case 'z':
+      case 'Backspace':
+        e.preventDefault()
+        this.undoMove()
+        break
+      case 'f':
+      case 'Enter':
+        e.preventDefault()
+        this.submitMoves()
+        break
+      case 'w':
+      case 'ArrowUp':
+        e.preventDefault()
+        this.panCameraByKeyboard([0, -1])
+        break
+      case 'a':
+      case 'ArrowLeft':
+        e.preventDefault()
+        this.panCameraByKeyboard([-1, 0])
+        break
+      case 's':
+      case 'ArrowDown':
+        e.preventDefault()
+        this.panCameraByKeyboard([0, 1])
+        break
+      case 'd':
+      case 'ArrowRight':
+        e.preventDefault()
+        this.panCameraByKeyboard([1, 0])
+        break
+      case 'q':
+        e.preventDefault()
+        this.zoomCameraByStep(- CameraControl.KeyboardZoomStep)
+        break
+      case 'e':
+        e.preventDefault()
+        this.zoomCameraByStep(CameraControl.KeyboardZoomStep)
+        break
+    }
+  }
+
+  private isTextInputEvent(e: KeyboardEvent): boolean {
+    const target = e.target
+    if (! (target instanceof HTMLElement)) return false
+    return target.isContentEditable
+      || target.tagName === 'INPUT'
+      || target.tagName === 'TEXTAREA'
+      || target.tagName === 'SELECT'
+  }
+
+  private panCameraByKeyboard(direction: Vec2) {
+    const camera = this.renderer.getCamera()
+    const step = CameraControl.KeyboardPanStep / camera.scale
+    const targetCenter = this.cameraMotion?.targetCenter ?? camera.center
+    this.setCameraMotion({
+      targetCenter: this.clampCameraCenterToValidViewportIfAvailable(
+        Vec2.add(targetCenter, Vec2.scale(direction, step)),
+      ),
+    })
+  }
+
+  private zoomCameraByStep(step: number) {
+    const camera = this.renderer.getCamera()
+    const targetScale = this.cameraMotion?.targetScale ?? camera.scale
+    this.setCameraMotion({
+      targetScale: clamp(
+        targetScale + step,
+        CameraControl.ZoomMin,
+        CameraControl.ZoomMax,
+      ),
+    })
+  }
+
+  private setCameraMotion(motion: Partial<CameraMotion>) {
+    const camera = this.renderer.getCamera()
+    this.cameraMotion = {
+      targetCenter: motion.targetCenter ?? this.cameraMotion?.targetCenter ?? camera.center,
+      targetScale: motion.targetScale ?? this.cameraMotion?.targetScale ?? camera.scale,
+      anchorScreen: motion.anchorScreen ?? this.cameraMotion?.anchorScreen ?? this.getViewportCenterScreen(),
+    }
   }
 
   public focusTurn(l: number, m: number) {
@@ -496,7 +581,7 @@ export class Game {
           text: 'Deselect',
           piece: this.selectedPiece.piece,
           onClick: () => {
-            this.selectedPiece = null
+            this.deselectPiece()
           },
         }
       : {
@@ -580,9 +665,10 @@ export class Game {
   }
 
   private undoMove() {
+    if (! this.pendingMove) return
     this.multiverse = this.multiverseCommitted
     this.pendingMove = null
-    this.selectedPiece = null
+    this.deselectPiece()
   }
 
   private submitMoves() {
@@ -590,9 +676,13 @@ export class Game {
 
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
-    this.selectedPiece = null
+    this.deselectPiece()
     this.color = this.getOpponentColor(this.color)
     this.actionIndex += 1
+  }
+
+  private deselectPiece() {
+    this.selectedPiece = null
   }
 
   private canSubmitMoves(): boolean {
@@ -681,9 +771,24 @@ export class Game {
       : camera.scale + scaleDelta * CameraControl.ZoomSmoothing
 
     this.setCameraScaleAt(this.cameraMotion.anchorScreen, scaleNext)
-    this.smoothCameraToValidViewport(CameraControl.ZoomSmoothing)
 
-    if (scaleNext === this.cameraMotion.targetScale) {
+    const cameraAfterScale = this.renderer.getCamera()
+    const centerDelta = Vec2.sub(this.cameraMotion.targetCenter, cameraAfterScale.center)
+    const centerNext = Vec2.length(centerDelta) <= CameraControl.BounceBackSnapEpsilon
+      ? this.cameraMotion.targetCenter
+      : Vec2.add(cameraAfterScale.center, Vec2.scale(centerDelta, CameraControl.BounceBackSmoothing))
+    this.renderer.setCamera({ center: centerNext })
+
+    this.smoothCameraToValidViewport(CameraControl.BounceBackSmoothing)
+
+    const cameraAfterBounds = this.renderer.getCamera()
+    this.cameraMotion.targetCenter = this.clampCameraCenterToValidViewportIfAvailable(this.cameraMotion.targetCenter)
+
+    if (
+      scaleNext === this.cameraMotion.targetScale
+      && Vec2.length(Vec2.sub(cameraAfterBounds.center, this.cameraMotion.targetCenter)) <= CameraControl.BounceBackSnapEpsilon
+    ) {
+      this.renderer.setCamera({ center: this.cameraMotion.targetCenter })
       this.cameraMotion = null
     }
   }
@@ -700,6 +805,7 @@ export class Game {
 
   private syncCameraMotion() {
     if (! this.cameraMotion) return
+    this.cameraMotion.targetCenter = this.renderer.getCamera().center
     this.cameraMotion.targetScale = this.renderer.getCamera().scale
   }
 
@@ -744,6 +850,12 @@ export class Game {
     this.renderer.setCamera({
       center: Vec2.add(camera.center, Vec2.scale(delta, smoothing)),
     })
+  }
+
+  private clampCameraCenterToValidViewportIfAvailable(center: Vec2): Vec2 {
+    const validViewport = this.getValidViewportRect()
+    if (! validViewport) return center
+    return this.clampCameraCenterToViewport(center, validViewport)
   }
 
   private renderMultiverse() {
