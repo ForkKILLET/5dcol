@@ -5,10 +5,9 @@ export const enum RenderLayer {
   BoardShadowBase,
   LineShadow,
   Line,
-  BoardShadowLine,
   PresentShadow,
   Present,
-  BoardShadowPresent,
+  BoardShadowHigh,
   BoardBorder,
   Board,
   Piece,
@@ -37,22 +36,16 @@ export namespace Sizes {
   export const TurnHeight = BoardMarginWidth
   export const TurnWidth = BoardMarginWidth * 2
   export const TurnSize: Vec2 = [TurnWidth, TurnHeight]
+  export const BoardTimeOverdrawDevicePixels = 1
 
   export const LineArrowRadius = 20
-  export const LineArrowTip = 16
+  export const LineArrowShaftLength = 20
+  export const LineArrowTip = 23
   export const LineBorderWidth = 1
 
-  export const LineShadowOffset: Vec2 = [-6, 6]
+  export const LineShadowOffset: Vec2 = [-6, 5]
   export const BoardShadowOffset: Vec2 = [-13, 13]
-  export const ShadowShrink = 4
-
-  export const CameraZoomStep = 0.1
-  export const CameraZoomMin = 0.5
-  export const CameraZoomMax = 4
-  export const CameraZoomSmoothing = 0.12
-  export const CameraZoomSnapEpsilon = 0.001
-  export const CameraBounceBackSmoothing = 0.08
-  export const CameraBounceBackSnapEpsilon = 0.1
+  export const ShadowShrink = 5
 
   export const PointerDebugWidth = 10
 
@@ -71,6 +64,16 @@ export namespace Sizes {
   export const PresentArrowStrokeWidth = 2.5
   export const PresentArrowTailInset = 2
   export const PresentArrowTailFillInset = 0.5
+}
+
+export namespace CameraControl {
+  export const ZoomStep = 0.1
+  export const ZoomMin = 0.5
+  export const ZoomMax = 4
+  export const ZoomSmoothing = 0.12
+  export const ZoomSnapEpsilon = 0.001
+  export const BounceBackSmoothing = 0.08
+  export const BounceBackSnapEpsilon = 0.1
 }
 
 export namespace Colors {

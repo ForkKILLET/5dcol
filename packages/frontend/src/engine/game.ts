@@ -1,13 +1,12 @@
 import { Board, Color, Coord, Line, Multiverse, Piece } from '@5dcol/core'
 import { Effect, clamp } from '@/utils'
 import { Color4, Mat3, Vec2, type Camera } from '@engine/basic'
-import { Colors, RenderLayer, Sizes } from '@engine/constant'
+import { CameraControl, Colors, RenderLayer, Sizes } from '@engine/constant'
 import { type Logger } from '@engine/logger'
 import { CircleRenderItem, type Renderer, RenderItemType } from '@engine/renderer'
 import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
 
 export interface GameConfig {
-  fps: number
   debug: boolean
   logger: Logger
   renderer: Renderer
@@ -57,7 +56,7 @@ export class Game {
   private cameraMotion: CameraMotion | null = null
 
   private animationFrame: number | null = null
-  private lastLoopTime = 0
+  private resizeDirty = false
   private disposed = false
 
   public start() {
@@ -81,7 +80,9 @@ export class Game {
   }
 
   private bindEvents() {
-    this.collect(Effect.useListener(window, 'resize', () => this.renderer.resize()))
+    this.collect(Effect.useListener(window, 'resize', () => {
+      this.resizeDirty = true
+    }))
 
     this.collect(Effect.useListener(window, 'mousemove', e => {
       const screen: Vec2 = [e.clientX, e.clientY]
@@ -108,11 +109,11 @@ export class Game {
       const targetScale = this.cameraMotion?.targetScale ?? camera.scale
       this.cameraMotion = {
         targetScale: clamp(
-          targetScale - Math.sign(e.deltaY) * Sizes.CameraZoomStep,
-          Sizes.CameraZoomMin,
-          Sizes.CameraZoomMax,
+          targetScale - Math.sign(e.deltaY) * CameraControl.ZoomStep,
+          CameraControl.ZoomMin,
+          CameraControl.ZoomMax,
         ),
-        anchorScreen: [e.clientX, e.clientY],
+        anchorScreen: this.getViewportCenterScreen(),
       }
     }, { passive: false }))
   }
@@ -178,18 +179,19 @@ export class Game {
     ]
   }
 
-  private loop = (now: number) => {
-    const interval = 1000 / this.config.fps
-
-    if (now - this.lastLoopTime >= interval) {
-      this.lastLoopTime = now
-      this.updateCameraMotion()
-      this.updateCameraBounds()
-      this.render()
-      this.renderer.flush()
-    }
-
+  private loop = () => {
+    this.updateScreen()
+    this.updateCameraMotion()
+    this.updateCameraBounds()
+    this.render()
+    this.renderer.flush()
     this.animationFrame = requestAnimationFrame(this.loop)
+  }
+
+  private updateScreen() {
+    if (! this.resizeDirty) return
+    this.renderer.resize()
+    this.resizeDirty = false
   }
 
   private render() {
@@ -204,12 +206,12 @@ export class Game {
 
     const camera = this.renderer.getCamera()
     const scaleDelta = this.cameraMotion.targetScale - camera.scale
-    const scaleNext = Math.abs(scaleDelta) <= Sizes.CameraZoomSnapEpsilon
+    const scaleNext = Math.abs(scaleDelta) <= CameraControl.ZoomSnapEpsilon
       ? this.cameraMotion.targetScale
-      : camera.scale + scaleDelta * Sizes.CameraZoomSmoothing
+      : camera.scale + scaleDelta * CameraControl.ZoomSmoothing
 
     this.setCameraScaleAt(this.cameraMotion.anchorScreen, scaleNext)
-    this.smoothCameraToValidViewport(Sizes.CameraZoomSmoothing)
+    this.smoothCameraToValidViewport(CameraControl.ZoomSmoothing)
 
     if (scaleNext === this.cameraMotion.targetScale) {
       this.cameraMotion = null
@@ -231,6 +233,11 @@ export class Game {
     this.cameraMotion.targetScale = this.renderer.getCamera().scale
   }
 
+  private getViewportCenterScreen(): Vec2 {
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    return [widthCss / 2, heightCss / 2]
+  }
+
   private updateCameraBounds() {
     if (this.cameraMotion) return
     if (this.pointer.dragLastScreen) return
@@ -242,13 +249,13 @@ export class Game {
     const targetCenter = this.clampCameraCenterToViewport(camera.center, validViewport)
     const delta = Vec2.sub(targetCenter, camera.center)
 
-    if (Vec2.length(delta) <= Sizes.CameraBounceBackSnapEpsilon) {
+    if (Vec2.length(delta) <= CameraControl.BounceBackSnapEpsilon) {
       this.renderer.setCamera({ center: targetCenter })
       return
     }
 
     this.renderer.setCamera({
-      center: Vec2.add(camera.center, Vec2.scale(delta, Sizes.CameraBounceBackSmoothing)),
+      center: Vec2.add(camera.center, Vec2.scale(delta, CameraControl.BounceBackSmoothing)),
     })
   }
 
@@ -259,7 +266,7 @@ export class Game {
     const camera = this.renderer.getCamera()
     const targetCenter = this.clampCameraCenterToViewport(camera.center, validViewport)
     const delta = Vec2.sub(targetCenter, camera.center)
-    if (Vec2.length(delta) <= Sizes.CameraBounceBackSnapEpsilon) {
+    if (Vec2.length(delta) <= CameraControl.BounceBackSnapEpsilon) {
       this.renderer.setCamera({ center: targetCenter })
       return
     }
@@ -475,7 +482,7 @@ export class Game {
         [xTipBaseLeft, yTipBase],
         [xStart, yTipBase],
       ]
-      return pointsModel.map((p) => Vec2.add(center, p))
+      return pointsModel.map(Vec2.curry.add(center))
     }
 
     this.renderer.submit({
@@ -515,6 +522,9 @@ export class Game {
     const t1 = Math.ceil((x + w + Sizes.BoardMargin) / Sizes.TurnWidth)
     const l0 = Math.floor(- (y + h) / Sizes.TurnHeight - 0.5)
     const l1 = Math.ceil(- y / Sizes.TurnHeight - 0.5)
+    const tileOverdraw = Sizes.BoardTimeOverdrawDevicePixels
+      / this.renderer.getScreen().dpr
+      / this.renderer.getCamera().scale
 
     for (let t = t0; t < t1; t ++) {
       for (let l = l0; l < l1; l ++) {
@@ -523,7 +533,10 @@ export class Game {
         this.renderer.submit({
           type: RenderItemType.Quad,
           layer: RenderLayer.BoardTime,
-          mat: Mat3.transform(turnPos, turnSize),
+          mat: Mat3.transform(
+            Vec2.sub(turnPos, [tileOverdraw / 2, tileOverdraw / 2]),
+            Vec2.add(turnSize, [tileOverdraw, tileOverdraw]),
+          ),
           color: (t + l) % 2 === 0 ? Colors.BoardTimeWhite : Colors.BoardTimeBlack,
         })
       }
@@ -569,14 +582,19 @@ export class Game {
 
     const center = Vec2.add(boardViewport[0], Vec2.scale(boardViewport[1], 0.5))
     const screenWorldSize = this.getScreenWorldSize()
+    const horizontalPadding = this.getValidViewportHorizontalPadding(screenWorldSize[0])
     const size: Vec2 = [
-      Math.max(boardViewport[1][0], screenWorldSize[0]),
+      Math.max(boardViewport[1][0] + horizontalPadding * 2, screenWorldSize[0]),
       Math.max(boardViewport[1][1], screenWorldSize[1]),
     ]
     return [
       Vec2.sub(center, Vec2.scale(size, 0.5)),
       size,
     ]
+  }
+
+  private getValidViewportHorizontalPadding(screenWorldWidth: number): number {
+    return Math.max(0, (screenWorldWidth - Sizes.TurnWidth / 2) / 2)
   }
 
   private getTimeTileViewportRect(): Rect | null {
@@ -632,7 +650,7 @@ export class Game {
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.LineShadow,
-      points: points.map(point => Vec2.add(point, Sizes.LineShadowOffset)),
+      points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
       fill: Colors.Shadow,
       stroke: null,
     })
@@ -654,7 +672,7 @@ export class Game {
 
     const xStart = line.mStart * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
 
-    const xTip = line.boards.length * (Sizes.BoardWidth + Sizes.BoardGap)
+    const xTip = line.boards.length * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.LineArrowShaftLength
 
     const yUpTip = yUp - Sizes.LineArrowTip
     const yDownTip = yDown + Sizes.LineArrowTip
@@ -742,37 +760,17 @@ export class Game {
   }
 
   private renderBoardShadow(frame: BoardFrame) {
-    const rect: Rect = [
-      Vec2.add(frame.pos, Sizes.BoardShadowOffset),
-      [...frame.size],
-    ]
-    this.renderBoardShadowRect(rect, frame.radius, RenderLayer.BoardShadowBase)
+    const pos = Vec2.add(frame.pos, Sizes.BoardShadowOffset)
+    const size = frame.size
+    this.renderBoardShadowRect([pos, size], frame.radius, RenderLayer.BoardShadowBase)
 
     this.renderBoardShadowRect(
       [
-        rect[0],
-        [
-          rect[1][0],
-          Math.max(0, rect[1][1] - Sizes.ShadowShrink),
-        ],
+        Vec2.add(pos, [Sizes.ShadowShrink, 0]),
+        Vec2.add(size, [-Sizes.ShadowShrink, -Sizes.ShadowShrink]),
       ],
       frame.radius,
-      RenderLayer.BoardShadowPresent,
-    )
-
-    this.renderBoardShadowRect(
-      [
-        [
-          rect[0][0] + Sizes.ShadowShrink,
-          rect[0][1],
-        ],
-        [
-          Math.max(0, rect[1][0] - Sizes.ShadowShrink),
-          rect[1][1],
-        ],
-      ],
-      frame.radius,
-      RenderLayer.BoardShadowLine,
+      RenderLayer.BoardShadowHigh,
     )
   }
 

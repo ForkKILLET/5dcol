@@ -64,8 +64,8 @@ export abstract class Renderer extends Disposable(Empty) {
   }
 
   protected updateProjMats() {
-    const widthDevice = this.screen.widthCss * this.screen.dpr
-    const heightDevice = this.screen.heightCss * this.screen.dpr
+    const widthDevice = Math.floor(this.screen.widthCss * this.screen.dpr)
+    const heightDevice = Math.floor(this.screen.heightCss * this.screen.dpr)
     const deviceTransform: Transform = [
       [widthDevice / 2, heightDevice / 2],
       Vec2.splat(this.screen.dpr)

@@ -86,6 +86,14 @@ export namespace Vec2 {
 
   export const length = ([x, y]: Vec2): number =>
     Math.sqrt(x * x + y * y)
+
+  export namespace curry {
+    export const add = (a: Vec2) => (b: Vec2) => Vec2.add(a, b)
+
+    export const sub = (a: Vec2) => (b: Vec2) => Vec2.sub(b, a)
+
+    export const scale = (s: number) => (v: Vec2) => Vec2.scale(v, s)
+  }
 }
 
 /**

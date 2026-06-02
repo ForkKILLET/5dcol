@@ -18,7 +18,6 @@ async function init() {
   try {
     const renderer = await CanvasRenderer.create(canvas.value!, logger)
     game = new Game({
-      fps: 60,
       renderer,
       logger,
       debug: query.get('debug') === '1',
