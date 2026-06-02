@@ -18,6 +18,7 @@ export abstract class Renderer extends Disposable(Empty) {
   protected screen: Screen = uninitialized
 
   protected worldToDeviceMat: Mat3 = uninitialized
+  protected screenToDeviceMat: Mat3 = uninitialized
   protected worldToScreenMat: Mat3 = uninitialized
   protected screenToWorldMat: Mat3 = uninitialized
 
@@ -83,6 +84,7 @@ export abstract class Renderer extends Disposable(Empty) {
       Mat3.transform(...deviceTransform),
       Mat3.transform(...cameraTransform),
     )
+    this.screenToDeviceMat = Mat3.scale(this.screen.dpr, this.screen.dpr)
     this.worldToScreenMat = Mat3.multiply(
       Mat3.transform(...screenTransform),
       Mat3.transform(...cameraTransform),
@@ -140,6 +142,7 @@ export const enum RenderItemType {
 
 export interface RenderItemBase {
   layer: RenderLayer
+  space?: 'world' | 'screen'
 }
 
 export interface QuadRenderItem extends RenderItemBase {
@@ -153,9 +156,21 @@ export interface RoundRectRenderItem extends RenderItemBase {
   pos: Vec2
   size: Vec2
   radius: number | CornerRadii
-  fill: Color4 | null
+  fill: FillStyle | null
   stroke: Color4 | null
   strokeWidth?: number
+}
+
+export type FillStyle = Color4 | LinearGradientFill
+
+export interface LinearGradientFill {
+  type: 'linear-gradient'
+  from: Vec2
+  to: Vec2
+  stops: Array<{
+    offset: number
+    color: Color4
+  }>
 }
 
 export interface CornerRadii {
@@ -169,6 +184,7 @@ export interface TextureRenderItem extends RenderItemBase {
   type: RenderItemType.Texture
   mat: Mat3
   textureId: TextureID
+  alpha?: number
 }
 
 export interface PolygonRenderItem extends RenderItemBase {

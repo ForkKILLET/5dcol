@@ -11,7 +11,10 @@ export const enum RenderLayer {
   BoardBorder,
   Board,
   Piece,
+  PieceGhost,
   Debug,
+  UIShadow,
+  UI,
 }
 
 export namespace Sizes {
@@ -49,6 +52,15 @@ export namespace Sizes {
 
   export const PointerDebugWidth = 10
 
+  export const ButtonWidth = 230
+  export const ButtonHeight = 52
+  export const ButtonTop = 18
+  export const ButtonShadowOffset = 5
+  export const ButtonBorder = 3
+  export const ButtonFontSize = 26
+  export const ButtonIconSize = 28
+  export const ButtonContentGap = 8
+
   export const PresentWidth = 104
   export const PresentBorder = 3
   export const PresentViewportMarginRatio = 0.25
@@ -84,6 +96,9 @@ export namespace Colors {
   export const BoardBlack = Color4.fromRgba(211, 169, 115, 1)
   export const BoardWhite = Color4.fromRgba(250, 212, 164, 1)
 
+  export const BoardHighlightBlack = Color4.fromRgba(133, 156, 96, 1)
+  export const BoardHighlightWhite = Color4.fromRgba(149, 170, 106, 1)
+
   export const BoardTimeBlack = Color4.fromRgba(191, 191, 187, 1)
   export const BoardTimeWhite = Color4.fromRgba(200, 200, 195, 1)
 
@@ -95,4 +110,49 @@ export namespace Colors {
 
   export const Purple = Color4.fromRgba(153, 113, 169, 1)
   export const PurpleDark = Color4.fromRgba(132, 93, 156, 1)
+
+  export const ButtonText = Color4.fromRgba(39, 39, 39, 1)
+  export const ButtonDisabledText = Color4.fromRgba(188, 188, 188, 1)
+}
+
+export interface ButtonColorPreset {
+  border: Color4
+  fill: Color4
+}
+
+export namespace ButtonColors {
+  export const Board: ButtonColorPreset = {
+    border: Color4.fromRgba(204, 161, 105, 1),
+    fill: Color4.fromRgba(231, 191, 142, 1),
+  }
+
+  export const Yellow: ButtonColorPreset = {
+    border: Color4.fromRgba(200, 182, 61, 1),
+    fill: Color4.fromRgba(220, 206, 96, 1),
+  }
+
+  export const Green: ButtonColorPreset = {
+    border: Color4.fromRgba(152, 180, 149, 1),
+    fill: Color4.fromRgba(143, 173, 140, 1),
+  }
+
+  export const GreenBlack: ButtonColorPreset = {
+    border: Color4.fromRgba(89, 134, 89, 1),
+    fill: Color4.fromRgba(92, 135, 95, 1),
+  }
+
+  export const White: ButtonColorPreset = {
+    border: Color4.fromRgba(249, 250, 246, 1),
+    fill: Color4.fromRgba(241, 241, 236, 1),
+  }
+
+  export const DisabledWhite: ButtonColorPreset = {
+    border: Color4.fromRgba(249, 250, 246, 1),
+    fill: Color4.fromRgba(241, 241, 236, 1),
+  }
+
+  export const DisabledBlack: ButtonColorPreset = {
+    border: Color4.fromRgba(166, 166, 166, 1),
+    fill: Color4.fromRgba(169, 169, 172, 1),
+  }
 }

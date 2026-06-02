@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, useTemplateRef } from 'vue'
-import Card from '@comp/Card.vue'
 
 import { Game } from '@engine/game'
 import { Logger, type GameMessage } from '@engine/logger'
@@ -37,10 +36,6 @@ onUnmounted(() => game?.dispose())
 <template>
   <div class="game">
     <canvas ref="canvas"></canvas>
-
-    <Card v-if="messages.length" class="message-list">
-      <p v-for="message of messages" :class="[message.type, 'message']">{{ message.text }}</p>
-    </Card>
   </div>
 </template>
 

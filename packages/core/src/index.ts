@@ -192,6 +192,10 @@ export namespace Coord {
 
   export const isSameBoard = (p: CoordTimelike, q: CoordTimelike) => p.l === q.l && p.t === q.t
 
+  export const isInBoard = ({ x, y }: CoordSpacelike): boolean => (
+    x >= 0 && x < 8 && y >= 0 && y < 8
+  )
+
   export const isFreshBoard = ({ l, t }: CoordTimelike, multiverse: Multiverse) => {
     const line = Multiverse.getLine(multiverse, l)
     return t + 1 === line.boards.length
@@ -203,6 +207,13 @@ export namespace Coord {
         yield [x, y] as const
       }
     }
+  }
+}
+
+export namespace Pieces {
+  export const getColor = (piece: Piece): Color | null => {
+    if (piece === Piece.E) return null
+    return piece < 0x10 ? Color.W : Color.B
   }
 }
 
@@ -273,6 +284,142 @@ export namespace Board {
 
   export const setPiece = ({ x, y }: CoordSpacelike, board: Board, piece: Piece): void => {
     board.pieces[x][y] = piece
+  }
+
+  const addTarget = (
+    targets: CoordSpacelike[],
+    board: Board,
+    color: Color,
+    target: CoordSpacelike,
+  ): boolean => {
+    if (! Coord.isInBoard(target)) return false
+
+    const targetPiece = Board.getPiece(target, board)
+    if (Pieces.getColor(targetPiece) === color) return false
+
+    targets.push(target)
+    return targetPiece === Piece.E
+  }
+
+  const addSlidingTargets = (
+    targets: CoordSpacelike[],
+    board: Board,
+    color: Color,
+    from: CoordSpacelike,
+    directions: CoordSpacelike[],
+  ): void => {
+    for (const direction of directions) {
+      for (
+        let target = { x: from.x + direction.x, y: from.y + direction.y };
+        Coord.isInBoard(target);
+        target = { x: target.x + direction.x, y: target.y + direction.y }
+      ) {
+        if (! addTarget(targets, board, color, target)) break
+      }
+    }
+  }
+
+  export const getMoveTargets2D = (board: Board, from: CoordSpacelike): CoordSpacelike[] => {
+    if (! Coord.isInBoard(from)) return []
+
+    const piece = Board.getPiece(from, board)
+    const color = Pieces.getColor(piece)
+    if (color === null) return []
+
+    const targets: CoordSpacelike[] = []
+    const addStep = (dx: number, dy: number) => {
+      addTarget(targets, board, color, { x: from.x + dx, y: from.y + dy })
+    }
+
+    switch (piece) {
+      case Piece.PW: {
+        const forward = { x: from.x, y: from.y - 1 }
+        if (Coord.isInBoard(forward) && Board.getPiece(forward, board) === Piece.E) {
+          targets.push(forward)
+          const doubleForward = { x: from.x, y: from.y - 2 }
+          if (
+            from.y === 6
+            && Coord.isInBoard(doubleForward)
+            && Board.getPiece(doubleForward, board) === Piece.E
+          ) {
+            targets.push(doubleForward)
+          }
+        }
+        for (const dx of [-1, 1]) {
+          const target = { x: from.x + dx, y: from.y - 1 }
+          if (! Coord.isInBoard(target)) continue
+          if (Pieces.getColor(Board.getPiece(target, board)) === Color.B) targets.push(target)
+        }
+        break
+      }
+      case Piece.PB: {
+        const forward = { x: from.x, y: from.y + 1 }
+        if (Coord.isInBoard(forward) && Board.getPiece(forward, board) === Piece.E) {
+          targets.push(forward)
+          const doubleForward = { x: from.x, y: from.y + 2 }
+          if (
+            from.y === 1
+            && Coord.isInBoard(doubleForward)
+            && Board.getPiece(doubleForward, board) === Piece.E
+          ) {
+            targets.push(doubleForward)
+          }
+        }
+        for (const dx of [-1, 1]) {
+          const target = { x: from.x + dx, y: from.y + 1 }
+          if (! Coord.isInBoard(target)) continue
+          if (Pieces.getColor(Board.getPiece(target, board)) === Color.W) targets.push(target)
+        }
+        break
+      }
+      case Piece.RW:
+      case Piece.RB:
+        addSlidingTargets(targets, board, color, from, [
+          { x: 1, y: 0 },
+          { x: -1, y: 0 },
+          { x: 0, y: 1 },
+          { x: 0, y: -1 },
+        ])
+        break
+      case Piece.NW:
+      case Piece.NB:
+        for (const [dx, dy] of [
+          [1, 2], [2, 1], [-1, 2], [-2, 1],
+          [1, -2], [2, -1], [-1, -2], [-2, -1],
+        ] as const) addStep(dx, dy)
+        break
+      case Piece.BW:
+      case Piece.BB:
+        addSlidingTargets(targets, board, color, from, [
+          { x: 1, y: 1 },
+          { x: 1, y: -1 },
+          { x: -1, y: 1 },
+          { x: -1, y: -1 },
+        ])
+        break
+      case Piece.QW:
+      case Piece.QB:
+        addSlidingTargets(targets, board, color, from, [
+          { x: 1, y: 0 },
+          { x: -1, y: 0 },
+          { x: 0, y: 1 },
+          { x: 0, y: -1 },
+          { x: 1, y: 1 },
+          { x: 1, y: -1 },
+          { x: -1, y: 1 },
+          { x: -1, y: -1 },
+        ])
+        break
+      case Piece.KW:
+      case Piece.KB:
+        for (const [dx, dy] of [
+          [1, 0], [-1, 0], [0, 1], [0, -1],
+          [1, 1], [1, -1], [-1, 1], [-1, -1],
+        ] as const) addStep(dx, dy)
+        break
+    }
+
+    return targets
   }
 }
 

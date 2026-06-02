@@ -1,5 +1,5 @@
 import { Color4, Mat3, type Device as Screen } from '@engine/basic'
-import { CircleRenderItem, type CornerRadii, PolygonRenderItem, QuadRenderItem, Renderer, RoundRectRenderItem, TextRenderItem, TextureRenderItem } from '@engine/renderer'
+import { CircleRenderItem, type CornerRadii, type FillStyle, PolygonRenderItem, QuadRenderItem, Renderer, RoundRectRenderItem, TextRenderItem, TextureRenderItem } from '@engine/renderer'
 import { CanvasBitmapTexture, CanvasSVGTexture, CanvasTextureManager, CanvasTextureType } from '@engine/canvas/textureManager'
 import type { Logger } from '@engine/logger'
 import { exhuastive } from '@/utils'
@@ -58,8 +58,8 @@ export class CanvasRenderer extends Renderer {
     this.ctxDisplay.drawImage(this.canvasBuffer, 0, 0)
   }
 
-  applyTransform(mat: Mat3) {
-    mat = Mat3.multiply(this.worldToDeviceMat, mat)
+  applyTransform(mat: Mat3, space: 'world' | 'screen' = 'world') {
+    mat = Mat3.multiply(space === 'screen' ? this.screenToDeviceMat : this.worldToDeviceMat, mat)
     this.ctx.setTransform(
       mat[0], mat[1],
       mat[3], mat[4],
@@ -67,32 +67,42 @@ export class CanvasRenderer extends Renderer {
     )
   }
 
-  drawTexture({ textureId, mat }: TextureRenderItem): void {
+  drawTexture({ textureId, mat, alpha = 1, space }: TextureRenderItem): void {
     const texture = this.textureManager.get(textureId)
+
+    if (alpha !== 1) {
+      this.ctx.save()
+      this.ctx.globalAlpha *= alpha
+    }
+
     switch (texture.type) {
       case CanvasTextureType.Bitmap:
-        this.drawBitmapTexture(mat, texture)
+        this.drawBitmapTexture(mat, texture, space)
         break
       case CanvasTextureType.SVG:
-        this.drawSVGTexture(mat, texture)
+        this.drawSVGTexture(mat, texture, space)
         break
       default:
         exhuastive(texture)
     }
+
+    if (alpha !== 1) {
+      this.ctx.restore()
+    }
   }
 
-  drawBitmapTexture(mat: Mat3, { image }: CanvasBitmapTexture): void {
-    this.applyTransform(mat)
+  drawBitmapTexture(mat: Mat3, { image }: CanvasBitmapTexture, space: 'world' | 'screen' = 'world'): void {
+    this.applyTransform(mat, space)
     this.ctx.drawImage(image, 0, 0, 1, 1)
   }
 
-  drawSVGTexture(mat: Mat3, texture: CanvasSVGTexture): void {
+  drawSVGTexture(mat: Mat3, texture: CanvasSVGTexture, space: 'world' | 'screen' = 'world'): void {
     const { paths, width, height } = texture
 
     this.applyTransform(Mat3.multiply(
       mat,
       Mat3.scale(1 / width, 1 / height),
-    ))
+    ), space)
 
     for (const path of paths) {
       if (path.fill !== 'none') {
@@ -116,9 +126,9 @@ export class CanvasRenderer extends Renderer {
   }
 
   drawRoundRect(item: RoundRectRenderItem): void {
-    const { pos: [x, y], size: [w, h], radius, fill, stroke } = item
+    const { pos: [x, y], size: [w, h], radius, fill, stroke, space } = item
 
-    this.applyTransform(Mat3.identity())
+    this.applyTransform(Mat3.identity(), space)
     this.ctx.beginPath()
     if (typeof radius === 'number') {
       const r = Math.min(radius, w / 2, h / 2)
@@ -128,7 +138,7 @@ export class CanvasRenderer extends Renderer {
       this.roundRectPath(x, y, w, h, radius)
     }
     if (fill) {
-      this.ctx.fillStyle = Color4.toRgbaString(fill)
+      this.ctx.fillStyle = this.getFillStyle(fill)
       this.ctx.fill()
     }
     if (stroke) {
@@ -136,6 +146,21 @@ export class CanvasRenderer extends Renderer {
       this.ctx.lineWidth = item.strokeWidth ?? 1
       this.ctx.stroke()
     }
+  }
+
+  private getFillStyle(fill: FillStyle): string | CanvasGradient {
+    if (Array.isArray(fill)) return Color4.toRgbaString(fill)
+
+    const gradient = this.ctx.createLinearGradient(
+      fill.from[0],
+      fill.from[1],
+      fill.to[0],
+      fill.to[1],
+    )
+    for (const stop of fill.stops) {
+      gradient.addColorStop(stop.offset, Color4.toRgbaString(stop.color))
+    }
+    return gradient
   }
 
   private roundRectPath(x: number, y: number, w: number, h: number, radii: CornerRadii) {
@@ -191,14 +216,11 @@ export class CanvasRenderer extends Renderer {
   }
 
   drawText(item: TextRenderItem): void {
-    const { pos, angle, text, fontSize, fontFamily, fontStyle, color, align, baseline } = item
+    const { pos, angle, text, fontSize, fontFamily, fontStyle, color, align, baseline, space } = item
 
     this.ctx.save()
-    this.ctx.setTransform(
-      this.worldToDeviceMat[0], this.worldToDeviceMat[1],
-      this.worldToDeviceMat[3], this.worldToDeviceMat[4],
-      this.worldToDeviceMat[6], this.worldToDeviceMat[7],
-    )
+    const mat = space === 'screen' ? this.screenToDeviceMat : this.worldToDeviceMat
+    this.ctx.setTransform(mat[0], mat[1], mat[3], mat[4], mat[6], mat[7])
     this.ctx.translate(...pos)
     this.ctx.rotate(angle)
     this.ctx.fillStyle = Color4.toRgbaString(color)
