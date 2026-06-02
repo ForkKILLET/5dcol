@@ -34,6 +34,10 @@ export interface Board {
   canCastleKW: boolean
   canCastleQB: boolean
   canCastleKB: boolean
+
+  createdBy: Move | null
+  createdByPlayer: Player | null
+  createdByRole: 'both' | 'source' | 'target' | null
 }
 
 export interface Line {
@@ -191,6 +195,10 @@ export namespace Coord {
     turn * 2 + player
   )
 
+  export const boardIndex = (coord: CoordTimelike, player: Player): number => (
+    Coord.time(coord.t, player)
+  )
+
   export const turn = (time: number, player: Player): number => (
     (time - player) / 2
   )
@@ -203,9 +211,9 @@ export namespace Coord {
     x >= 0 && x < 8 && y >= 0 && y < 8
   )
 
-  export const isFreshBoard = ({ l, t }: CoordTimelike, multiverse: Multiverse) => {
+  export const isFreshBoard = ({ l, t }: CoordTimelike, multiverse: Multiverse, player: Player) => {
     const line = Multiverse.getLine(multiverse, l)
-    return t + 1 === line.boards.length
+    return Coord.time(t, player) + 1 === line.boards.length
   }
 
   export function * spacelikes() {
@@ -230,6 +238,13 @@ export namespace Players {
   )
 }
 
+interface Coord4Delta {
+  x: number
+  y: number
+  t: number
+  l: number
+}
+
 // Initialization
 
 export namespace Board {
@@ -248,6 +263,9 @@ export namespace Board {
     canCastleKW: true,
     canCastleQB: true,
     canCastleKB: true,
+    createdBy: null,
+    createdByPlayer: null,
+    createdByRole: null,
   })
 }
 
@@ -529,6 +547,298 @@ export namespace Board {
 }
 
 export namespace Multiverse {
+  const TL_ORTHOGONAL_DIRECTIONS: Coord4Delta[] = [
+    { x: 0, y: 0, t: 0, l: 1 },
+    { x: 0, y: 0, t: 0, l: -1 },
+    { x: 0, y: 0, t: -1, l: 0 },
+  ]
+  const TL_DIAGONAL_DIRECTIONS: Coord4Delta[] = [
+    { x: 0, y: 0, t: 1, l: 1 },
+    { x: 0, y: 0, t: 1, l: -1 },
+    { x: 0, y: 0, t: -1, l: 1 },
+    { x: 0, y: 0, t: -1, l: -1 },
+  ]
+  const TL_BOTH_DIRECTIONS = [...TL_ORTHOGONAL_DIRECTIONS, ...TL_DIAGONAL_DIRECTIONS]
+  const XY_ORTHOGONAL_DIRECTIONS: CoordSpacelike[] = [
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+    { x: 0, y: 1 },
+    { x: 0, y: -1 },
+  ]
+  const XY_DIAGONAL_DIRECTIONS: CoordSpacelike[] = [
+    { x: 1, y: 1 },
+    { x: 1, y: -1 },
+    { x: -1, y: 1 },
+    { x: -1, y: -1 },
+  ]
+  const XY_BOTH_DIRECTIONS = [...XY_ORTHOGONAL_DIRECTIONS, ...XY_DIAGONAL_DIRECTIONS]
+
+  export const getBoard = (
+    multiverse: Multiverse,
+    coord: CoordTimelike,
+    player: Player,
+  ): Board | null => {
+    const line = Multiverse.getLine(multiverse, coord.l)
+    return line?.boards[Coord.boardIndex(coord, player)] ?? null
+  }
+
+  export const isPlayableBoard = (
+    multiverse: Multiverse,
+    player: Player,
+    coord: CoordTimelike,
+  ): boolean => {
+    const line = Multiverse.getLine(multiverse, coord.l)
+    if (! line) return false
+
+    const m = Coord.boardIndex(coord, player)
+    return Line.getLatestBoardIndex(line) === m
+  }
+
+  export const getPreviousBoard = (
+    multiverse: Multiverse,
+    { l, t }: CoordTimelike,
+    player: Player,
+  ): Board | null => {
+    const line = Multiverse.getLine(multiverse, l)
+    return line?.boards[Coord.time(t, player) - 1] ?? null
+  }
+
+  export const getMoveTargets = (
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+  ): Coord[] => {
+    const board = Multiverse.getBoard(multiverse, from, player)
+    if (! board) return []
+
+    const piece = Board.getPiece(from, board)
+    if (Pieces.getPlayer(piece) !== player) return []
+
+    const targets: Coord[] = []
+    const addTarget = (target: Coord): boolean => {
+      if (! Coord.isInBoard(target)) return false
+
+      const targetBoard = Multiverse.getBoard(multiverse, target, player)
+      if (! targetBoard) return false
+
+      const targetPiece = Board.getPiece(target, targetBoard)
+      if (Pieces.getPlayer(targetPiece) === player) return false
+
+      if (! targets.some(existing => Coord.isSameBoard(existing, target) && Coord.isSameSpace(existing, target))) {
+        targets.push(target)
+      }
+      return targetPiece === Piece.E
+    }
+
+    for (const target of Board.getMoveTargets2D(board, from, {
+      previousBoard: Multiverse.getPreviousBoard(multiverse, from, player),
+    })) {
+      addTarget({ ...target, l: from.l, t: from.t })
+    }
+
+    switch (piece) {
+      case Piece.KW:
+      case Piece.KB:
+        addKing5DTargets(targets, multiverse, from, player)
+        break
+      case Piece.RW:
+      case Piece.RB:
+        addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS)
+        break
+      case Piece.BW:
+      case Piece.BB:
+        addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_DIAGONAL_DIRECTIONS)
+        addCompoundSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS, XY_ORTHOGONAL_DIRECTIONS)
+        break
+      case Piece.QW:
+      case Piece.QB:
+        addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS)
+        addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_DIAGONAL_DIRECTIONS)
+        addCompoundSlidingTargets(targets, multiverse, from, player, TL_BOTH_DIRECTIONS, XY_BOTH_DIRECTIONS)
+        break
+      case Piece.NW:
+      case Piece.NB:
+        addKnight5DTargets(targets, multiverse, from, player)
+        break
+      case Piece.PW:
+      case Piece.PB:
+        addPawn5DTargets(targets, multiverse, from, player)
+        break
+    }
+
+    return targets
+  }
+
+  export const getMoveArrivalBoardIndex = (
+    { from, to }: Move,
+    player: Player,
+    multiverse: Multiverse,
+  ): { l: number, m: number } => {
+    const toM = Coord.boardIndex(to, player)
+    if (Coord.isSameBoard(from, to)) return { l: from.l, m: Coord.boardIndex(from, player) + 1 }
+    if (Coord.isFreshBoard(to, multiverse, player)) return { l: to.l, m: toM + 1 }
+    return {
+      l: player === Player.W
+        ? multiverse.lFurthestW - multiverse.lOffset + 1
+        : multiverse.lFurthestB - multiverse.lOffset - 1,
+      m: toM + 1,
+    }
+  }
+
+  const addKing5DTargets = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+  ): void => {
+    for (const tl of TL_BOTH_DIRECTIONS) {
+      for (const xy of [{ x: 0, y: 0 }, ...XY_BOTH_DIRECTIONS]) {
+        addStepTarget(targets, multiverse, from, player, {
+          x: xy.x,
+          y: xy.y,
+          t: tl.t,
+          l: tl.l,
+        })
+      }
+    }
+  }
+
+  const addKnight5DTargets = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+  ): void => {
+    for (const tl of [
+      { t: 2, l: 1 }, { t: 1, l: 2 }, { t: -2, l: 1 }, { t: 1, l: -2 },
+      { t: 2, l: -1 }, { t: -1, l: 2 }, { t: -2, l: -1 }, { t: -1, l: -2 },
+    ]) {
+      addStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: tl.t, l: tl.l })
+    }
+
+    for (const tl of TL_ORTHOGONAL_DIRECTIONS) {
+      for (const xy of [
+        { x: 2, y: 0 }, { x: -2, y: 0 }, { x: 0, y: 2 }, { x: 0, y: -2 },
+      ]) {
+        addStepTarget(targets, multiverse, from, player, { x: xy.x, y: xy.y, t: tl.t, l: tl.l })
+      }
+    }
+
+    for (const tl of [
+      { t: 0, l: 2 }, { t: 0, l: -2 }, { t: -2, l: 0 },
+    ]) {
+      for (const xy of XY_ORTHOGONAL_DIRECTIONS) {
+        addStepTarget(targets, multiverse, from, player, { x: xy.x, y: xy.y, t: tl.t, l: tl.l })
+      }
+    }
+  }
+
+  const addPawn5DTargets = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+  ): void => {
+    const lForward = player === Player.W ? -1 : 1
+    const captureDeltas = player === Player.W
+      ? [{ t: 1, l: -1 }, { t: -1, l: -1 }]
+      : [{ t: 1, l: 1 }, { t: -1, l: 1 }]
+
+    for (const delta of captureDeltas) {
+      const target = { ...from, t: from.t + delta.t, l: from.l + delta.l }
+      const board = Multiverse.getBoard(multiverse, target, player)
+      if (! board) continue
+      if (Pieces.getPlayer(Board.getPiece(target, board)) === Players.opponent(player)) {
+        addStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: delta.t, l: delta.l })
+      }
+    }
+
+    const forward = { ...from, l: from.l + lForward }
+    const forwardBoard = Multiverse.getBoard(multiverse, forward, player)
+    if (! forwardBoard || Board.getPiece(forward, forwardBoard) !== Piece.E) return
+
+    addStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: 0, l: lForward })
+
+    const startRank = player === Player.W ? 6 : 1
+    if (from.y !== startRank) return
+
+    const doubleForward = { ...from, l: from.l + lForward * 2 }
+    const doubleForwardBoard = Multiverse.getBoard(multiverse, doubleForward, player)
+    if (doubleForwardBoard && Board.getPiece(doubleForward, doubleForwardBoard) === Piece.E) {
+      addStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: 0, l: lForward * 2 })
+    }
+  }
+
+  const addPureTimelineSlidingTargets = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+    directions: Coord4Delta[],
+  ): void => {
+    for (const direction of directions) {
+      for (let n = 1; n < 8; n ++) {
+        const canContinue = addStepTarget(targets, multiverse, from, player, {
+          x: 0,
+          y: 0,
+          t: direction.t * n,
+          l: direction.l * n,
+        })
+        if (! canContinue) break
+      }
+    }
+  }
+
+  const addCompoundSlidingTargets = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+    tlDirections: Coord4Delta[],
+    xyDirections: CoordSpacelike[],
+  ): void => {
+    for (const tl of tlDirections) {
+      for (const xy of xyDirections) {
+        for (let n = 1; n < 8; n ++) {
+          const canContinue = addStepTarget(targets, multiverse, from, player, {
+            x: xy.x * n,
+            y: xy.y * n,
+            t: tl.t * n,
+            l: tl.l * n,
+          })
+          if (! canContinue) break
+        }
+      }
+    }
+  }
+
+  const addStepTarget = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+    delta: Coord4Delta,
+  ): boolean => {
+    const target = {
+      x: from.x + delta.x,
+      y: from.y + delta.y,
+      t: from.t + delta.t,
+      l: from.l + delta.l,
+    }
+    if (! Coord.isInBoard(target)) return false
+
+    const board = Multiverse.getBoard(multiverse, target, player)
+    if (! board) return false
+
+    const piece = Board.getPiece(target, board)
+    if (Pieces.getPlayer(piece) === player) return false
+
+    if (! targets.some(existing => Coord.isSameBoard(existing, target) && Coord.isSameSpace(existing, target))) {
+      targets.push(target)
+    }
+    return piece === Piece.E
+  }
+
   const advance = (
     { l, t }: CoordTimelike,
     player: Player,
@@ -652,6 +962,17 @@ export namespace Multiverse {
     Board.setPiece(capturedPos, board, Piece.E)
   }
 
+  const setBoardCreation = (
+    board: Board,
+    move: Move,
+    player: Player,
+    role: Board['createdByRole'],
+  ): void => {
+    board.createdBy = move
+    board.createdByPlayer = player
+    board.createdByRole = role
+  }
+
   export const applyMove = ({ from, to }: Move, player: Player, multiverseOld: Multiverse) => create(multiverseOld, (multiverse) => {
     const move = { from, to }
     const boardFromNew = advance(from, player, multiverse)
@@ -660,6 +981,7 @@ export namespace Multiverse {
 
     updateCastlingRightsForMove(boardFromNew, piece, from)
     updateCastlingRightsForCapture(boardFromNew, targetPiece, to)
+    setBoardCreation(boardFromNew, move, player, Coord.isSameBoard(from, to) ? 'both' : 'source')
 
     Board.setPiece(from, boardFromNew, Piece.E)
     if (Coord.isSameBoard(from, to)) {
@@ -667,12 +989,16 @@ export namespace Multiverse {
       Board.setPiece(to, boardFromNew, piece)
       applyCastlingRookMove(boardFromNew, piece, from, to)
     }
-    else if (Coord.isFreshBoard(to, multiverse)) {
+    else if (Coord.isFreshBoard(to, multiverse, player)) {
       const boardToNew = advance(to, player, multiverse)
+      updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
+      setBoardCreation(boardToNew, move, player, 'target')
       Board.setPiece(to, boardToNew, piece)
     }
     else {
       const boardToNew = fork(to, player, multiverse)
+      updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
+      setBoardCreation(boardToNew, move, player, 'target')
       Board.setPiece(to, boardToNew, piece)
     }
     multiverse.lastMove = move

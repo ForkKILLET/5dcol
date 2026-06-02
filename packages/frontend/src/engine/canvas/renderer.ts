@@ -1,5 +1,5 @@
 import { Color4, Mat3, type Device as Screen } from '@engine/basic'
-import { CircleRenderItem, type CornerRadii, type FillStyle, PolygonRenderItem, QuadRenderItem, Renderer, RoundRectRenderItem, TextRenderItem, TextureRenderItem } from '@engine/renderer'
+import { CircleRenderItem, type CornerRadii, CurveRenderItem, type FillStyle, PolygonRenderItem, QuadRenderItem, Renderer, RoundRectRenderItem, TextRenderItem, TextureRenderItem } from '@engine/renderer'
 import { CanvasBitmapTexture, CanvasSVGTexture, CanvasTextureManager, CanvasTextureType } from '@engine/canvas/textureManager'
 import type { Logger } from '@engine/logger'
 import { exhuastive } from '@/utils'
@@ -142,7 +142,7 @@ export class CanvasRenderer extends Renderer {
       this.ctx.fill()
     }
     if (stroke) {
-      this.ctx.strokeStyle = Color4.toRgbaString(stroke)
+      this.ctx.strokeStyle = this.getFillStyle(stroke)
       this.ctx.lineWidth = item.strokeWidth ?? 1
       this.ctx.stroke()
     }
@@ -190,14 +190,33 @@ export class CanvasRenderer extends Renderer {
     for (const point of otherPoints) this.ctx.lineTo(...point)
     this.ctx.closePath()
     if (item.fill) {
-      this.ctx.fillStyle = Color4.toRgbaString(item.fill)
+      this.ctx.fillStyle = this.getFillStyle(item.fill)
       this.ctx.fill()
     }
     if (item.stroke) {
-      this.ctx.strokeStyle = Color4.toRgbaString(item.stroke)
+      this.ctx.strokeStyle = this.getFillStyle(item.stroke)
       this.ctx.lineWidth = item.strokeWidth ?? 1
       this.ctx.stroke()
     }
+  }
+
+  drawCurve(item: CurveRenderItem): void {
+    this.applyTransform(Mat3.identity(), item.space)
+    this.ctx.beginPath()
+    this.ctx.moveTo(...item.from)
+    this.ctx.bezierCurveTo(
+      item.control1[0],
+      item.control1[1],
+      item.control2[0],
+      item.control2[1],
+      item.to[0],
+      item.to[1],
+    )
+    this.ctx.strokeStyle = Color4.toRgbaString(item.stroke)
+    this.ctx.lineWidth = item.strokeWidth ?? 1
+    this.ctx.lineCap = 'round'
+    this.ctx.lineJoin = 'round'
+    this.ctx.stroke()
   }
 
   drawCircle(item: CircleRenderItem): void {

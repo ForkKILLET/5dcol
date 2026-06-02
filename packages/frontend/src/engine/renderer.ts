@@ -12,7 +12,7 @@ export abstract class Renderer extends Disposable(Empty) {
   }
 
   protected camera: Camera = {
-    scale: 1,
+    scale: 2,
     center: [0, 0],
   }
   protected screen: Screen = uninitialized
@@ -27,6 +27,7 @@ export abstract class Renderer extends Disposable(Empty) {
   abstract drawQuad(item: QuadRenderItem): void
   abstract drawRoundRect(item: RoundRectRenderItem): void
   abstract drawPolygon(item: PolygonRenderItem): void
+  abstract drawCurve(item: CurveRenderItem): void
   abstract drawCircle(item: CircleRenderItem): void
   abstract drawTexture(item: TextureRenderItem): void
   abstract drawText(item: TextRenderItem): void
@@ -116,6 +117,9 @@ export abstract class Renderer extends Disposable(Empty) {
         case RenderItemType.Polygon:
           this.drawPolygon(item)
           break
+        case RenderItemType.Curve:
+          this.drawCurve(item)
+          break
         case RenderItemType.Circle:
           this.drawCircle(item)
           break
@@ -136,6 +140,7 @@ export const enum RenderItemType {
   RoundRect,
   Texture,
   Polygon,
+  Curve,
   Circle,
   Text,
 }
@@ -190,8 +195,18 @@ export interface TextureRenderItem extends RenderItemBase {
 export interface PolygonRenderItem extends RenderItemBase {
   type: RenderItemType.Polygon
   points: Vec2[]
-  fill: Color4 | null
-  stroke: Color4 | null
+  fill: FillStyle | null
+  stroke: FillStyle | null
+  strokeWidth?: number
+}
+
+export interface CurveRenderItem extends RenderItemBase {
+  type: RenderItemType.Curve
+  from: Vec2
+  control1: Vec2
+  control2: Vec2
+  to: Vec2
+  stroke: Color4
   strokeWidth?: number
 }
 
@@ -222,5 +237,6 @@ export type RenderItem =
   | RoundRectRenderItem
   | TextureRenderItem
   | PolygonRenderItem
+  | CurveRenderItem
   | CircleRenderItem
   | TextRenderItem

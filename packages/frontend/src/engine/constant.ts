@@ -11,6 +11,7 @@ export const enum RenderLayer {
   BoardBorder,
   Board,
   Piece,
+  MoveHighlight,
   PieceGhost,
   AnimatedBoardBorder,
   AnimatedBoard,
@@ -38,6 +39,13 @@ export namespace Sizes {
   export const ActiveBoardBorder = 7
   export const BoardBorderRadius = 2
   export const ActiveBoardBorderRadius = 8
+  export const MoveArrowStrokeWidth = 1
+  export const MoveArrowShaftWidth = 5
+  export const MoveArrowHeadLength = 8
+  export const MoveArrowHeadWidth = 6
+  export const MoveArrowCurveOffset = 36
+  export const MoveArrowCurveSamples = 32
+  export const MoveArrowFadeLength = 28
 
   export const TurnHeight = BoardMarginWidth
   export const TurnWidth = BoardMarginWidth * 2
@@ -48,6 +56,7 @@ export namespace Sizes {
   export const LineArrowShaftLength = 20
   export const LineArrowTip = 23
   export const LineBorderWidth = 1
+  export const LineStartSegmentLength = BoardWidth + BoardGap
 
   export const LineShadowOffset: Vec2 = [-6, 5]
   export const BoardShadowOffset: Vec2 = [-13, 13]
@@ -103,6 +112,11 @@ export namespace Colors {
 
   export const BoardHighlightBlack = Color4.fromRgba(133, 156, 96, 1)
   export const BoardHighlightWhite = Color4.fromRgba(149, 170, 106, 1)
+  export const MoveHighlight2DBlack = Color4.fromRgba(220, 206, 96, 1)
+  export const MoveHighlight2DWhite = Color4.fromRgba(237, 222, 124, 1)
+  export const MoveHighlight5DBlack = Color4.fromRgba(140, 136, 219, 1)
+  export const MoveHighlight5DWhite = Color4.fromRgba(158, 153, 226, 1)
+  export const MoveArrowFill = Color4.fromRgba(150, 144, 223, 1)
 
   export const BoardTimeBlack = Color4.fromRgba(191, 191, 187, 1)
   export const BoardTimeWhite = Color4.fromRgba(200, 200, 195, 1)
@@ -138,6 +152,11 @@ export namespace ButtonColors {
   export const Yellow: ButtonColorPreset = {
     border: Color4.fromRgba(200, 182, 61, 1),
     fill: Color4.fromRgba(220, 206, 96, 1),
+  }
+
+  export const FiveD: ButtonColorPreset = {
+    border: Color4.fromRgba(117, 106, 222, 1),
+    fill: Color4.fromRgba(140, 136, 219, 1),
   }
 
   export const Green: ButtonColorPreset = {
