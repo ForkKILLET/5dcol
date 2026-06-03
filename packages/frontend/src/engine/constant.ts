@@ -65,6 +65,7 @@ export namespace Sizes {
   export const PointerDebugWidth = 10
 
   export const ButtonWidth = 230
+  export const RestartButtonWidth = 150
   export const ButtonHeight = 52
   export const ButtonTop = 18
   export const ButtonShadowOffset = 5

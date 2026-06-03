@@ -58,6 +58,14 @@ interface PendingMove {
     m: number
   }
 }
+interface StoredGameState {
+  version: 1
+  multiverseCommitted: Multiverse
+  multiverse: Multiverse
+  player: Player
+  actionIndex: number
+  pendingMoves: PendingMove[]
+}
 interface BoardSquareHit {
   l: number
   m: number
@@ -109,6 +117,7 @@ const PRESENT_LABEL_FONT = 'Georgia, Times New Roman, serif'
 const UI_FONT = 'Georgia, Times New Roman, serif'
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
+const GAME_STORAGE_KEY = '5dcol.gameState'
 
 const isTextInputEvent = (e: KeyboardEvent): boolean => {
   const target = e.target
@@ -333,8 +342,10 @@ export class Game {
   private disposed = false
 
   public start() {
+    const restored = this.restoreGameState()
     this.renderer.start()
-    this.focusInitialTurn()
+    if (restored) this.focusCurrentPresent()
+    else this.focusInitialTurn()
     this.bindEvents()
     this.animationFrame = requestAnimationFrame(this.loop)
     this.logger.info('Game started')
@@ -350,6 +361,118 @@ export class Game {
 
   private collect(effect: Effect) {
     this.effects.push(effect)
+  }
+
+  private restoreGameState(): boolean {
+    const storage = this.getLocalStorage()
+    if (! storage) return false
+
+    try {
+      const raw = storage.getItem(GAME_STORAGE_KEY)
+      if (! raw) return false
+
+      const state = JSON.parse(raw) as Partial<StoredGameState>
+      if (! this.isStoredGameState(state)) {
+        this.clearStoredGameState()
+        return false
+      }
+
+      this.multiverseCommitted = state.multiverseCommitted
+      this.multiverse = state.multiverse
+      this.player = state.player
+      this.actionIndex = state.actionIndex
+      this.pendingMoves = state.pendingMoves
+      this.pendingMove = this.pendingMoves.at(-1) ?? null
+      this.moveAnimation = null
+      this.submitRequestedDuringMoveAnimation = false
+      this.deselectPiece()
+      return true
+    }
+    catch {
+      this.clearStoredGameState()
+      return false
+    }
+  }
+
+  private persistGameState() {
+    const storage = this.getLocalStorage()
+    if (! storage) return
+
+    const state: StoredGameState = {
+      version: 1,
+      multiverseCommitted: this.multiverseCommitted,
+      multiverse: this.multiverse,
+      player: this.player,
+      actionIndex: this.actionIndex,
+      pendingMoves: this.pendingMoves,
+    }
+
+    try {
+      storage.setItem(GAME_STORAGE_KEY, JSON.stringify(state))
+    }
+    catch {
+      this.logger.error('Failed to save game state')
+    }
+  }
+
+  private isStoredGameState(state: Partial<StoredGameState>): state is StoredGameState {
+    return state.version === 1
+      && this.isMultiverseLike(state.multiverseCommitted)
+      && this.isMultiverseLike(state.multiverse)
+      && (state.player === Player.W || state.player === Player.B)
+      && typeof state.actionIndex === 'number'
+      && Array.isArray(state.pendingMoves)
+  }
+
+  private isMultiverseLike(value: unknown): value is Multiverse {
+    if (! value || typeof value !== 'object') return false
+    const multiverse = value as Partial<Multiverse>
+    return Array.isArray(multiverse.lines)
+      && typeof multiverse.lOffset === 'number'
+      && typeof multiverse.lFurthestB === 'number'
+      && typeof multiverse.lFurthestW === 'number'
+  }
+
+  private getLocalStorage(): Storage | null {
+    if (typeof window === 'undefined') return null
+    try {
+      return window.localStorage
+    }
+    catch {
+      return null
+    }
+  }
+
+  private clearStoredGameState() {
+    const storage = this.getLocalStorage()
+    if (! storage) return
+
+    try {
+      storage.removeItem(GAME_STORAGE_KEY)
+    }
+    catch {
+      // Ignore storage cleanup failures; gameplay state should still reset in memory.
+    }
+  }
+
+  private restartGame() {
+    this.multiverseCommitted = Multiverse.createInitial()
+    this.multiverse = this.multiverseCommitted
+    this.player = Player.W
+    this.actionIndex = 0
+    this.selectedPiece = null
+    this.hoverSquare = null
+    this.hoverPiece = null
+    this.pendingMove = null
+    this.pendingMoves = []
+    this.moveAnimation = null
+    this.submitRequestedDuringMoveAnimation = false
+    this.cameraMotion = null
+    this.clearPointerDrag()
+    this.buttonControl.clearHover()
+    this.clearStoredGameState()
+    this.persistGameState()
+    this.focusInitialTurn()
   }
 
   private bindEvents() {
@@ -537,10 +660,42 @@ export class Game {
     }
   }
 
+  private focusCurrentPresent() {
+    const present = Multiverse.getPresent(this.multiverse, this.player)
+    if (present) {
+      const rects = present.lines.flatMap((l): Rect[] => {
+        const line = Multiverse.getLine(this.multiverse, l)
+        if (! line) return []
+
+        const m = Line.getLatestBoardIndex(line)
+        return m === null ? [] : [this.getBoardRect(l, m)]
+      })
+      if (rects.length > 0) {
+        this.focusRects(rects, Sizes.BoardWidth / 2)
+        return
+      }
+    }
+
+    this.focusInitialTurn()
+  }
+
   private focusRect(rect: Rect) {
     const [pos, size] = rect
     this.renderer.setCamera({
       center: Vec2.add(pos, Vec2.scale(size, 0.5)),
+    })
+    this.syncCameraMotion()
+  }
+
+  private focusRects(rects: Rect[], padding = 0) {
+    const bounds = this.getRectBounds(rects)
+    if (! bounds) return
+
+    const camera = this.renderer.getCamera()
+    const scale = this.getScaleToContainRects(rects, padding)
+    this.renderer.setCamera({
+      center: this.getRectCenter(bounds),
+      scale: Math.min(camera.scale, scale),
     })
     this.syncCameraMotion()
   }
@@ -606,10 +761,17 @@ export class Game {
   }
 
   private getToolbarButtons(): ButtonConfig[] {
-    const { widthCss } = this.renderer.getScreen()
+    const { widthCss, heightCss } = this.renderer.getScreen()
     const gap = Sizes.ButtonContentGap * 2
     const leftX = (widthCss - Sizes.ButtonWidth * 2 - gap) / 2
     const rightX = leftX + Sizes.ButtonWidth + gap
+    const restartRect: ScreenRect = [
+      [
+        widthCss - Sizes.RestartButtonWidth - Sizes.ButtonTop,
+        heightCss - Sizes.ButtonHeight - Sizes.ButtonTop,
+      ],
+      [Sizes.RestartButtonWidth, Sizes.ButtonHeight],
+    ]
 
     const leftButton: ButtonConfig = this.selectedPiece
       ? {
@@ -650,6 +812,18 @@ export class Game {
         effect: 'pulse',
         onClick: () => {
           this.submitMoves()
+        },
+      },
+      {
+        id: 'restart-game',
+        rect: restartRect,
+        disabled: false,
+        colorPreset: ButtonColors.Board,
+        turnPlayer: this.player,
+        text: 'Restart',
+        piece: null,
+        onClick: () => {
+          this.restartGame()
         },
       },
     ]
@@ -705,6 +879,7 @@ export class Game {
     }
     this.submitRequestedDuringMoveAnimation = false
     this.selectedPiece = null
+    this.persistGameState()
     return true
   }
 
@@ -720,6 +895,7 @@ export class Game {
     this.moveAnimation = null
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
+    this.persistGameState()
   }
 
   private submitMoves() {
@@ -749,6 +925,7 @@ export class Game {
     this.deselectPiece()
     this.player = CorePlayers.opponent(this.player)
     this.actionIndex += 1
+    this.persistGameState()
   }
 
   private deselectPiece() {
