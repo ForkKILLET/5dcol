@@ -131,7 +131,9 @@ export namespace Colors {
   export const PurpleDark = Color4.fromRgba(132, 93, 156, 1)
 
   export const ButtonText = Color4.fromRgba(39, 39, 39, 1)
+  export const ButtonTextInverted = Color4.fromRgba(244, 245, 237, 1)
   export const ButtonDisabledText = Color4.fromRgba(188, 188, 188, 1)
+  export const ButtonDisabledTextInverted = Color4.fromRgba(248, 249, 244, 1)
 }
 
 export namespace Animations {
@@ -140,51 +142,67 @@ export namespace Animations {
   export const MoveTravelDuration = 450
   export const MoveTravelSpeed = Sizes.BoardMarginWidth / MoveTravelDuration
   export const MoveTravelFadeDuration = 180
+  export const PulseEffectDuration = 300
 }
 
 export interface ButtonColorPreset {
   border: Color4
   fill: Color4
+  text: Color4
 }
 
 export namespace ButtonColors {
   export const Board: ButtonColorPreset = {
     border: Color4.fromRgba(204, 161, 105, 1),
     fill: Color4.fromRgba(231, 191, 142, 1),
+    text: Colors.ButtonText,
   }
 
   export const Yellow: ButtonColorPreset = {
     border: Color4.fromRgba(200, 182, 61, 1),
     fill: Color4.fromRgba(220, 206, 96, 1),
+    text: Colors.ButtonText,
   }
 
   export const FiveD: ButtonColorPreset = {
     border: Color4.fromRgba(117, 106, 222, 1),
     fill: Color4.fromRgba(140, 136, 219, 1),
+    text: Colors.ButtonText,
   }
 
-  export const Green: ButtonColorPreset = {
+  export const GreenWhite: ButtonColorPreset = {
     border: Color4.fromRgba(152, 180, 149, 1),
     fill: Color4.fromRgba(143, 173, 140, 1),
+    text: Colors.ButtonText,
   }
 
   export const GreenBlack: ButtonColorPreset = {
     border: Color4.fromRgba(89, 134, 89, 1),
     fill: Color4.fromRgba(92, 135, 95, 1),
+    text: Colors.ButtonTextInverted,
   }
 
   export const White: ButtonColorPreset = {
     border: Color4.fromRgba(249, 250, 246, 1),
     fill: Color4.fromRgba(241, 241, 236, 1),
+    text: Colors.ButtonText,
+  }
+
+  export const Black: ButtonColorPreset = {
+    border: Color4.fromRgba(39, 39, 39, 1),
+    fill: Color4.fromRgba(64, 64, 74, 1),
+    text: Colors.ButtonTextInverted,
   }
 
   export const DisabledWhite: ButtonColorPreset = {
     border: Color4.fromRgba(249, 250, 246, 1),
     fill: Color4.fromRgba(241, 241, 236, 1),
+    text: Colors.ButtonDisabledText,
   }
 
   export const DisabledBlack: ButtonColorPreset = {
     border: Color4.fromRgba(166, 166, 166, 1),
     fill: Color4.fromRgba(169, 169, 172, 1),
+    text: Colors.ButtonDisabledTextInverted,
   }
 }

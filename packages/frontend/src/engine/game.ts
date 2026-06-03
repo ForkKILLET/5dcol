@@ -100,7 +100,7 @@ interface ButtonConfig {
   turnPlayer: Player
   text: string
   piece: Piece | null
-  effect?: 'submit-pulse'
+  effect?: 'pulse'
   onClick: () => void
 }
 
@@ -179,7 +179,6 @@ class ButtonControl {
     const hovered = this.hoverId === button.id
     const collapsed = pressed || button.disabled
     const colors = this.getButtonColors(button, hovered)
-    const fill = this.getButtonFill(button, colors)
     const shadowOffset = Sizes.ButtonShadowOffset
     const bodyRect: ScreenRect = collapsed
       ? [Vec2.add(button.rect[0], [0, shadowOffset]), button.rect[1]]
@@ -195,11 +194,11 @@ class ButtonControl {
     this.renderRoundRect(
       renderer,
       bodyRect,
-      fill,
+      colors.fill,
       colors.border,
     )
 
-    this.renderContent(renderer, button, bodyRect)
+    this.renderContent(renderer, button, colors, bodyRect)
   }
 
   private getButtonAt(screen: Vec2): ButtonConfig | null {
@@ -210,34 +209,31 @@ class ButtonControl {
     if (button.disabled) {
       return button.turnPlayer === Player.W ? ButtonColors.DisabledWhite : ButtonColors.DisabledBlack
     }
+    if (button.effect === 'pulse') return this.getPulseColors(button)
     if (hovered) return this.getGreenColors(button.turnPlayer)
     return button.colorPreset
   }
 
-  private getButtonFill(button: ButtonConfig, colors: ButtonColorPreset): FillStyle {
-    if (button.effect !== 'submit-pulse' || button.disabled) return colors.fill
-
-    const phase = (Math.sin(performance.now() / 650) + 1) / 2
-    const green = button.turnPlayer === Player.W ? ButtonColors.Green.fill : ButtonColors.GreenBlack.fill
-    const pulseColor = Color4.mix(colors.fill, green, 0.18 + phase * 0.32)
-
+  private getPulseColors(button: ButtonConfig): ButtonColorPreset {
+    const phase = (Math.sin(performance.now() / Animations.PulseEffectDuration) + 1) / 2
+    const green = this.getGreenColors(button.turnPlayer)
     return {
-      type: 'linear-gradient',
-      from: [0, 0],
-      to: [button.rect[1][0], button.rect[1][1]],
-      stops: [
-        { offset: 0, color: colors.fill },
-        { offset: 0.45, color: pulseColor },
-        { offset: 1, color: colors.fill },
-      ],
+      border: Color4.mix(button.colorPreset.border, green.border, phase),
+      fill: Color4.mix(button.colorPreset.fill, green.fill, phase),
+      text: Color4.mix(button.colorPreset.text, green.text, phase),
     }
   }
 
   private getGreenColors(player: Player): ButtonColorPreset {
-    return player === Player.W ? ButtonColors.Green : ButtonColors.GreenBlack
+    return player === Player.W ? ButtonColors.GreenWhite : ButtonColors.GreenBlack
   }
 
-  private renderContent(renderer: Renderer, button: ButtonConfig, [[x, y], [w, h]]: ScreenRect) {
+  private renderContent(
+    renderer: Renderer,
+    button: ButtonConfig,
+    colors: ButtonColorPreset,
+    [[x, y], [w, h]]: ScreenRect,
+  ) {
     const iconSize = Sizes.ButtonIconSize
     const gap = Sizes.ButtonContentGap
     const textWidth = this.getTextWidth(button.text)
@@ -254,7 +250,7 @@ class ButtonControl {
       text: button.text,
       fontSize: Sizes.ButtonFontSize,
       fontFamily: UI_FONT,
-      color: button.disabled ? Colors.ButtonDisabledText : Colors.ButtonText,
+      color: colors.text,
       align: 'center',
       baseline: 'middle',
     })
@@ -647,11 +643,11 @@ export class Game {
         id: 'submit-moves',
         rect: [[rightX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
         disabled: ! this.canSubmitMoves() || this.submitRequestedDuringMoveAnimation,
-        colorPreset: ButtonColors.White,
+        colorPreset: this.getSubmitMovesButtonColor(),
         turnPlayer: this.player,
         text: 'Submit Moves',
         piece: null,
-        effect: 'submit-pulse',
+        effect: 'pulse',
         onClick: () => {
           this.submitMoves()
         },
@@ -765,6 +761,10 @@ export class Game {
 
   private getUndoMoveButtonColor(): ButtonColorPreset {
     return this.pendingMoves.at(-1)?.is5D ? ButtonColors.FiveD : ButtonColors.Yellow
+  }
+
+  private getSubmitMovesButtonColor(): ButtonColorPreset {
+    return this.player === Player.W ? ButtonColors.White : ButtonColors.Black
   }
 
   private isMoveAnimating(): boolean {
