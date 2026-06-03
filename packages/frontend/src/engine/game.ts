@@ -32,6 +32,16 @@ interface CameraMotion {
   targetCenter: Vec2
   targetScale: number
   anchorScreen: Vec2
+  viewport?: Rect | null
+}
+interface ViewportMoveOptions {
+  smooth?: boolean
+  viewport?: Rect | null
+  anchorScreen?: Vec2
+  cancelMotion?: boolean
+}
+interface ViewportFocusOptions {
+  smooth?: boolean
 }
 interface PieceSelection {
   l: number
@@ -344,8 +354,8 @@ export class Game {
   public start() {
     const restored = this.restoreGameState()
     this.renderer.start()
-    if (restored) this.focusCurrentPresent()
-    else this.focusInitialTurn()
+    if (restored) this.focusCurrentPresent({ smooth: false })
+    else this.focusInitialTurn({ smooth: false })
     this.bindEvents()
     this.animationFrame = requestAnimationFrame(this.loop)
     this.logger.info('Game started')
@@ -545,11 +555,11 @@ export class Game {
     const delta = Vec2.sub(worldCurrent, worldLast)
     const camera = this.renderer.getCamera()
 
-    this.renderer.setCamera({
+    this.setViewportImmediate({
       center: Vec2.sub(camera.center, delta),
+    }, {
+      viewport: this.getRenderViewportRect(),
     })
-    this.clampCameraToRenderViewport()
-    this.syncCameraMotion()
     this.pointer.dragLastScreen = screen
   }
 
@@ -616,7 +626,7 @@ export class Game {
     const camera = this.renderer.getCamera()
     const step = CameraControl.KeyboardPanStep / camera.scale
     const targetCenter = this.cameraMotion?.targetCenter ?? camera.center
-    this.setCameraMotion({
+    this.moveViewportTo({
       targetCenter: this.clampCameraCenterToValidViewportIfAvailable(
         Vec2.add(targetCenter, Vec2.scale(direction, step)),
       ),
@@ -626,7 +636,7 @@ export class Game {
   private zoomCameraByStep(step: number) {
     const camera = this.renderer.getCamera()
     const targetScale = this.cameraMotion?.targetScale ?? camera.scale
-    this.setCameraMotion({
+    this.moveViewportTo({
       targetScale: Scalar.clamp(
         targetScale + step,
         CameraControl.ZoomMin,
@@ -635,32 +645,62 @@ export class Game {
     })
   }
 
-  private setCameraMotion(motion: Partial<CameraMotion>) {
+  private setCameraMotion(motion: Partial<CameraMotion>, options: ViewportMoveOptions = {}) {
     const camera = this.renderer.getCamera()
     this.cameraMotion = {
       targetCenter: motion.targetCenter ?? this.cameraMotion?.targetCenter ?? camera.center,
       targetScale: motion.targetScale ?? this.cameraMotion?.targetScale ?? camera.scale,
-      anchorScreen: motion.anchorScreen ?? this.cameraMotion?.anchorScreen ?? this.getViewportCenterScreen(),
+      anchorScreen: options.anchorScreen ?? motion.anchorScreen ?? this.cameraMotion?.anchorScreen ?? this.getViewportCenterScreen(),
+      viewport: options.viewport,
     }
   }
 
-  public focusTurn(l: number, m: number) {
-    this.focusRect(this.getTurnRect(l, m))
+  private moveViewportTo(motion: Partial<CameraMotion>, options: ViewportMoveOptions = {}) {
+    if (options.smooth === false) {
+      this.setViewportImmediate({
+        center: motion.targetCenter,
+        scale: motion.targetScale,
+      }, { ...options, cancelMotion: true })
+      return
+    }
+
+    this.setCameraMotion(motion, options)
   }
 
-  public focusBoard(l: number, m: number) {
-    this.focusRect(this.getBoardRect(l, m))
+  private setViewportImmediate(camera: Partial<Camera>, options: ViewportMoveOptions = {}) {
+    if (options.cancelMotion) this.cameraMotion = null
+
+    if (camera.scale !== undefined) {
+      this.renderer.setCamera({
+        scale: Scalar.clamp(camera.scale, CameraControl.ZoomMin, CameraControl.ZoomMax),
+      })
+    }
+
+    const viewport = options.viewport ?? this.getValidViewportRect()
+    const targetCenter = camera.center ?? this.renderer.getCamera().center
+    this.renderer.setCamera({
+      center: viewport ? this.clampCameraCenterToViewport(targetCenter, viewport) : targetCenter,
+    })
+    this.syncCameraMotion()
   }
 
-  private focusInitialTurn() {
+  public focusTurn(l: number, m: number, options: ViewportFocusOptions = {}) {
+    this.focusRect(this.getTurnRect(l, m), options)
+  }
+
+  public focusBoard(l: number, m: number, options: ViewportFocusOptions = {}) {
+    this.focusRect(this.getBoardRect(l, m), options)
+  }
+
+  private focusInitialTurn(options: ViewportFocusOptions = {}) {
     for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
       if (! line) continue
-      this.focusTurn(l, line.mStart)
+      this.focusTurn(l, line.mStart, options)
       return
     }
   }
 
-  private focusCurrentPresent() {
+  private focusCurrentPresent(options: ViewportFocusOptions = {}) {
     const present = Multiverse.getPresent(this.multiverse, this.player)
     if (present) {
       const rects = present.lines.flatMap((l): Rect[] => {
@@ -671,33 +711,35 @@ export class Game {
         return m === null ? [] : [this.getBoardRect(l, m)]
       })
       if (rects.length > 0) {
-        this.focusRects(rects, Sizes.BoardWidth / 2)
+        this.focusRects(rects, Sizes.BoardWidth / 2, options)
         return
       }
     }
 
-    this.focusInitialTurn()
+    this.focusInitialTurn(options)
   }
 
-  private focusRect(rect: Rect) {
+  private focusRect(rect: Rect, options: ViewportFocusOptions = {}) {
     const [pos, size] = rect
-    this.renderer.setCamera({
-      center: Vec2.add(pos, Vec2.scale(size, 0.5)),
+    this.moveViewportTo({
+      targetCenter: Vec2.add(pos, Vec2.scale(size, 0.5)),
+    }, {
+      smooth: options.smooth,
     })
-    this.syncCameraMotion()
   }
 
-  private focusRects(rects: Rect[], padding = 0) {
+  private focusRects(rects: Rect[], padding = 0, options: ViewportFocusOptions = {}) {
     const bounds = this.getRectBounds(rects)
     if (! bounds) return
 
     const camera = this.renderer.getCamera()
     const scale = this.getScaleToContainRects(rects, padding)
-    this.renderer.setCamera({
-      center: this.getRectCenter(bounds),
-      scale: Math.min(camera.scale, scale),
+    this.moveViewportTo({
+      targetCenter: this.getRectCenter(bounds),
+      targetScale: Math.min(camera.scale, scale),
+    }, {
+      smooth: options.smooth,
     })
-    this.syncCameraMotion()
   }
 
   private getTurnRect(l: number, m: number): Rect {
@@ -1127,10 +1169,13 @@ export class Game {
       : Vec2.add(cameraAfterScale.center, Vec2.scale(centerDelta, CameraControl.BounceBackSmoothing))
     this.renderer.setCamera({ center: centerNext })
 
-    this.smoothCameraToValidViewport(CameraControl.BounceBackSmoothing)
+    const viewport = this.getCameraMotionViewport(this.cameraMotion)
+    this.smoothCameraToViewport(viewport, CameraControl.BounceBackSmoothing)
 
     const cameraAfterBounds = this.renderer.getCamera()
-    this.cameraMotion.targetCenter = this.clampCameraCenterToValidViewportIfAvailable(this.cameraMotion.targetCenter)
+    this.cameraMotion.targetCenter = viewport
+      ? this.clampCameraCenterToViewport(this.cameraMotion.targetCenter, viewport)
+      : this.cameraMotion.targetCenter
 
     if (
       scaleNext === this.cameraMotion.targetScale
@@ -1162,6 +1207,10 @@ export class Game {
     return [widthCss / 2, heightCss / 2]
   }
 
+  private getCameraMotionViewport(motion: CameraMotion): Rect | null {
+    return motion.viewport === undefined ? this.getValidViewportRect() : motion.viewport
+  }
+
   private updateCameraBounds() {
     if (this.cameraMotion) return
     if (this.pointer.dragLastScreen) return
@@ -1183,12 +1232,11 @@ export class Game {
     })
   }
 
-  private smoothCameraToValidViewport(smoothing: number) {
-    const validViewport = this.getValidViewportRect()
-    if (! validViewport) return
+  private smoothCameraToViewport(viewport: Rect | null, smoothing: number) {
+    if (! viewport) return
 
     const camera = this.renderer.getCamera()
-    const targetCenter = this.clampCameraCenterToViewport(camera.center, validViewport)
+    const targetCenter = this.clampCameraCenterToViewport(camera.center, viewport)
     const delta = Vec2.sub(targetCenter, camera.center)
     if (Vec2.length(delta) <= CameraControl.BounceBackSnapEpsilon) {
       this.renderer.setCamera({ center: targetCenter })
@@ -1202,12 +1250,6 @@ export class Game {
 
   private clampCameraCenterToValidViewportIfAvailable(center: Vec2): Vec2 {
     const validViewport = this.getValidViewportRect()
-    if (! validViewport) return center
-    return this.clampCameraCenterToViewport(center, validViewport)
-  }
-
-  private clampCameraCenterToMoveAnimationViewport(center: Vec2, pendingMove: PendingMove): Vec2 {
-    const validViewport = this.getMoveAnimationViewportRect(pendingMove)
     if (! validViewport) return center
     return this.clampCameraCenterToViewport(center, validViewport)
   }
@@ -1345,16 +1387,20 @@ export class Game {
   }
 
   private followPendingBoardAnimation(pendingMove: PendingMove, progress: number) {
+    if (! this.moveAnimation) return
+
     const [fromPos, fromSize] = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
     const [toPos] = this.getBoardRect(pendingMove.created.l, pendingMove.created.m)
     const [startPos] = pendingMove.is5D
       ? this.getBoardRect(pendingMove.created.l, pendingMove.created.m - 1)
       : [fromPos]
-    const center = Vec2.add(Vec2.mix(startPos, toPos, progress), Vec2.scale(fromSize, 0.5))
-    this.renderer.setCamera({
-      center: this.clampCameraCenterToMoveAnimationViewport(center, pendingMove),
+    const followCenter = Vec2.add(Vec2.mix(startPos, toPos, progress), Vec2.scale(fromSize, 0.5))
+    const center = Vec2.mix(this.moveAnimation.cameraCenter, followCenter, progress)
+    this.setViewportImmediate({
+      center,
+    }, {
+      viewport: this.getMoveAnimationViewportRect(pendingMove),
     })
-    this.syncCameraMotion()
   }
 
   private followTravelAnimationViewport(pendingMove: PendingMove, progress: number) {
@@ -1389,11 +1435,12 @@ export class Game {
       ),
     ]
 
-    this.renderer.setCamera({ scale })
-    this.renderer.setCamera({
-      center: this.clampCameraCenterToMoveAnimationViewport(center, pendingMove),
+    this.setViewportImmediate({
+      scale,
+      center,
+    }, {
+      viewport: this.getMoveAnimationViewportRect(pendingMove),
     })
-    this.syncCameraMotion()
   }
 
   private getMoveTravelTargetScale(baseScale: number, rects: Rect[], padding = 0): number {
@@ -1880,16 +1927,6 @@ export class Game {
 
   private getRenderViewportRect(): Rect | null {
     return this.getTimeTileViewportRect()
-  }
-
-  private clampCameraToRenderViewport() {
-    const renderViewport = this.getRenderViewportRect()
-    if (! renderViewport) return
-
-    const camera = this.renderer.getCamera()
-    this.renderer.setCamera({
-      center: this.clampCameraCenterToViewport(camera.center, renderViewport),
-    })
   }
 
   private clampCameraCenterToViewport(center: Vec2, viewport: Rect): Vec2 {
