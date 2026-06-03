@@ -144,6 +144,10 @@ export namespace Multiverse {
     return { m: mMin, lines }
   }
 
+  export const getPresentPlayer = (present: Present): Player => (
+    present.m % 2
+  )
+
   export const isPresentBoard = (
     multiverse: Multiverse,
     player: Player,

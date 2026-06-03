@@ -985,7 +985,7 @@ export class Game {
   }
 
   private canSubmitMoves(): boolean {
-    return this.pendingMoves.length > 0 && this.hasMovedEveryPresentBoard()
+    return this.pendingMoves.length > 0 && this.hasSubmittedPresentMoves()
   }
 
   private getUndoMoveButtonColor(): ButtonColorPreset {
@@ -1076,23 +1076,10 @@ export class Game {
     return Math.max(1, length / Animations.MoveTravelSpeed)
   }
 
-  private hasMovedEveryPresentBoard(): boolean {
-    const present = Multiverse.getPresent(this.multiverseCommitted, this.player)
-    if (! present || this.pendingMoves.length === 0) return false
-    return present.lines.every(l => (
-      this.pendingMoves.some(pendingMove => this.pendingMoveCoversBoard(pendingMove, l, present.m))
-    ))
-  }
-
-  private pendingMoveCoversBoard(pendingMove: PendingMove, l: number, m: number): boolean {
-    if (pendingMove.from.l === l && pendingMove.from.m === m) return true
-
-    const toM = Coord.boardIndex(pendingMove.move.to, this.player)
-    const targetWasAdvanced = pendingMove.created.l === pendingMove.move.to.l
-      && pendingMove.created.m === toM + 1
-    return targetWasAdvanced
-      && pendingMove.move.to.l === l
-      && toM === m
+  private hasSubmittedPresentMoves(): boolean {
+    const previewPresent = Multiverse.getPresent(this.multiverse, this.player)
+    if (! previewPresent) return false
+    return Multiverse.getPresentPlayer(previewPresent) !== this.player
   }
 
   private getPieceSelectionAtScreen(screen: Vec2): PieceSelection | null {
