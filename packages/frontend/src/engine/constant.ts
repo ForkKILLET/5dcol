@@ -57,6 +57,9 @@ export namespace Sizes {
   export const LineArrowTip = 23
   export const LineBorderWidth = 1
   export const LineStartSegmentLength = BoardWidth + BoardGap
+  export const LineBranchRadius = (BoardWidth + BoardGap) / 2
+  export const LineBranchWidth = LineArrowRadius * 2
+  export const LineBranchCurveSamples = 8
 
   export const LineShadowOffset: Vec2 = [-6, 5]
   export const BoardShadowOffset: Vec2 = [-13, 13]
@@ -140,9 +143,8 @@ export namespace Colors {
 export namespace Animations {
   export const MoveAnimationDuration = 500
   export const MoveTravelViewportDuration = 260
-  export const MoveTravelDuration = 450
+  export const MoveTravelDuration = 380
   export const MoveTravelSpeed = Sizes.BoardMarginWidth / MoveTravelDuration
-  export const MoveTravelFadeDuration = 180
   export const PulseEffectDuration = 300
 }
 
