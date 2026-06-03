@@ -1714,18 +1714,18 @@ export class Game {
     this.renderPresentIcon(
       iconCenter,
       -1,
-      this.canCreateTimelinePresent(Player.B),
-      Colors.BoardBorderBlack,
-      Colors.BoardBorderBlackDim,
+      this.canCreateTimelinePresent(Player.W),
+      Colors.BoardBorderWhite,
+      Colors.BoardBorderWhiteDim,
     )
 
     const lowerIconCenter: Vec2 = [cx, bounds.bottom + Sizes.TurnHeight * Sizes.PresentIconOffsetTurns]
     this.renderPresentIcon(
       lowerIconCenter,
       1,
-      this.canCreateTimelinePresent(Player.W),
-      Colors.BoardBorderWhite,
-      Colors.BoardBorderWhiteDim,
+      this.canCreateTimelinePresent(Player.B),
+      Colors.BoardBorderBlack,
+      Colors.BoardBorderBlackDim,
     )
   }
 
