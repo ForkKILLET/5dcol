@@ -43,7 +43,7 @@ export namespace Sizes {
   export const MoveArrowShaftWidth = 5
   export const MoveArrowHeadLength = 8
   export const MoveArrowHeadWidth = 6
-  export const MoveArrowCurveOffset = 36
+  export const MoveArrowCurveOffset = 30
   export const MoveArrowCurveSamples = 32
   export const MoveArrowFadeLength = 28
 

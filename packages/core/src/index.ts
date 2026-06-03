@@ -38,6 +38,7 @@ export interface Board {
   createdBy: Move | null
   createdByPlayer: Player | null
   createdByRole: 'both' | 'source' | 'target' | null
+  createdByOrder: number | null
 }
 
 export interface Line {
@@ -270,6 +271,7 @@ export namespace Board {
     createdBy: null,
     createdByPlayer: null,
     createdByRole: null,
+    createdByOrder: null,
   })
 }
 
@@ -971,13 +973,15 @@ export namespace Multiverse {
     move: Move,
     player: Player,
     role: Board['createdByRole'],
+    order: number | null,
   ): void => {
     board.createdBy = move
     board.createdByPlayer = player
     board.createdByRole = role
+    board.createdByOrder = order
   }
 
-  export const applyMove = ({ from, to }: Move, player: Player, multiverseOld: Multiverse) => create(multiverseOld, (multiverse) => {
+  export const applyMove = ({ from, to }: Move, player: Player, multiverseOld: Multiverse, order: number | null = null) => create(multiverseOld, (multiverse) => {
     const move = { from, to }
     const boardFromNew = advance(from, player, multiverse)
     const piece = Board.getPiece(from, boardFromNew)
@@ -985,7 +989,7 @@ export namespace Multiverse {
 
     updateCastlingRightsForMove(boardFromNew, piece, from)
     updateCastlingRightsForCapture(boardFromNew, targetPiece, to)
-    setBoardCreation(boardFromNew, move, player, Coord.isSameBoard(from, to) ? 'both' : 'source')
+    setBoardCreation(boardFromNew, move, player, Coord.isSameBoard(from, to) ? 'both' : 'source', order)
 
     Board.setPiece(from, boardFromNew, Piece.E)
     if (Coord.isSameBoard(from, to)) {
@@ -996,19 +1000,19 @@ export namespace Multiverse {
     else if (Coord.isFreshBoard(to, multiverse, player)) {
       const boardToNew = advance(to, player, multiverse)
       updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
-      setBoardCreation(boardToNew, move, player, 'target')
+      setBoardCreation(boardToNew, move, player, 'target', order)
       Board.setPiece(to, boardToNew, piece)
     }
     else {
       const boardToNew = fork(to, player, multiverse)
       updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
-      setBoardCreation(boardToNew, move, player, 'target')
+      setBoardCreation(boardToNew, move, player, 'target', order)
       Board.setPiece(to, boardToNew, piece)
     }
     multiverse.lastMove = move
   })
 
   export const applyAction = (action: Action, player: Player, multiverseOld: Multiverse) => (
-    action.moves.reduce((multiverse, move) => applyMove(move, player, multiverse), multiverseOld)
+    action.moves.reduce((multiverse, move, index) => applyMove(move, player, multiverse, index), multiverseOld)
   )
 }

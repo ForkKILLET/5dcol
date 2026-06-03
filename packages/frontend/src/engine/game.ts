@@ -57,6 +57,7 @@ interface SquareHover {
 }
 interface PendingMove {
   move: Move
+  order: number
   multiverseBefore: Multiverse
   is5D: boolean
   from: {
@@ -398,10 +399,14 @@ export class Game {
       }
 
       this.multiverseCommitted = state.multiverseCommitted
-      this.multiverse = state.multiverse
       this.player = state.player
       this.actionIndex = state.actionIndex
-      this.pendingMoves = state.pendingMoves
+      this.fillMissingMoveOrders(this.multiverseCommitted, this.getCommittedMoveOrderBase())
+      this.pendingMoves = state.pendingMoves.map((pendingMove, index) => ({
+        ...pendingMove,
+        order: pendingMove.order ?? this.getMoveOrder(index),
+      }))
+      this.multiverse = this.replayPendingMoves()
       this.pendingMove = this.pendingMoves.at(-1) ?? null
       this.moveAnimation = null
       this.submitRequestedDuringMoveAnimation = false
@@ -911,8 +916,10 @@ export class Game {
     }
     const multiverseBefore = this.multiverse
     const created = Multiverse.getMoveArrivalBoardIndex(move, this.player, multiverseBefore)
+    const order = this.getMoveOrder(this.pendingMoves.length)
     const pendingMove: PendingMove = {
       move,
+      order,
       multiverseBefore,
       is5D: ! Coord.isSameBoard(move.from, move.to),
       from: {
@@ -921,7 +928,7 @@ export class Game {
       },
       created,
     }
-    this.multiverse = Multiverse.applyMove(move, this.player, multiverseBefore)
+    this.multiverse = Multiverse.applyMove(move, this.player, multiverseBefore, order)
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
     this.moveAnimation = {
@@ -939,10 +946,7 @@ export class Game {
     if (this.submitRequestedDuringMoveAnimation) return
     if (this.pendingMoves.length === 0) return
     this.pendingMoves.pop()
-    this.multiverse = this.pendingMoves.reduce(
-      (multiverse, pendingMove) => Multiverse.applyMove(pendingMove.move, this.player, multiverse),
-      this.multiverseCommitted,
-    )
+    this.multiverse = this.replayPendingMoves()
     this.pendingMove = this.pendingMoves.at(-1) ?? null
     this.moveAnimation = null
     this.submitRequestedDuringMoveAnimation = false
@@ -986,6 +990,39 @@ export class Game {
 
   private canSubmitMoves(): boolean {
     return this.pendingMoves.length > 0 && this.hasSubmittedPresentMoves()
+  }
+
+  private getMoveOrder(pendingMoveIndex: number): number {
+    return this.actionIndex * 1000000 + pendingMoveIndex
+  }
+
+  private getCommittedMoveOrderBase(): number {
+    return Math.max(0, this.actionIndex - 1) * 1000000
+  }
+
+  private replayPendingMoves(): Multiverse {
+    return this.pendingMoves.reduce(
+      (multiverse, pendingMove) => Multiverse.applyMove(
+        pendingMove.move,
+        this.player,
+        multiverse,
+        pendingMove.order,
+      ),
+      this.multiverseCommitted,
+    )
+  }
+
+  private fillMissingMoveOrders(multiverse: Multiverse, baseOrder: number) {
+    let fallbackIndex = 0
+    for (const [, line] of Multiverse.getLineEntries(multiverse)) {
+      if (! line) continue
+
+      for (const [, board] of Line.getBoardEntries(line)) {
+        if (! board?.createdBy) continue
+        board.createdByOrder ??= baseOrder + fallbackIndex
+        fallbackIndex += 1
+      }
+    }
   }
 
   private getUndoMoveButtonColor(): ButtonColorPreset {
@@ -1296,7 +1333,7 @@ export class Game {
       this.getPresentDisplayPlayer(pendingMove.multiverseBefore),
     )
     this.renderMultiverseSourceAnimation(pendingMove, Scalar.smoothstep(sourceProgress))
-    this.renderMoveArrow(pendingMove.move, this.player)
+    this.renderMoveArrow(pendingMove.move, this.player, 1, pendingMove.order)
     if (sourceProgress >= 1) {
       this.renderTravelPiece(pendingMove, pieceProgress, 1)
     }
@@ -2605,10 +2642,10 @@ export class Game {
     if (! move || player === null || board.createdByRole !== 'target') return
     if (Coord.isSameBoard(move.from, move.to)) return
 
-    this.renderMoveArrow(move, player, alpha)
+    this.renderMoveArrow(move, player, alpha, board.createdByOrder ?? 0)
   }
 
-  private renderMoveArrow(move: Move, player: Player, alpha = 1) {
+  private renderMoveArrow(move: Move, player: Player, alpha = 1, order = 0) {
     const geometry = this.getMoveArrowGeometry(move, player)
     if (! geometry) return
 
@@ -2624,6 +2661,7 @@ export class Game {
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.MoveHighlight,
+      order,
       points,
       fill: this.getMoveArrowMaskFill(
         Color4.withAlpha(Colors.MoveArrowFill, alpha),
@@ -2648,9 +2686,13 @@ export class Game {
     const to = this.getSquareCenter(move.to.l, toM, move.to)
     const horizontal = Math.abs(to[0] - from[0]) >= Math.abs(to[1] - from[1])
     const direction = Vec2.sub(to, from)
-    const bend = horizontal
-      ? Vec2.scale([0, direction[0] >= 0 ? -1 : 1], Sizes.MoveArrowCurveOffset)
-      : Vec2.scale([direction[1] >= 0 ? 1 : -1, 0], Sizes.MoveArrowCurveOffset)
+    const playerBendDirection = player === Player.W ? 1 : -1
+    const bend = Vec2.scale(
+      horizontal
+        ? [0, direction[0] >= 0 ? -1 : 1]
+        : [direction[1] >= 0 ? 1 : -1, 0],
+      Sizes.MoveArrowCurveOffset * playerBendDirection,
+    )
     const control1 = Vec2.add(Vec2.add(from, Vec2.scale(direction, 0.35)), bend)
     const control2 = Vec2.add(Vec2.add(from, Vec2.scale(direction, 0.65)), bend)
 

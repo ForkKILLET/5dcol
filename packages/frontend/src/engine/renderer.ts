@@ -101,7 +101,9 @@ export abstract class Renderer extends Disposable(Empty) {
   }
 
   flush() {
-    this.renderItems.sort((a, b) => a.layer - b.layer)
+    this.renderItems.sort((a, b) => (
+      a.layer - b.layer || (a.order ?? 0) - (b.order ?? 0)
+    ))
 
     for (const item of this.renderItems) {
       switch (item.type) {
@@ -148,6 +150,7 @@ export const enum RenderItemType {
 export interface RenderItemBase {
   layer: RenderLayer
   space?: 'world' | 'screen'
+  order?: number
 }
 
 export interface QuadRenderItem extends RenderItemBase {
