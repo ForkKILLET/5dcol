@@ -74,6 +74,10 @@ export namespace Scalar {
   export const clamp = (x: number, min: number, max: number): number => (
     Math.min(Math.max(x, min), max)
   )
+
+  export const smoothstep = (t: number): number => (
+    t * t * (3 - 2 * t)
+  )
 }
 
 export type Vec2 = [number, number]
@@ -135,6 +139,53 @@ export const CubicBezier = {
       3 * u ** 2 * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t ** 2 * (p3[0] - p2[0]),
       3 * u ** 2 * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t ** 2 * (p3[1] - p2[1]),
     ]
+  },
+
+  length: (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, samples: number): number => {
+    let length = 0
+    let prev = p0
+
+    for (let i = 1; i <= samples; i ++) {
+      const point = CubicBezier.point(p0, p1, p2, p3, i / samples)
+      length += Vec2.length(Vec2.sub(point, prev))
+      prev = point
+    }
+
+    return length
+  },
+
+  tAtDistanceProgress: (
+    p0: Vec2,
+    p1: Vec2,
+    p2: Vec2,
+    p3: Vec2,
+    progress: number,
+    samples: number,
+  ): number => {
+    const targetDistance = CubicBezier.length(p0, p1, p2, p3, samples)
+      * Scalar.clamp(progress, 0, 1)
+    if (targetDistance <= 0) return 0
+
+    let distance = 0
+    let prev = p0
+
+    for (let i = 1; i <= samples; i ++) {
+      const t = i / samples
+      const point = CubicBezier.point(p0, p1, p2, p3, t)
+      const segmentLength = Vec2.length(Vec2.sub(point, prev))
+
+      if (distance + segmentLength >= targetDistance) {
+        const segmentProgress = segmentLength === 0
+          ? 0
+          : (targetDistance - distance) / segmentLength
+        return Scalar.lerp((i - 1) / samples, t, segmentProgress)
+      }
+
+      distance += segmentLength
+      prev = point
+    }
+
+    return 1
   },
 }
 

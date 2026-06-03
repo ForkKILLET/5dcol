@@ -136,6 +136,10 @@ export namespace Colors {
 
 export namespace Animations {
   export const MoveAnimationDuration = 500
+  export const MoveTravelViewportDuration = 260
+  export const MoveTravelDuration = 450
+  export const MoveTravelSpeed = Sizes.BoardMarginWidth / MoveTravelDuration
+  export const MoveTravelFadeDuration = 180
 }
 
 export interface ButtonColorPreset {

@@ -66,6 +66,8 @@ interface BoardSquareHit {
 }
 interface MoveAnimation {
   startedAt: number
+  cameraCenter: Vec2
+  cameraScale: number
 }
 interface BoardRenderOptions {
   activeProgress?: number
@@ -80,6 +82,12 @@ interface PresentColors {
   border: Color4
   fill: Color4
   label: Color4
+}
+interface MoveArrowGeometry {
+  from: Vec2
+  control1: Vec2
+  control2: Vec2
+  to: Vec2
 }
 
 type ScreenRect = [pos: Vec2, size: Vec2]
@@ -694,7 +702,11 @@ export class Game {
     this.multiverse = Multiverse.applyMove(move, this.player, multiverseBefore)
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
-    this.moveAnimation = { startedAt: performance.now() }
+    this.moveAnimation = {
+      startedAt: performance.now(),
+      cameraCenter: [...this.renderer.getCamera().center],
+      cameraScale: this.renderer.getCamera().scale,
+    }
     this.submitRequestedDuringMoveAnimation = false
     this.selectedPiece = null
     return true
@@ -762,15 +774,84 @@ export class Game {
   private getMoveAnimationProgress(): number {
     if (! this.moveAnimation) return 1
     return Scalar.clamp(
-      (performance.now() - this.moveAnimation.startedAt) / Animations.MoveAnimationDuration,
+      this.getMoveAnimationElapsed() / this.getMoveAnimationDuration(),
       0,
       1,
     )
   }
 
+  private getMoveAnimationElapsed(): number {
+    if (! this.moveAnimation) return Infinity
+    return performance.now() - this.moveAnimation.startedAt
+  }
+
+  private getMoveAnimationDuration(): number {
+    if (! this.pendingMove?.is5D) return Animations.MoveAnimationDuration
+    return Animations.MoveTravelViewportDuration
+      + this.getMoveTravelDuration(this.pendingMove)
+      + Animations.MoveTravelFadeDuration
+      + Animations.MoveAnimationDuration
+  }
+
   private getMoveAnimationEase(): number {
-    const t = this.getMoveAnimationProgress()
-    return t * t * (3 - 2 * t)
+    return Scalar.smoothstep(this.getMoveBoardAnimationProgress())
+  }
+
+  private getMoveBoardAnimationProgress(): number {
+    const elapsed = this.getMoveAnimationElapsed()
+    if (! this.pendingMove?.is5D) {
+      return Scalar.clamp(elapsed / Animations.MoveAnimationDuration, 0, 1)
+    }
+    const travelDuration = this.getMoveTravelDuration(this.pendingMove)
+    return Scalar.clamp(
+      (elapsed - Animations.MoveTravelViewportDuration - travelDuration - Animations.MoveTravelFadeDuration)
+        / Animations.MoveAnimationDuration,
+      0,
+      1,
+    )
+  }
+
+  private getMoveTravelViewportProgress(): number {
+    return Scalar.clamp(
+      this.getMoveAnimationElapsed() / Animations.MoveTravelViewportDuration,
+      0,
+      1,
+    )
+  }
+
+  private getMoveTravelAnimationProgress(): number {
+    return Scalar.clamp(
+      (this.getMoveAnimationElapsed() - Animations.MoveTravelViewportDuration)
+        / this.getMoveTravelDuration(this.pendingMove),
+      0,
+      1,
+    )
+  }
+
+  private getMoveTravelFadeProgress(): number {
+    const travelDuration = this.getMoveTravelDuration(this.pendingMove)
+    return Scalar.clamp(
+      (this.getMoveAnimationElapsed() - Animations.MoveTravelViewportDuration - travelDuration)
+        / Animations.MoveTravelFadeDuration,
+      0,
+      1,
+    )
+  }
+
+  private getMoveTravelDuration(pendingMove: PendingMove | null): number {
+    if (! pendingMove?.is5D) return Animations.MoveTravelDuration
+
+    const geometry = this.getMoveArrowGeometry(pendingMove.move, this.player)
+    if (! geometry) return Animations.MoveTravelDuration
+
+    const length = CubicBezier.length(
+      geometry.from,
+      geometry.control1,
+      geometry.control2,
+      geometry.to,
+      Sizes.MoveArrowCurveSamples,
+    )
+    return Math.max(1, length / Animations.MoveTravelSpeed)
   }
 
   private hasMovedEveryPresentBoard(): boolean {
@@ -948,9 +1029,29 @@ export class Game {
     return this.clampCameraCenterToViewport(center, validViewport)
   }
 
+  private clampCameraCenterToMoveAnimationViewport(center: Vec2, pendingMove: PendingMove): Vec2 {
+    const validViewport = this.getMoveAnimationViewportRect(pendingMove)
+    if (! validViewport) return center
+    return this.clampCameraCenterToViewport(center, validViewport)
+  }
+
+  private getMoveAnimationViewportRect(pendingMove: PendingMove): Rect | null {
+    return this.getValidViewportRect(
+      pendingMove.multiverseBefore,
+      [
+        this.getBoardRect(pendingMove.from.l, pendingMove.from.m + 1),
+        this.getBoardRect(pendingMove.created.l, pendingMove.created.m),
+      ],
+    )
+  }
+
   private renderMultiverse() {
     this.renderTimelineTiles()
     if (this.pendingMove && this.isMoveAnimating()) {
+      if (this.pendingMove.is5D && this.getMoveBoardAnimationProgress() === 0) {
+        this.renderMultiverseTravelAnimation(this.pendingMove)
+        return
+      }
       this.renderMultiversePendingAnimation(this.pendingMove, this.getMoveAnimationEase())
       return
     }
@@ -974,8 +1075,28 @@ export class Game {
     }
   }
 
+  private renderMultiverseTravelAnimation(pendingMove: PendingMove) {
+    const viewportProgress = this.getMoveTravelViewportProgress()
+    const travelProgress = this.getMoveTravelAnimationProgress()
+    const fadeProgress = this.getMoveTravelFadeProgress()
+    const isFading = travelProgress >= 1
+    const pieceProgress = isFading ? 1 : this.getMoveTravelPathProgress(pendingMove, travelProgress)
+    const pieceAlpha = isFading ? 1 - Scalar.smoothstep(fadeProgress) : 1
+
+    this.followTravelAnimationViewport(pendingMove, Scalar.smoothstep(viewportProgress))
+    this.renderPresent(
+      pendingMove.multiverseBefore,
+      this.getPresentDisplayPlayer(pendingMove.multiverseBefore),
+    )
+    this.renderMultiverseStatic(pendingMove.multiverseBefore)
+    this.renderMoveArrow(pendingMove.move, this.player)
+    this.renderTravelPiece(pendingMove, pieceProgress, pieceAlpha)
+  }
+
   private renderMultiversePendingAnimation(pendingMove: PendingMove, progress: number) {
-    this.followPendingBoardAnimation(pendingMove, progress)
+    if (! pendingMove.is5D) {
+      this.followPendingBoardAnimation(pendingMove, progress)
+    }
     this.renderPresentAnimated(progress)
     let renderedCreatedBoard = false
     const targetBoardIndex = Coord.boardIndex(pendingMove.move.to, this.player)
@@ -1054,9 +1175,131 @@ export class Game {
       : [fromPos]
     const center = Vec2.add(Vec2.mix(startPos, toPos, progress), Vec2.scale(fromSize, 0.5))
     this.renderer.setCamera({
-      center: this.clampCameraCenterToValidViewportIfAvailable(center),
+      center: this.clampCameraCenterToMoveAnimationViewport(center, pendingMove),
     })
     this.syncCameraMotion()
+  }
+
+  private followTravelAnimationViewport(pendingMove: PendingMove, progress: number) {
+    if (! this.moveAnimation) return
+
+    const sourceOldRect = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+    const targetOldRect = this.getBoardRect(
+      pendingMove.move.to.l,
+      Coord.boardIndex(pendingMove.move.to, this.player),
+    )
+    const sourceNewRect = this.getBoardRect(pendingMove.from.l, pendingMove.from.m + 1)
+    const targetNewRect = this.getBoardRect(pendingMove.created.l, pendingMove.created.m)
+    const sourceOldCenter = this.getRectCenter(sourceOldRect)
+    const targetOldCenter = this.getRectCenter(targetOldRect)
+    const sourceNewCenter = this.getRectCenter(sourceNewRect)
+    const targetNewCenter = this.getRectCenter(targetNewRect)
+    const targetScale = this.getMoveTravelTargetScale(this.moveAnimation.cameraScale, [
+      sourceOldRect,
+      targetOldRect,
+    ], Sizes.BoardWidth / 2)
+    const scale = Scalar.lerp(this.moveAnimation.cameraScale, targetScale, progress)
+    const center: Vec2 = [
+      Scalar.lerp(
+        this.moveAnimation.cameraCenter[0],
+        (sourceOldCenter[0] + targetOldCenter[0]) / 2,
+        progress,
+      ),
+      Scalar.lerp(
+        this.moveAnimation.cameraCenter[1],
+        (sourceNewCenter[1] + targetNewCenter[1]) / 2,
+        progress,
+      ),
+    ]
+
+    this.renderer.setCamera({ scale })
+    this.renderer.setCamera({
+      center: this.clampCameraCenterToMoveAnimationViewport(center, pendingMove),
+    })
+    this.syncCameraMotion()
+  }
+
+  private getMoveTravelTargetScale(baseScale: number, rects: Rect[], padding = 0): number {
+    const fitScale = this.getScaleToContainRects(rects, padding)
+    return Math.min(baseScale, fitScale)
+  }
+
+  private getMoveTravelPathProgress(pendingMove: PendingMove, progress: number): number {
+    const geometry = this.getMoveArrowGeometry(pendingMove.move, this.player)
+    if (! geometry) return progress
+    return CubicBezier.tAtDistanceProgress(
+      geometry.from,
+      geometry.control1,
+      geometry.control2,
+      geometry.to,
+      progress,
+      Sizes.MoveArrowCurveSamples,
+    )
+  }
+
+  private getScaleToContainRects(rects: Rect[], padding = 0): number {
+    const bounds = this.getRectBounds(rects)
+    if (! bounds) return this.renderer.getCamera().scale
+
+    const [, [w, h]] = bounds
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    const paddedWidth = w + padding * 2
+    const paddedHeight = h + padding * 2
+    const xScale = paddedWidth > 0 ? widthCss / paddedWidth : CameraControl.ZoomMax
+    const yScale = paddedHeight > 0 ? heightCss / paddedHeight : CameraControl.ZoomMax
+    return Math.min(xScale, yScale, CameraControl.ZoomMax)
+  }
+
+  private getRectBounds(rects: Rect[]): Rect | null {
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+
+    for (const [[x, y], [w, h]] of rects) {
+      x0 = Math.min(x0, x)
+      y0 = Math.min(y0, y)
+      x1 = Math.max(x1, x + w)
+      y1 = Math.max(y1, y + h)
+    }
+
+    if (! Number.isFinite(x0) || ! Number.isFinite(y0)) return null
+    return [[x0, y0], [x1 - x0, y1 - y0]]
+  }
+
+  private getRectCenter([pos, size]: Rect): Vec2 {
+    return Vec2.add(pos, Vec2.scale(size, 0.5))
+  }
+
+  private renderTravelPiece(pendingMove: PendingMove, progress: number, alpha: number) {
+    if (alpha <= 0) return
+
+    const sourceBoard = Multiverse.getBoard(
+      pendingMove.multiverseBefore,
+      pendingMove.move.from,
+      this.player,
+    )
+    if (! sourceBoard) return
+
+    const piece = Board.getPiece(pendingMove.move.from, sourceBoard)
+    if (piece === Piece.E) return
+
+    const geometry = this.getMoveArrowGeometry(pendingMove.move, this.player)
+    if (! geometry) return
+
+    const center = CubicBezier.point(
+      geometry.from,
+      geometry.control1,
+      geometry.control2,
+      geometry.to,
+      progress,
+    )
+    this.renderPiece(
+      piece,
+      Vec2.sub(center, Vec2.scale(Sizes.PieceSize, 0.5)),
+      RenderLayer.AnimatedPiece,
+      alpha,
+    )
   }
 
   private isTemporaryBoard(l: number, m: number): boolean {
@@ -1079,7 +1322,7 @@ export class Game {
     const present = Multiverse.getPresent(multiverse, this.player)
     if (! present) return
 
-    this.renderPresentAt(present.m, this.getPresentColors(displayPlayer))
+    this.renderPresentAt(present.m, this.getPresentColors(displayPlayer), undefined, multiverse)
   }
 
   private renderPresentAnimated(progress: number) {
@@ -1106,10 +1349,15 @@ export class Game {
     this.renderPresentAt(presentPreview.m, colors, x0 + (x1 - x0) * progress)
   }
 
-  private renderPresentAt(m: number, colors: PresentColors, xOverride?: number) {
+  private renderPresentAt(
+    m: number,
+    colors: PresentColors,
+    xOverride?: number,
+    multiverse = this.multiverse,
+  ) {
     const [[xRect, y], [w, h]] = this.getPresentViewportRect(m)
     const x = xOverride ?? xRect
-    const boardBounds = this.getBoardVerticalBounds()
+    const boardBounds = this.getBoardVerticalBounds(multiverse)
 
     this.renderer.submit({
       type: RenderItemType.Quad,
@@ -1191,11 +1439,11 @@ export class Game {
     ]
   }
 
-  private getBoardVerticalBounds(): VerticalBounds | null {
+  private getBoardVerticalBounds(multiverse = this.multiverse): VerticalBounds | null {
     let top = Infinity
     let bottom = -Infinity
 
-    for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
+    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
 
       for (const [m, board] of Line.getBoardEntries(line)) {
@@ -1378,13 +1626,13 @@ export class Game {
     }
   }
 
-  private getBoardViewportRect(): Rect | null {
+  private getBoardViewportRect(multiverse = this.multiverse, extraRects: Rect[] = []): Rect | null {
     let x0 = Infinity
     let y0 = Infinity
     let x1 = -Infinity
     let y1 = -Infinity
 
-    for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
+    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
 
       for (const [m, board] of Line.getBoardEntries(line)) {
@@ -1395,6 +1643,13 @@ export class Game {
         x1 = Math.max(x1, x + w)
         y1 = Math.max(y1, y + h)
       }
+    }
+
+    for (const [[x, y], [w, h]] of extraRects) {
+      x0 = Math.min(x0, x)
+      y0 = Math.min(y0, y)
+      x1 = Math.max(x1, x + w)
+      y1 = Math.max(y1, y + h)
     }
 
     if (! Number.isFinite(x0) || ! Number.isFinite(y0)) return null
@@ -1411,8 +1666,8 @@ export class Game {
     ]
   }
 
-  private getValidViewportRect(): Rect | null {
-    const boardViewport = this.getBoardViewportRect()
+  private getValidViewportRect(multiverse = this.multiverse, extraRects: Rect[] = []): Rect | null {
+    const boardViewport = this.getBoardViewportRect(multiverse, extraRects)
     if (! boardViewport) return null
 
     const center = Vec2.add(boardViewport[0], Vec2.scale(boardViewport[1], 0.5))
@@ -1430,8 +1685,8 @@ export class Game {
 
   private getValidViewportPadding(screenWorldSize: Vec2): Vec2 {
     return [
-      Math.max(0, (screenWorldSize[0] - Sizes.TurnWidth / 2) / 2),
-      Math.max(0, (screenWorldSize[1] - Sizes.TurnHeight) / 2),
+      Math.max(0, (screenWorldSize[0] - Sizes.BoardBorderSize[0]) / 2),
+      Math.max(0, (screenWorldSize[1] - Sizes.BoardBorderSize[1]) / 2),
     ]
   }
 
@@ -1786,11 +2041,47 @@ export class Game {
     if (! move || player === null || board.createdByRole !== 'target') return
     if (Coord.isSameBoard(move.from, move.to)) return
 
+    this.renderMoveArrow(move, player, alpha)
+  }
+
+  private renderMoveArrow(move: Move, player: Player, alpha = 1) {
+    const geometry = this.getMoveArrowGeometry(move, player)
+    if (! geometry) return
+
+    const points = this.getMoveArrowPolygon(
+      geometry.from,
+      geometry.control1,
+      geometry.control2,
+      geometry.to,
+    )
+    if (points.length === 0) return
+
+    const stroke = player === Player.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack
+    this.renderer.submit({
+      type: RenderItemType.Polygon,
+      layer: RenderLayer.MoveHighlight,
+      points,
+      fill: this.getMoveArrowMaskFill(
+        Color4.withAlpha(Colors.MoveArrowFill, alpha),
+        geometry.from,
+        geometry.control1,
+      ),
+      stroke: this.getMoveArrowMaskFill(
+        Color4.withAlpha(stroke, alpha),
+        geometry.from,
+        geometry.control1,
+      ),
+      strokeWidth: Sizes.MoveArrowStrokeWidth,
+    })
+  }
+
+  private getMoveArrowGeometry(move: Move, player: Player): MoveArrowGeometry | null {
+    if (Coord.isSameBoard(move.from, move.to)) return null
+
     const fromM = Coord.boardIndex(move.from, player)
     const toM = Coord.boardIndex(move.to, player)
     const from = this.getSquareCenter(move.from.l, fromM, move.from)
     const to = this.getSquareCenter(move.to.l, toM, move.to)
-    const stroke = player === Player.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack
     const horizontal = Math.abs(to[0] - from[0]) >= Math.abs(to[1] - from[1])
     const direction = Vec2.sub(to, from)
     const bend = horizontal
@@ -1798,17 +2089,8 @@ export class Game {
       : Vec2.scale([direction[1] >= 0 ? 1 : -1, 0], Sizes.MoveArrowCurveOffset)
     const control1 = Vec2.add(Vec2.add(from, Vec2.scale(direction, 0.35)), bend)
     const control2 = Vec2.add(Vec2.add(from, Vec2.scale(direction, 0.65)), bend)
-    const points = this.getMoveArrowPolygon(from, control1, control2, to)
-    if (points.length === 0) return
 
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.MoveHighlight,
-      points,
-      fill: this.getMoveArrowMaskFill(Color4.withAlpha(Colors.MoveArrowFill, alpha), from, control1),
-      stroke: this.getMoveArrowMaskFill(Color4.withAlpha(stroke, alpha), from, control1),
-      strokeWidth: Sizes.MoveArrowStrokeWidth,
-    })
+    return { from, control1, control2, to }
   }
 
   private getMoveArrowPolygon(from: Vec2, control1: Vec2, control2: Vec2, tip: Vec2): Vec2[] {
