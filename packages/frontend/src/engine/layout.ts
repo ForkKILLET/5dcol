@@ -8,8 +8,33 @@ export interface VerticalBounds {
   bottom: number
 }
 
+export interface ViewportInsets {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+const DEFAULT_VIEWPORT_INSETS: ViewportInsets = {
+  left: 0,
+  right: 0,
+  top: 0,
+  bottom: 0,
+}
+
 export class GameLayout {
   constructor(private readonly renderer: Renderer) {}
+
+  private viewportInsets: ViewportInsets = { ...DEFAULT_VIEWPORT_INSETS }
+
+  setViewportInsets(insets: Partial<ViewportInsets>) {
+    this.viewportInsets = {
+      left: Math.max(0, insets.left ?? this.viewportInsets.left),
+      right: Math.max(0, insets.right ?? this.viewportInsets.right),
+      top: Math.max(0, insets.top ?? this.viewportInsets.top),
+      bottom: Math.max(0, insets.bottom ?? this.viewportInsets.bottom),
+    }
+  }
 
   getTurnRect(l: number, m: number): RectType {
     return [
@@ -45,6 +70,37 @@ export class GameLayout {
       Sizes.BoardBorder + (coord.x + 0.5) * Sizes.PieceWidth,
       Sizes.BoardBorder + (coord.y + 0.5) * Sizes.PieceWidth,
     ])
+  }
+
+  getViewportScreenRect(): RectType {
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    const left = Math.min(this.viewportInsets.left, widthCss)
+    const top = Math.min(this.viewportInsets.top, heightCss)
+    const right = Math.min(this.viewportInsets.right, Math.max(0, widthCss - left))
+    const bottom = Math.min(this.viewportInsets.bottom, Math.max(0, heightCss - top))
+    return [
+      [left, top],
+      [
+        Math.max(1, widthCss - left - right),
+        Math.max(1, heightCss - top - bottom),
+      ],
+    ]
+  }
+
+  getViewportScreenSize(): Vec2Type {
+    return this.getViewportScreenRect()[1]
+  }
+
+  getViewportCenterScreen(): Vec2Type {
+    return Rect.center(this.getViewportScreenRect())
+  }
+
+  getViewportWorldCenter(cameraCenter: Vec2Type, scale: number): Vec2Type {
+    return Vec2.add(cameraCenter, this.getViewportWorldOffset(scale))
+  }
+
+  getCameraCenterForViewportWorldCenter(worldCenter: Vec2Type, scale: number): Vec2Type {
+    return Vec2.sub(worldCenter, this.getViewportWorldOffset(scale))
   }
 
   getPresentViewportRect(m: number): RectType {
@@ -102,6 +158,16 @@ export class GameLayout {
   }
 
   getScreenWorldSize(): Vec2Type {
+    const [[x, y], [w, h]] = this.getViewportScreenRect()
+    const topLeft = this.renderer.screenToWorld([x, y])
+    const bottomRight = this.renderer.screenToWorld([x + w, y + h])
+    return [
+      Math.abs(bottomRight[0] - topLeft[0]),
+      Math.abs(bottomRight[1] - topLeft[1]),
+    ]
+  }
+
+  getFullScreenWorldSize(): Vec2Type {
     const { widthCss, heightCss } = this.renderer.getScreen()
     const topLeft = this.renderer.screenToWorld([0, 0])
     const bottomRight = this.renderer.screenToWorld([widthCss, heightCss])
@@ -139,7 +205,7 @@ export class GameLayout {
     const validViewport = this.getValidViewportRect(multiverse)
     if (! validViewport) return null
 
-    const screenWorldSize = this.getScreenWorldSize()
+    const screenWorldSize = this.getFullScreenWorldSize()
     return [
       Vec2.sub(validViewport[0], screenWorldSize),
       Vec2.add(validViewport[1], Vec2.scale(screenWorldSize, 2)),
@@ -150,10 +216,11 @@ export class GameLayout {
     return this.getTimeTileViewportRect(multiverse)
   }
 
-  clampCameraCenterToViewport(center: Vec2Type, viewport: RectType): Vec2Type {
+  clampCameraCenterToViewport(center: Vec2Type, viewport: RectType, scale = this.renderer.getCamera().scale): Vec2Type {
     const screenWorldSize = this.getScreenWorldSize()
+    const viewportCenter = this.getViewportWorldCenter(center, scale)
     const [[x, y], [w, h]] = viewport
-    return Rect.clampPoint(center, [
+    const clampedViewportCenter = Rect.clampPoint(viewportCenter, [
       [
         x + screenWorldSize[0] / 2,
         y + screenWorldSize[1] / 2,
@@ -163,5 +230,14 @@ export class GameLayout {
         Math.max(0, h - screenWorldSize[1]),
       ],
     ])
+    return this.getCameraCenterForViewportWorldCenter(clampedViewportCenter, scale)
+  }
+
+  private getViewportWorldOffset(scale: number): Vec2Type {
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    return Vec2.scale(
+      Vec2.sub(this.getViewportCenterScreen(), [widthCss / 2, heightCss / 2]),
+      1 / scale,
+    )
   }
 }

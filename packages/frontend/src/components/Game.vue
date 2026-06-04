@@ -3,7 +3,8 @@ import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch 
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
-import { Game, type GameExportRequest, type GameToolbarButton } from '@engine/game'
+import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMoveSegment, type GameToolbarButton } from '@engine/game'
+import { isTextInputEvent } from '@engine/gameInput'
 import { Logger, type GameMessage } from '@engine/logger'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 
@@ -11,6 +12,10 @@ const canvas = useTemplateRef('canvas')
 
 const messages = reactive<GameMessage[]>([])
 const toolbarButtons = ref<GameToolbarButton[]>([])
+const recordPanelOpen = ref(false)
+const recordText = ref('')
+const recordActions = ref<GameRecordAction[]>([])
+const recordHasPendingMoves = ref(false)
 const secondaryMenuOpen = ref(false)
 const dialogMode = ref<'none' | 'import' | 'export'>('none')
 const importText = ref('')
@@ -33,10 +38,18 @@ const secondaryButtons = computed(() => (
 const uiOverlayOpen = computed(() => (
   secondaryMenuOpen.value || dialogMode.value !== 'none'
 ))
+const recordHeaders = computed(() => (
+  recordText.value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('['))
+))
+const recordRows = computed(() => recordActions.value)
 const menuButtonStyle = computed(() => getPresetButtonStyle(ButtonColors.White))
 const uiStyle = computed(() => ({
   '--button-width': `${Sizes.ButtonWidth}px`,
   '--secondary-button-width': `${Sizes.RestartButtonWidth}px`,
+  '--record-panel-width': `${Sizes.RecordPanelWidth}px`,
   '--button-circle-size': `${Sizes.ButtonHeight}px`,
   '--button-height': `${Sizes.ButtonHeight}px`,
   '--button-top': `${Sizes.ButtonTop}px`,
@@ -50,6 +63,10 @@ const uiStyle = computed(() => ({
   '--overlay-mask-color': Color4.toRgbaString(Colors.OverlayMask),
   '--menu-card-border-color': Color4.toRgbaString(ButtonColors.White.border),
   '--menu-card-fill-color': Color4.toRgbaString(ButtonColors.White.fill),
+  '--record-white-bg': Color4.toRgbaString(ButtonColors.White.border),
+  '--record-white-text': Color4.toRgbaString(ButtonColors.White.text),
+  '--record-black-bg': Color4.toRgbaString(ButtonColors.Black.fill),
+  '--record-black-text': Color4.toRgbaString(ButtonColors.Black.text),
 }))
 
 function getPresetButtonStyle(
@@ -100,6 +117,24 @@ function clickToolbarButton(button: GameToolbarButton) {
   secondaryMenuOpen.value = false
 }
 
+function updateRecord(request: GameExportRequest) {
+  recordText.value = request.text
+  recordActions.value = request.actions
+  recordHasPendingMoves.value = request.hasPendingMoves
+}
+
+function toggleRecordPanel() {
+  if (! recordPanelOpen.value) {
+    const request = game?.getFiveDPGNExport()
+    if (request) updateRecord(request)
+  }
+  recordPanelOpen.value = ! recordPanelOpen.value
+}
+
+function focusRecordSegment(segment: GameRecordMoveSegment) {
+  game?.focusBoard(segment.l, segment.m)
+}
+
 function toggleSecondaryMenu() {
   if (secondaryButtons.value.length === 0) return
   secondaryMenuOpen.value = ! secondaryMenuOpen.value
@@ -134,6 +169,22 @@ function syncGameInputState() {
   game?.setGameInputDisabled(uiOverlayOpen.value)
 }
 
+function getRecordViewportRightInset() {
+  if (! recordPanelOpen.value) return 0
+
+  const panelWidth = Math.min(
+    Sizes.RecordPanelWidth,
+    Math.max(0, window.innerWidth - Sizes.ButtonTop * 2),
+  )
+  return panelWidth + Sizes.ButtonTop + Sizes.ButtonShadowOffset
+}
+
+function syncGameViewportInsets() {
+  game?.setViewportInsets({
+    right: getRecordViewportRightInset(),
+  })
+}
+
 function submitImportDialog() {
   const text = importText.value.trim()
   if (! text) return
@@ -159,6 +210,12 @@ async function copyExportText() {
 }
 
 function handleWindowKeyDown(e: KeyboardEvent) {
+  if (! e.repeat && ! isTextInputEvent(e) && e.key.toLowerCase() === 'r' && dialogMode.value === 'none') {
+    e.preventDefault()
+    toggleRecordPanel()
+    return
+  }
+
   if (e.key !== 'Escape') return
   if (dialogMode.value !== 'none') {
     e.preventDefault()
@@ -181,11 +238,13 @@ async function init() {
       onToolbarChange: buttons => {
         toolbarButtons.value = buttons
       },
+      onRecordChange: updateRecord,
       onImportRequest: openImportDialog,
       onExportRequest: openExportDialog,
     })
     syncGameInputState()
     game.start()
+    syncGameViewportInsets()
   }
   catch (err) {
     logger.error(String(err))
@@ -195,14 +254,17 @@ async function init() {
 
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeyDown)
+  window.addEventListener('resize', syncGameViewportInsets)
   void init()
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', handleWindowKeyDown)
+  window.removeEventListener('resize', syncGameViewportInsets)
   game?.dispose()
 })
 
 watch(uiOverlayOpen, syncGameInputState)
+watch(recordPanelOpen, syncGameViewportInsets)
 </script>
 
 <template>
@@ -246,6 +308,16 @@ watch(uiOverlayOpen, syncGameInputState)
         class="toolbar toolbar-secondary"
       >
         <button
+          class="game-button record-toggle-button"
+          :class="{ 'is-open': recordPanelOpen }"
+          :style="menuButtonStyle"
+          type="button"
+          :aria-expanded="recordPanelOpen"
+          @click="toggleRecordPanel"
+        >
+          <span>Record</span>
+        </button>
+        <button
           class="game-button game-button--circle"
           :style="menuButtonStyle"
           type="button"
@@ -256,6 +328,74 @@ watch(uiOverlayOpen, syncGameInputState)
           <span>...</span>
         </button>
       </div>
+
+      <aside
+        v-if="recordPanelOpen"
+        class="record-panel"
+        :style="menuButtonStyle"
+        @wheel.stop
+      >
+        <h2 class="record-title">Record</h2>
+        <p
+          v-if="recordHasPendingMoves"
+          class="record-message"
+        >
+          Pending moves are not recorded.
+        </p>
+        <div class="record-content">
+          <div
+            v-if="recordHeaders.length > 0"
+            class="record-headers"
+          >
+            <div
+              v-for="header in recordHeaders"
+              :key="header"
+              class="record-header"
+            >
+              {{ header }}
+            </div>
+          </div>
+          <div
+            v-if="recordRows.length > 0"
+            class="record-table"
+          >
+            <div
+              v-for="(row, index) in recordRows"
+              :key="`${row.serial}-${index}`"
+              class="record-row"
+              :class="{
+                'record-row--black': row.player === 'b',
+                'record-row--white': row.player !== 'b',
+              }"
+            >
+              <span class="record-serial">{{ row.serial }}</span>
+              <span class="record-action">
+                <span
+                  v-for="(move, moveIndex) in row.moves"
+                  :key="`${row.serial}-${moveIndex}`"
+                  class="record-move"
+                >
+                  <button
+                    v-for="(segment, segmentIndex) in move.segments"
+                    :key="`${row.serial}-${moveIndex}-${segmentIndex}`"
+                    class="record-segment"
+                    type="button"
+                    @click="focusRecordSegment(segment)"
+                  >
+                    {{ segment.text }}
+                  </button>
+                </span>
+              </span>
+            </div>
+          </div>
+          <div
+            v-else
+            class="record-empty"
+          >
+            No moves recorded.
+          </div>
+        </div>
+      </aside>
 
       <div
         v-if="secondaryMenuOpen"
@@ -423,6 +563,128 @@ canvas {
   bottom: var(--button-top);
 }
 
+.record-panel {
+  position: absolute;
+  top: var(--button-top);
+  right: var(--button-top);
+  bottom: calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 2);
+  width: min(var(--record-panel-width), calc(100vw - var(--button-top) * 2));
+  padding: calc(var(--button-content-gap) * 3);
+  border: var(--button-border) solid var(--button-border-color);
+  border-radius: 8px;
+  background: var(--button-fill-color);
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
+  color: var(--button-text-color);
+  pointer-events: auto;
+}
+
+.record-title {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--button-text-color);
+  font-size: var(--button-font-size);
+  font-weight: 400;
+  line-height: 1;
+}
+
+.record-message {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--button-text-color);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.record-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+  color: var(--button-text-color);
+  font: 18px/1.35 Georgia, 'Times New Roman', serif;
+}
+
+.record-headers {
+  margin-bottom: calc(var(--button-content-gap) * 2);
+  font: 15px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.75;
+}
+
+.record-header {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.record-table {
+  display: grid;
+  row-gap: calc(var(--button-content-gap) * 0.75);
+}
+
+.record-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  column-gap: var(--button-content-gap);
+  align-items: start;
+  padding: 2px var(--button-content-gap);
+  border-radius: 8px;
+}
+
+.record-row--white {
+  background: var(--record-white-bg);
+  color: var(--record-white-text);
+}
+
+.record-row--black {
+  background: var(--record-black-bg);
+  color: var(--record-black-text);
+}
+
+.record-serial {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  opacity: 0.78;
+}
+
+.record-action {
+  display: grid;
+  row-gap: calc(var(--button-content-gap) * 0.35);
+  min-width: 0;
+}
+
+.record-move {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--button-content-gap) * 0.5);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.record-segment {
+  margin: 0;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.record-segment:hover,
+.record-segment:focus-visible {
+  border-color: currentColor;
+  outline: none;
+}
+
+.record-empty {
+  opacity: 0.72;
+}
+
 .menu-backdrop {
   position: absolute;
   inset: 0;
@@ -555,7 +817,8 @@ canvas {
 }
 
 .game-button:not(:disabled):hover,
-.game-button:not(:disabled):focus-visible {
+.game-button:not(:disabled):focus-visible,
+.game-button.is-open {
   border-color: var(--button-hover-border-color);
   background: var(--button-hover-fill-color);
   color: var(--button-hover-text-color);

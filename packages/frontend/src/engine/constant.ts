@@ -77,6 +77,7 @@ export namespace Sizes {
   export const ButtonFontSize = 26
   export const ButtonIconSize = 28
   export const ButtonContentGap = 8
+  export const RecordPanelWidth = 260
 
   export const PresentWidth = 104
   export const PresentBorder = 3
@@ -150,6 +151,10 @@ export namespace Animations {
   export const MoveTravelViewportDuration = 260
   export const MoveTravelDuration = 380
   export const MoveTravelSpeed = Sizes.BoardMarginWidth / MoveTravelDuration
+  export const BoardFocusPulseDuration = 720
+  export const BoardFocusPulseReleaseDuration = 220
+  export const BoardFocusPulseSettleDistance = 6
+  export const BoardFocusPulseSettleScale = 0.02
   export const PulseEffectDuration = 1000
 }
 

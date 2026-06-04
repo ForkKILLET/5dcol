@@ -3,13 +3,15 @@ import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes, Animations } from '@engine/constant'
+import { Easing } from '@engine/easing'
 import { isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove, type StoredGameState } from '@engine/gameState'
-import { GameLayout } from '@engine/layout'
+import { GameLayout, type ViewportInsets } from '@engine/layout'
 import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
 import { getMoveArrowMaskFill, getMoveArrowPolygon } from '@engine/moveArrow'
 import { PresentPainter } from '@engine/painters/presentPainter'
+import { buildGameRecordActions, type GameRecordAction } from '@engine/record'
 import { type Renderer, RenderItemType } from '@engine/renderer'
 import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
 import { TimelineTilesPainter } from '@engine/painters/timelineTilesPainter'
@@ -24,12 +26,14 @@ import {
 } from '@engine/toolbar'
 
 export type { GameToolbarButton } from '@engine/toolbar'
+export type { GameRecordAction, GameRecordMoveSegment } from '@engine/record'
 
 export interface GameConfig {
   debug: boolean
   logger: Logger
   renderer: Renderer
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
+  onRecordChange?: (request: GameExportRequest) => void
   onImportRequest?: () => void
   onExportRequest?: (request: GameExportRequest) => void
 }
@@ -37,6 +41,7 @@ export interface GameConfig {
 export interface GameExportRequest {
   text: string
   hasPendingMoves: boolean
+  actions: GameRecordAction[]
 }
 
 interface PointerState {
@@ -52,6 +57,7 @@ interface BoardFrame {
   radius: number
 }
 interface CameraMotion {
+  id: number
   targetCenter: Vec2
   targetScale: number
   anchorScreen: Vec2
@@ -88,6 +94,14 @@ interface MoveAnimation {
   startedAt: number
   cameraCenter: Vec2
   cameraScale: number
+}
+interface BoardFocusPulse {
+  l: number
+  m: number
+  startedAt: number
+  motionId: number | null
+  heldForMotion: boolean
+  releaseStartedAt: number | null
 }
 interface BoardRenderOptions {
   activeProgress?: number
@@ -143,9 +157,12 @@ export class Game extends Disposable(Empty) {
   private pendingMove: PendingMove | null = null
   private pendingMoves: PendingMove[] = []
   private moveAnimation: MoveAnimation | null = null
+  private boardFocusPulse: BoardFocusPulse | null = null
   private submitRequestedDuringMoveAnimation = false
   private toolbarSignature = ''
+  private recordSignature = ''
   private gameInputDisabled = false
+  private cameraMotionId = 0
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -157,6 +174,7 @@ export class Game extends Disposable(Empty) {
     else this.focusInitialTurn({ smooth: false })
     this.bindEvents()
     this.syncToolbarButtons()
+    this.syncRecord()
     this.animationFrame = requestAnimationFrame(this.loop)
     this.collect(() => {
       if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame)
@@ -174,6 +192,15 @@ export class Game extends Disposable(Empty) {
     this.hoverSquare = null
     this.hoverPiece = null
     this.clearPointerDrag()
+  }
+
+  public setViewportInsets(insets: Partial<ViewportInsets>) {
+    const camera = this.renderer.getCamera()
+    const viewportWorldCenter = this.layout.getViewportWorldCenter(camera.center, camera.scale)
+    this.layout.setViewportInsets(insets)
+    this.moveViewportTo({
+      targetCenter: this.layout.getCameraCenterForViewportWorldCenter(viewportWorldCenter, camera.scale),
+    })
   }
 
   private restoreGameState(): boolean {
@@ -216,7 +243,6 @@ export class Game extends Disposable(Empty) {
 
   private persistGameState() {
     const storage = getLocalStorage()
-    if (! storage) return
 
     const state: StoredGameState = {
       version: 1,
@@ -228,12 +254,15 @@ export class Game extends Disposable(Empty) {
       pendingMoves: this.pendingMoves,
     }
 
-    try {
-      storage.setItem(GAME_STORAGE_KEY, JSON.stringify(state))
+    if (storage) {
+      try {
+        storage.setItem(GAME_STORAGE_KEY, JSON.stringify(state))
+      }
+      catch {
+        this.logger.error('Failed to save game state')
+      }
     }
-    catch {
-      this.logger.error('Failed to save game state')
-    }
+    this.syncRecord()
   }
 
   private clearStoredGameState() {
@@ -428,26 +457,28 @@ export class Game extends Disposable(Empty) {
     })
   }
 
-  private setCameraMotion(motion: Partial<CameraMotion>, options: ViewportMoveOptions = {}) {
+  private setCameraMotion(motion: Partial<CameraMotion>, options: ViewportMoveOptions = {}): CameraMotion {
     const camera = this.renderer.getCamera()
     this.cameraMotion = {
+      id: ++ this.cameraMotionId,
       targetCenter: motion.targetCenter ?? this.cameraMotion?.targetCenter ?? camera.center,
       targetScale: motion.targetScale ?? this.cameraMotion?.targetScale ?? camera.scale,
       anchorScreen: options.anchorScreen ?? motion.anchorScreen ?? this.cameraMotion?.anchorScreen ?? this.getViewportCenterScreen(),
       viewport: options.viewport,
     }
+    return this.cameraMotion
   }
 
-  private moveViewportTo(motion: Partial<CameraMotion>, options: ViewportMoveOptions = {}) {
+  private moveViewportTo(motion: Partial<CameraMotion>, options: ViewportMoveOptions = {}): CameraMotion | null {
     if (options.smooth === false) {
       this.setViewportImmediate({
         center: motion.targetCenter,
         scale: motion.targetScale,
       }, { ...options, cancelMotion: true })
-      return
+      return null
     }
 
-    this.setCameraMotion(motion, options)
+    return this.setCameraMotion(motion, options)
   }
 
   private setViewportImmediate(camera: Partial<Camera>, options: ViewportMoveOptions = {}) {
@@ -472,7 +503,15 @@ export class Game extends Disposable(Empty) {
   }
 
   public focusBoard(l: number, m: number, options: ViewportFocusOptions = {}) {
-    this.focusRect(this.layout.getBoardRect(l, m), options)
+    const motion = this.focusRect(this.layout.getBoardRect(l, m), options)
+    this.boardFocusPulse = {
+      l,
+      m,
+      startedAt: performance.now(),
+      motionId: motion?.id ?? null,
+      heldForMotion: false,
+      releaseStartedAt: null,
+    }
   }
 
   private focusInitialTurn(options: ViewportFocusOptions = {}) {
@@ -502,9 +541,10 @@ export class Game extends Disposable(Empty) {
     this.focusInitialTurn(options)
   }
 
-  private focusRect(rect: Rect, options: ViewportFocusOptions = {}) {
-    this.moveViewportTo({
-      targetCenter: Rect.center(rect),
+  private focusRect(rect: Rect, options: ViewportFocusOptions = {}): CameraMotion | null {
+    const camera = this.renderer.getCamera()
+    return this.moveViewportTo({
+      targetCenter: this.layout.getCameraCenterForViewportWorldCenter(Rect.center(rect), camera.scale),
     }, {
       smooth: options.smooth,
     })
@@ -515,11 +555,13 @@ export class Game extends Disposable(Empty) {
     if (! bounds) return
 
     const camera = this.renderer.getCamera()
-    const { widthCss, heightCss } = this.renderer.getScreen()
-    const scale = getScaleToContainRects(rects, [widthCss, heightCss], camera.scale, padding)
+    const targetScale = Math.min(
+      camera.scale,
+      getScaleToContainRects(rects, this.layout.getViewportScreenSize(), camera.scale, padding),
+    )
     this.moveViewportTo({
-      targetCenter: Rect.center(bounds),
-      targetScale: Math.min(camera.scale, scale),
+      targetCenter: this.layout.getCameraCenterForViewportWorldCenter(Rect.center(bounds), targetScale),
+      targetScale,
     }, {
       smooth: options.smooth,
     })
@@ -664,6 +706,17 @@ export class Game extends Disposable(Empty) {
     this.config.onToolbarChange(buttons)
   }
 
+  private syncRecord() {
+    if (! this.config.onRecordChange) return
+
+    const request = this.getFiveDPGNExport()
+    const signature = JSON.stringify(request)
+    if (signature === this.recordSignature) return
+
+    this.recordSignature = signature
+    this.config.onRecordChange(request)
+  }
+
   private handleBoardClick(screen: Vec2) {
     if (this.isMoveAnimating()) return
     if (this.tryCreateMoveAt(screen)) return
@@ -778,6 +831,7 @@ export class Game extends Disposable(Empty) {
     return {
       text: FiveDPGN.exportGameState({ actions: this.actions }),
       hasPendingMoves: this.pendingMoves.length > 0,
+      actions: buildGameRecordActions(this.actions),
     }
   }
 
@@ -897,7 +951,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private getMoveAnimationEase(): number {
-    return Scalar.smoothstep(this.getMoveBoardAnimationProgress())
+    return Easing.easeInOut(this.getMoveBoardAnimationProgress())
   }
 
   private getMoveBoardAnimationProgress(): number {
@@ -1066,8 +1120,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private getViewportCenterScreen(): Vec2 {
-    const { widthCss, heightCss } = this.renderer.getScreen()
-    return [widthCss / 2, heightCss / 2]
+    return this.layout.getViewportCenterScreen()
   }
 
   private getCameraMotionViewport(motion: CameraMotion): Rect | null {
@@ -1167,13 +1220,13 @@ export class Game extends Disposable(Empty) {
     const travelProgress = this.getMoveTravelAnimationProgress()
     const pieceProgress = this.getMoveTravelPathProgress(pendingMove, travelProgress)
 
-    this.followTravelAnimationViewport(pendingMove, Scalar.smoothstep(viewportProgress))
+    this.followTravelAnimationViewport(pendingMove, Easing.easeInOut(viewportProgress))
     this.presentPainter.render({
       multiverse: pendingMove.multiverseBefore,
       multiverseCommitted: this.multiverseCommitted,
       player: this.player,
     })
-    this.renderMultiverseSourceAnimation(pendingMove, Scalar.smoothstep(sourceProgress))
+    this.renderMultiverseSourceAnimation(pendingMove, Easing.easeInOut(sourceProgress))
     this.renderMoveArrow(pendingMove.move, this.player, 1, pendingMove.order)
     if (sourceProgress >= 1) {
       this.renderTravelPiece(pendingMove, pieceProgress, 1)
@@ -1495,6 +1548,57 @@ export class Game extends Disposable(Empty) {
       && this.getSourceCreatedBoardIndex(pendingMove) === m
   }
 
+  private getBoardFocusPulseProgress(l: number, m: number): number {
+    if (! this.boardFocusPulse) return 0
+    if (this.boardFocusPulse.l !== l || this.boardFocusPulse.m !== m) return 0
+
+    const now = performance.now()
+    const elapsed = now - this.boardFocusPulse.startedAt
+    const attackDuration = Animations.BoardFocusPulseDuration / 2
+    const boundMotion = (
+      this.boardFocusPulse.motionId !== null
+      && this.cameraMotion?.id === this.boardFocusPulse.motionId
+    )
+      ? this.cameraMotion
+      : null
+    const shouldHoldForMotion = (
+      boundMotion !== null
+      && ! this.isCameraMotionVisuallySettled(boundMotion)
+    )
+
+    if (elapsed < attackDuration) {
+      return Easing.easeInOut(elapsed / attackDuration)
+    }
+    if (shouldHoldForMotion) {
+      this.boardFocusPulse.heldForMotion = true
+      return 1
+    }
+    if (this.boardFocusPulse.heldForMotion) {
+      this.boardFocusPulse.releaseStartedAt ??= now
+      const releaseProgress = (now - this.boardFocusPulse.releaseStartedAt)
+        / Animations.BoardFocusPulseReleaseDuration
+      if (releaseProgress >= 1) {
+        this.boardFocusPulse = null
+        return 0
+      }
+      return 1 - Easing.easeInOut(releaseProgress)
+    }
+
+    const releaseProgress = (elapsed - attackDuration)
+      / (Animations.BoardFocusPulseDuration - attackDuration)
+    if (releaseProgress >= 1) {
+      this.boardFocusPulse = null
+      return 0
+    }
+    return 1 - Easing.easeInOut(releaseProgress)
+  }
+
+  private isCameraMotionVisuallySettled(motion: CameraMotion): boolean {
+    const camera = this.renderer.getCamera()
+    return Vec2.length(Vec2.sub(camera.center, motion.targetCenter)) <= Animations.BoardFocusPulseSettleDistance
+      && Math.abs(camera.scale - motion.targetScale) <= Animations.BoardFocusPulseSettleScale
+  }
+
   private renderBoard(
     board: Board,
     l: number,
@@ -1513,8 +1617,24 @@ export class Game extends Disposable(Empty) {
     const temporaryProgress = options.temporaryProgress ?? (isTemporary ? 1 : 0)
     const temporaryPreset = options.temporaryPreset ?? ButtonColors.Yellow
     const alpha = options.alpha ?? 1
-    const borderColor = Color4.withAlpha(Color4.mix(baseBorderColor, temporaryPreset.border, temporaryProgress), alpha)
-    const activeBorderFill = Color4.withAlpha(Color4.mix(baseActiveBorderFill, temporaryPreset.fill, temporaryProgress), alpha)
+    const focusPulse = this.getBoardFocusPulseProgress(l, m)
+    const focusPreset = boardPlayer === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
+    const borderColor = Color4.withAlpha(
+      Color4.mix(
+        Color4.mix(baseBorderColor, temporaryPreset.border, temporaryProgress),
+        focusPreset.border,
+        focusPulse,
+      ),
+      alpha,
+    )
+    const activeBorderFill = Color4.withAlpha(
+      Color4.mix(
+        Color4.mix(baseActiveBorderFill, temporaryPreset.fill, temporaryProgress),
+        focusPreset.fill,
+        focusPulse,
+      ),
+      alpha,
+    )
     const activeProgress = options.activeProgress ?? (isActive ? 1 : 0)
     const outerBorder = Sizes.BoardBorder + Sizes.ActiveBoardBorder * activeProgress
     const outerBorderPos: Vec2 = [x0 - outerBorder, y0 - outerBorder]

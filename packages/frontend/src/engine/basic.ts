@@ -75,9 +75,6 @@ export namespace Scalar {
     Math.min(Math.max(x, min), max)
   )
 
-  export const smoothstep = (t: number): number => (
-    t * t * (3 - 2 * t)
-  )
 }
 
 export type Vec2 = [number, number]
