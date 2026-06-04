@@ -6,6 +6,10 @@ export interface LocatedSquare {
   coord: CoordSpacelike
 }
 
+export const isModifierKeyEvent = (e: KeyboardEvent): boolean => (
+  e.ctrlKey || e.altKey || e.metaKey
+)
+
 export const isTextInputEvent = (e: KeyboardEvent): boolean => {
   const target = e.target
   if (! (target instanceof HTMLElement)) return false

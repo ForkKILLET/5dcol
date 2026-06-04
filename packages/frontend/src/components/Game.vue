@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
 import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMoveSegment, type GameStatusView, type GameToolbarButton } from '@engine/game'
-import { isTextInputEvent } from '@engine/gameInput'
+import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { Logger, type GameMessage } from '@engine/logger'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 
@@ -251,21 +251,21 @@ async function copyExportText() {
 }
 
 function handleWindowKeyDown(e: KeyboardEvent) {
-  if (! e.repeat && ! isTextInputEvent(e) && e.key.toLowerCase() === 'r' && dialogMode.value === 'none') {
+  if (e.key === 'Escape') {
     e.preventDefault()
-    toggleRecordPanel()
+    if (dialogMode.value !== 'none') closeDialog()
+    else toggleSecondaryMenu()
     return
   }
 
-  if (e.key !== 'Escape') return
-  if (dialogMode.value !== 'none') {
-    e.preventDefault()
-    closeDialog()
-    return
-  }
+  if (e.repeat || isModifierKeyEvent(e) || isTextInputEvent(e) || dialogMode.value !== 'none') return
 
-  e.preventDefault()
-  toggleSecondaryMenu()
+  switch (e.key) {
+    case 'r':
+      e.preventDefault()
+      toggleRecordPanel()
+      break
+  }
 }
 
 async function init() {

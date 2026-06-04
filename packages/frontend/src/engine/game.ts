@@ -4,7 +4,7 @@ import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@eng
 import { getBoardRenderLayers } from '@engine/board'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { Easing } from '@engine/easing'
-import { isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
+import { isModifierKeyEvent, isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove, type StoredGameState } from '@engine/gameState'
 import { GameLayout, type ViewportInsets } from '@engine/layout'
 import { LinePainter } from '@engine/painters/linePainter'
@@ -439,7 +439,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
-    if (this.gameInputDisabled || e.repeat || isTextInputEvent(e)) return
+    if (this.gameInputDisabled || e.repeat || isModifierKeyEvent(e) || isTextInputEvent(e)) return
 
     switch (e.key) {
       case 'z':
