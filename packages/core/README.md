@@ -1,23 +1,5 @@
-# Rslib project
+# @5dcol/core
 
-## Setup
+Core game logic for 5dcol, an open-source web implementation of 5D Chess.
 
-Install the dependencies:
-
-```bash
-pnpm install
-```
-
-## Get started
-
-Build the library:
-
-```bash
-pnpm run build
-```
-
-Build the library in watch mode:
-
-```bash
-pnpm run dev
-```
+This package contains the rules, game-state model, move generation, checkmate detection, and 5dpgn import/export utilities used by the frontend.

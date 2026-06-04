@@ -1,6 +1,7 @@
 {
   "name": "@5dcol/core",
   "version": "0.0.0",
+  "description": "Core 5D Chess game logic for 5dcol.",
   "type": "module",
   "exports": {
     ".": {
@@ -14,6 +15,7 @@
   "files": [
     "dist"
   ],
+  "license": "MIT",
   "scripts": {
     "build": "rslib build",
     "dev": "rslib build --watch"
