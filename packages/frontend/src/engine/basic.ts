@@ -122,6 +122,27 @@ export const Rect = {
     Scalar.clamp(x, rx, rx + rw),
     Scalar.clamp(y, ry, ry + rh),
   ],
+
+  bounds: (rects: Rect[]): Rect | null => {
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+
+    for (const [[x, y], [w, h]] of rects) {
+      x0 = Math.min(x0, x)
+      y0 = Math.min(y0, y)
+      x1 = Math.max(x1, x + w)
+      y1 = Math.max(y1, y + h)
+    }
+
+    if (! Number.isFinite(x0) || ! Number.isFinite(y0)) return null
+    return [[x0, y0], [x1 - x0, y1 - y0]]
+  },
+
+  center: ([pos, size]: Rect): Vec2 => (
+    Vec2.add(pos, Vec2.scale(size, 0.5))
+  ),
 }
 
 export const CubicBezier = {

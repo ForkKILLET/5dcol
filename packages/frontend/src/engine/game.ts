@@ -1,10 +1,29 @@
 import { Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Multiverse, Piece, Pieces, type Action, type CoordSpacelike, type Move } from '@5dcol/core'
-import { Effect } from '@/utils'
+import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
+import { getBoardRenderLayers } from '@engine/board'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes, Animations } from '@engine/constant'
+import { isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
+import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove, type StoredGameState } from '@engine/gameState'
+import { GameLayout } from '@engine/layout'
+import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
-import { CircleRenderItem, LinearGradientFill, type Renderer, RenderItemType } from '@engine/renderer'
-import { PIECE_TO_TEXTURE_ID, TEXTURE_ID_TO_NAME } from '@engine/texture'
+import { getMoveArrowMaskFill, getMoveArrowPolygon } from '@engine/moveArrow'
+import { PresentPainter } from '@engine/painters/presentPainter'
+import { type Renderer, RenderItemType } from '@engine/renderer'
+import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
+import { TimelineTilesPainter } from '@engine/painters/timelineTilesPainter'
+import { getMoveTravelTargetScale, getScaleToContainRects } from '@engine/viewport'
+import {
+  getPlayerButtonColor,
+  getUndoMoveButtonColor,
+  isPrimaryGameToolbarButton,
+  toToolbarButtonView,
+  type ButtonConfig,
+  type GameToolbarButton,
+} from '@engine/toolbar'
+
+export type { GameToolbarButton } from '@engine/toolbar'
 
 export interface GameConfig {
   debug: boolean
@@ -27,10 +46,6 @@ interface PointerState {
   dragExceeded: boolean
 }
 
-interface VerticalBounds {
-  top: number
-  bottom: number
-}
 interface BoardFrame {
   pos: Vec2
   size: Vec2
@@ -63,29 +78,6 @@ interface SquareHover {
   m: number
   coord: CoordSpacelike
 }
-interface PendingMove {
-  move: Move
-  order: number
-  multiverseBefore: Multiverse
-  is5D: boolean
-  from: {
-    l: number
-    m: number
-  }
-  created: {
-    l: number
-    m: number
-  }
-}
-interface StoredGameState {
-  version: 1
-  actions?: Action[]
-  multiverseCommitted: Multiverse
-  multiverse: Multiverse
-  player: Player
-  actionIndex: number
-  pendingMoves: PendingMove[]
-}
 interface BoardSquareHit {
   l: number
   m: number
@@ -106,98 +98,32 @@ interface BoardRenderOptions {
   animatedLayer?: boolean
   basePlayer?: Player
 }
-interface PresentColors {
-  border: Color4
-  fill: Color4
-  label: Color4
-}
-interface LineColors {
-  border: Color4
-  fill: Color4
-}
 interface MoveArrowGeometry {
   from: Vec2
   control1: Vec2
   control2: Vec2
   to: Vec2
 }
-interface LineBranchGeometry {
-  source: Vec2
-  bend1Control1: Vec2
-  bend1Control2: Vec2
-  bend1End: Vec2
-  lineEnd: Vec2
-  bend2Control1: Vec2
-  bend2Control2: Vec2
-  target: Vec2
-}
-interface LineBranchBaseGeometry {
-  baseBranchX: number
-  sourceY: number
-  targetY: number
-  order: number
-}
-
-interface ButtonConfig {
-  id: string
-  disabled: boolean
-  colorPreset: ButtonColorPreset
-  turnPlayer: Player
-  text: string
-  piece: Piece | null
-  effect?: 'pulse'
-  onClick: () => void
-}
-
-export interface GameToolbarButtonColors {
-  border: string
-  fill: string
-  text: string
-}
-
-export interface GameToolbarButton {
-  id: string
-  disabled: boolean
-  text: string
-  pieceImageUrl: string | null
-  effect?: 'pulse'
-  colors: GameToolbarButtonColors
-  hoverColors: GameToolbarButtonColors
-  pulseColors: GameToolbarButtonColors
-}
-
-const PRESENT_LABEL = 'The Present'
-const PRESENT_LABEL_FONT = 'Georgia, Times New Roman, serif'
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
-const GAME_STORAGE_KEY = '5dcol.gameState'
 
-const isTextInputEvent = (e: KeyboardEvent): boolean => {
-  const target = e.target
-  if (! (target instanceof HTMLElement)) return false
-  return target.isContentEditable
-    || target.tagName === 'INPUT'
-    || target.tagName === 'TEXTAREA'
-    || target.tagName === 'SELECT'
-}
-
-const isSameLocatedSquare = (
-  square: SquareHover,
-  l: number,
-  m: number,
-  coord: CoordSpacelike,
-): boolean => (
-  square.l === l && square.m === m && Coord.isSameSpace(square.coord, coord)
-)
-
-export class Game {
+export class Game extends Disposable(Empty) {
   constructor(public readonly config: GameConfig) {
+    super()
     this.logger = config.logger
     this.renderer = config.renderer
+    this.layout = new GameLayout(config.renderer)
+    this.presentPainter = new PresentPainter(config.renderer, this.layout)
+    this.timelineTilesPainter = new TimelineTilesPainter(config.renderer, this.layout)
+    this.linePainter = new LinePainter(config.renderer, this.layout)
   }
 
   public readonly logger: Logger
   public readonly renderer: Renderer
+  public readonly layout: GameLayout
+  public readonly presentPainter: PresentPainter
+  public readonly timelineTilesPainter: TimelineTilesPainter
+  public readonly linePainter: LinePainter
 
   private multiverseCommitted = Multiverse.createInitial()
   private multiverse = this.multiverseCommitted
@@ -210,7 +136,6 @@ export class Game {
     dragLastScreen: null,
     dragExceeded: false,
   }
-  private readonly effects: Effect[] = []
   private cameraMotion: CameraMotion | null = null
   private selectedPiece: PieceSelection | null = null
   private hoverSquare: SquareHover | null = null
@@ -224,7 +149,6 @@ export class Game {
 
   private animationFrame: number | null = null
   private resizeDirty = false
-  private disposed = false
 
   public start() {
     const restored = this.restoreGameState()
@@ -234,15 +158,11 @@ export class Game {
     this.bindEvents()
     this.syncToolbarButtons()
     this.animationFrame = requestAnimationFrame(this.loop)
+    this.collect(() => {
+      if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame)
+      this.renderer.dispose()
+    })
     this.logger.info('Game started')
-  }
-
-  public dispose() {
-    if (this.disposed) return
-    for (const effect of this.effects) effect()
-    if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame)
-    this.renderer.dispose()
-    this.disposed = true
   }
 
   public setGameInputDisabled(disabled: boolean) {
@@ -256,12 +176,8 @@ export class Game {
     this.clearPointerDrag()
   }
 
-  private collect(effect: Effect) {
-    this.effects.push(effect)
-  }
-
   private restoreGameState(): boolean {
-    const storage = this.getLocalStorage()
+    const storage = getLocalStorage()
     if (! storage) return false
 
     try {
@@ -269,7 +185,7 @@ export class Game {
       if (! raw) return false
 
       const state = JSON.parse(raw) as Partial<StoredGameState>
-      if (! this.isStoredGameState(state)) {
+      if (! isStoredGameState(state)) {
         this.clearStoredGameState()
         return false
       }
@@ -299,7 +215,7 @@ export class Game {
   }
 
   private persistGameState() {
-    const storage = this.getLocalStorage()
+    const storage = getLocalStorage()
     if (! storage) return
 
     const state: StoredGameState = {
@@ -320,37 +236,8 @@ export class Game {
     }
   }
 
-  private isStoredGameState(state: Partial<StoredGameState>): state is StoredGameState {
-    return state.version === 1
-      && this.isMultiverseLike(state.multiverseCommitted)
-      && this.isMultiverseLike(state.multiverse)
-      && (state.actions === undefined || Array.isArray(state.actions))
-      && (state.player === Player.W || state.player === Player.B)
-      && typeof state.actionIndex === 'number'
-      && Array.isArray(state.pendingMoves)
-  }
-
-  private isMultiverseLike(value: unknown): value is Multiverse {
-    if (! value || typeof value !== 'object') return false
-    const multiverse = value as Partial<Multiverse>
-    return Array.isArray(multiverse.lines)
-      && typeof multiverse.lOffset === 'number'
-      && typeof multiverse.lFurthestB === 'number'
-      && typeof multiverse.lFurthestW === 'number'
-  }
-
-  private getLocalStorage(): Storage | null {
-    if (typeof window === 'undefined') return null
-    try {
-      return window.localStorage
-    }
-    catch {
-      return null
-    }
-  }
-
   private clearStoredGameState() {
-    const storage = this.getLocalStorage()
+    const storage = getLocalStorage()
     if (! storage) return
 
     try {
@@ -454,7 +341,7 @@ export class Game {
     this.setViewportImmediate({
       center: Vec2.sub(camera.center, delta),
     }, {
-      viewport: this.getRenderViewportRect(),
+      viewport: this.layout.getRenderViewportRect(this.multiverse),
     })
     this.pointer.dragLastScreen = screen
   }
@@ -572,20 +459,20 @@ export class Game {
       })
     }
 
-    const viewport = options.viewport ?? this.getValidViewportRect()
+    const viewport = options.viewport ?? this.layout.getValidViewportRect(this.multiverse)
     const targetCenter = camera.center ?? this.renderer.getCamera().center
     this.renderer.setCamera({
-      center: viewport ? this.clampCameraCenterToViewport(targetCenter, viewport) : targetCenter,
+      center: viewport ? this.layout.clampCameraCenterToViewport(targetCenter, viewport) : targetCenter,
     })
     this.syncCameraMotion()
   }
 
   public focusTurn(l: number, m: number, options: ViewportFocusOptions = {}) {
-    this.focusRect(this.getTurnRect(l, m), options)
+    this.focusRect(this.layout.getTurnRect(l, m), options)
   }
 
   public focusBoard(l: number, m: number, options: ViewportFocusOptions = {}) {
-    this.focusRect(this.getBoardRect(l, m), options)
+    this.focusRect(this.layout.getBoardRect(l, m), options)
   }
 
   private focusInitialTurn(options: ViewportFocusOptions = {}) {
@@ -604,7 +491,7 @@ export class Game {
         if (! line) return []
 
         const m = Line.getLatestBoardIndex(line)
-        return m === null ? [] : [this.getBoardRect(l, m)]
+        return m === null ? [] : [this.layout.getBoardRect(l, m)]
       })
       if (rects.length > 0) {
         this.focusRects(rects, Sizes.BoardWidth / 2, options)
@@ -616,54 +503,26 @@ export class Game {
   }
 
   private focusRect(rect: Rect, options: ViewportFocusOptions = {}) {
-    const [pos, size] = rect
     this.moveViewportTo({
-      targetCenter: Vec2.add(pos, Vec2.scale(size, 0.5)),
+      targetCenter: Rect.center(rect),
     }, {
       smooth: options.smooth,
     })
   }
 
   private focusRects(rects: Rect[], padding = 0, options: ViewportFocusOptions = {}) {
-    const bounds = this.getRectBounds(rects)
+    const bounds = Rect.bounds(rects)
     if (! bounds) return
 
     const camera = this.renderer.getCamera()
-    const scale = this.getScaleToContainRects(rects, padding)
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    const scale = getScaleToContainRects(rects, [widthCss, heightCss], camera.scale, padding)
     this.moveViewportTo({
-      targetCenter: this.getRectCenter(bounds),
+      targetCenter: Rect.center(bounds),
       targetScale: Math.min(camera.scale, scale),
     }, {
       smooth: options.smooth,
     })
-  }
-
-  private getTurnRect(l: number, m: number): Rect {
-    return [
-      [
-        Sizes.TurnWidth * m - Sizes.BoardMargin,
-        this.getTurnY(l) - Sizes.TurnHeight / 2,
-      ],
-      Sizes.TurnSize,
-    ]
-  }
-
-  private getBoardRect(l: number, m: number): Rect {
-    return [
-      [
-        m * (Sizes.BoardWidth + Sizes.BoardGap) - Sizes.BoardBorder,
-        this.getLineY(l) - Sizes.BoardWidth * 0.5 - Sizes.BoardBorder,
-      ],
-      Sizes.BoardBorderSize,
-    ]
-  }
-
-  private getTurnY(l: number): number {
-    return l * Sizes.TurnHeight
-  }
-
-  private getLineY(l: number): number {
-    return l * (Sizes.BoardWidth + Sizes.BoardGap)
   }
 
   private loop = () => {
@@ -721,7 +580,7 @@ export class Game {
       : {
           id: 'undo-move',
           disabled: this.pendingMoves.length === 0 || this.submitRequestedDuringMoveAnimation,
-          colorPreset: this.getUndoMoveButtonColor(),
+          colorPreset: getUndoMoveButtonColor(this.pendingMoves.at(-1)?.is5D ?? false),
           turnPlayer: this.player,
           text: 'Undo Move',
           piece: null,
@@ -735,7 +594,7 @@ export class Game {
       {
         id: 'submit-moves',
         disabled: ! this.canSubmitMoves() || this.submitRequestedDuringMoveAnimation,
-        colorPreset: this.getPlayerButtonColor(),
+        colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
         text: 'Submit Moves',
         piece: null,
@@ -747,7 +606,7 @@ export class Game {
       {
         id: 'restart-game',
         disabled: false,
-        colorPreset: this.getPlayerButtonColor(),
+        colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
         text: 'Restart',
         piece: null,
@@ -758,7 +617,7 @@ export class Game {
       {
         id: 'import-5dpgn',
         disabled: this.isMoveAnimating(),
-        colorPreset: this.getPlayerButtonColor(),
+        colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
         text: 'Import',
         piece: null,
@@ -769,7 +628,7 @@ export class Game {
       {
         id: 'export-5dpgn',
         disabled: false,
-        colorPreset: this.getPlayerButtonColor(),
+        colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
         text: 'Export',
         piece: null,
@@ -783,19 +642,15 @@ export class Game {
   public clickToolbarButton(id: string): boolean {
     const button = this.getToolbarButtons().find(button => button.id === id)
     if (! button) return false
-    if (this.gameInputDisabled && this.isPrimaryGameToolbarButton(id)) return true
+    if (this.gameInputDisabled && isPrimaryGameToolbarButton(id)) return true
     if (button.disabled) return true
     button.onClick()
     this.syncToolbarButtons()
     return true
   }
 
-  private isPrimaryGameToolbarButton(id: string): boolean {
-    return id === 'undo-move' || id === 'deselect-piece' || id === 'submit-moves'
-  }
-
   public getToolbarButtonViews(): GameToolbarButton[] {
-    return this.getToolbarButtons().map(button => this.toToolbarButtonView(button))
+    return this.getToolbarButtons().map(button => toToolbarButtonView(button))
   }
 
   private syncToolbarButtons() {
@@ -807,41 +662,6 @@ export class Game {
 
     this.toolbarSignature = signature
     this.config.onToolbarChange(buttons)
-  }
-
-  private toToolbarButtonView(button: ButtonConfig): GameToolbarButton {
-    const colors = button.disabled
-      ? (button.turnPlayer === Player.W ? ButtonColors.DisabledWhite : ButtonColors.DisabledBlack)
-      : button.colorPreset
-    const hoverColors = this.getGreenButtonColors(button.turnPlayer)
-    return {
-      id: button.id,
-      disabled: button.disabled,
-      text: button.text,
-      pieceImageUrl: button.piece === null ? null : this.getPieceImageUrl(button.piece),
-      effect: button.disabled ? undefined : button.effect,
-      colors: this.toToolbarButtonColors(colors),
-      hoverColors: this.toToolbarButtonColors(hoverColors),
-      pulseColors: this.toToolbarButtonColors(hoverColors),
-    }
-  }
-
-  private getGreenButtonColors(player: Player): ButtonColorPreset {
-    return player === Player.W ? ButtonColors.GreenWhite : ButtonColors.GreenBlack
-  }
-
-  private toToolbarButtonColors(colors: ButtonColorPreset): GameToolbarButtonColors {
-    return {
-      border: Color4.toRgbaString(colors.border),
-      fill: Color4.toRgbaString(colors.fill),
-      text: Color4.toRgbaString(colors.text),
-    }
-  }
-
-  private getPieceImageUrl(piece: Piece): string {
-    const textureId = PIECE_TO_TEXTURE_ID.get(piece)
-    if (textureId === undefined) return ''
-    return `./assets/canvas/textures/${TEXTURE_ID_TO_NAME.get(textureId)!}`
   }
 
   private handleBoardClick(screen: Vec2) {
@@ -1051,14 +871,6 @@ export class Game {
     }
   }
 
-  private getUndoMoveButtonColor(): ButtonColorPreset {
-    return this.pendingMoves.at(-1)?.is5D ? ButtonColors.FiveD : ButtonColors.Yellow
-  }
-
-  private getPlayerButtonColor(): ButtonColorPreset {
-    return this.player === Player.W ? ButtonColors.White : ButtonColors.Black
-  }
-
   private isMoveAnimating(): boolean {
     return this.getMoveAnimationProgress() < 1
   }
@@ -1187,7 +999,7 @@ export class Game {
       for (const [m, board] of Line.getBoardEntries(line)) {
         if (! board) continue
 
-        const [[borderX, borderY]] = this.getBoardRect(l, m)
+        const [[borderX, borderY]] = this.layout.getBoardRect(l, m)
         const x0 = borderX + Sizes.BoardBorder
         const y0 = borderY + Sizes.BoardBorder
         const x = Math.floor((world[0] - x0) / Sizes.PieceWidth)
@@ -1225,7 +1037,7 @@ export class Game {
 
     const cameraAfterBounds = this.renderer.getCamera()
     this.cameraMotion.targetCenter = viewport
-      ? this.clampCameraCenterToViewport(this.cameraMotion.targetCenter, viewport)
+      ? this.layout.clampCameraCenterToViewport(this.cameraMotion.targetCenter, viewport)
       : this.cameraMotion.targetCenter
 
     if (
@@ -1259,18 +1071,18 @@ export class Game {
   }
 
   private getCameraMotionViewport(motion: CameraMotion): Rect | null {
-    return motion.viewport === undefined ? this.getValidViewportRect() : motion.viewport
+    return motion.viewport === undefined ? this.layout.getValidViewportRect(this.multiverse) : motion.viewport
   }
 
   private updateCameraBounds() {
     if (this.cameraMotion) return
     if (this.pointer.dragLastScreen) return
 
-    const validViewport = this.getValidViewportRect()
+    const validViewport = this.layout.getValidViewportRect(this.multiverse)
     if (! validViewport) return
 
     const camera = this.renderer.getCamera()
-    const targetCenter = this.clampCameraCenterToViewport(camera.center, validViewport)
+    const targetCenter = this.layout.clampCameraCenterToViewport(camera.center, validViewport)
     const delta = Vec2.sub(targetCenter, camera.center)
 
     if (Vec2.length(delta) <= CameraControl.BounceBackSnapEpsilon) {
@@ -1287,7 +1099,7 @@ export class Game {
     if (! viewport) return
 
     const camera = this.renderer.getCamera()
-    const targetCenter = this.clampCameraCenterToViewport(camera.center, viewport)
+    const targetCenter = this.layout.clampCameraCenterToViewport(camera.center, viewport)
     const delta = Vec2.sub(targetCenter, camera.center)
     if (Vec2.length(delta) <= CameraControl.BounceBackSnapEpsilon) {
       this.renderer.setCamera({ center: targetCenter })
@@ -1300,23 +1112,23 @@ export class Game {
   }
 
   private clampCameraCenterToValidViewportIfAvailable(center: Vec2): Vec2 {
-    const validViewport = this.getValidViewportRect()
+    const validViewport = this.layout.getValidViewportRect(this.multiverse)
     if (! validViewport) return center
-    return this.clampCameraCenterToViewport(center, validViewport)
+    return this.layout.clampCameraCenterToViewport(center, validViewport)
   }
 
   private getMoveAnimationViewportRect(pendingMove: PendingMove): Rect | null {
-    return this.getValidViewportRect(
+    return this.layout.getValidViewportRect(
       pendingMove.multiverseBefore,
       [
-        this.getBoardRect(pendingMove.from.l, pendingMove.from.m + 1),
-        this.getBoardRect(pendingMove.created.l, pendingMove.created.m),
+        this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m + 1),
+        this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m),
       ],
     )
   }
 
   private renderMultiverse() {
-    this.renderTimelineTiles()
+    this.timelineTilesPainter.render(this.multiverse)
     if (this.pendingMove && this.isMoveAnimating()) {
       if (this.pendingMove.is5D && this.getMoveBoardAnimationProgress() === 0) {
         this.renderMultiverseTravelAnimation(this.pendingMove)
@@ -1326,14 +1138,18 @@ export class Game {
       return
     }
 
-    this.renderPresent(this.multiverse, this.getPresentDisplayColor())
+    this.presentPainter.render({
+      multiverse: this.multiverse,
+      multiverseCommitted: this.multiverseCommitted,
+      player: this.player,
+    })
     this.renderMultiverseStatic(this.multiverse)
   }
 
   private renderMultiverseStatic(multiverse: Multiverse) {
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
-      this.renderLine(line, l, 1, multiverse)
+      this.linePainter.render(line, l, 1, multiverse)
       const activeM = Line.getLatestBoardIndex(line)
 
       for (const [m, board] of Line.getBoardEntries(line)) {
@@ -1352,10 +1168,11 @@ export class Game {
     const pieceProgress = this.getMoveTravelPathProgress(pendingMove, travelProgress)
 
     this.followTravelAnimationViewport(pendingMove, Scalar.smoothstep(viewportProgress))
-    this.renderPresent(
-      pendingMove.multiverseBefore,
-      this.getPresentDisplayPlayer(pendingMove.multiverseBefore),
-    )
+    this.presentPainter.render({
+      multiverse: pendingMove.multiverseBefore,
+      multiverseCommitted: this.multiverseCommitted,
+      player: this.player,
+    })
     this.renderMultiverseSourceAnimation(pendingMove, Scalar.smoothstep(sourceProgress))
     this.renderMoveArrow(pendingMove.move, this.player, 1, pendingMove.order)
     if (sourceProgress >= 1) {
@@ -1370,7 +1187,13 @@ export class Game {
     }
 
     this.followPendingBoardAnimation(pendingMove, progress)
-    this.renderPresentAnimated(progress)
+    this.presentPainter.renderAnimated({
+      multiverse: this.multiverse,
+      multiverseCommitted: this.multiverseCommitted,
+      player: this.player,
+      pendingMove,
+      progress,
+    })
     let renderedCreatedBoard = false
     const targetBoardIndex = Coord.boardIndex(pendingMove.move.to, this.player)
 
@@ -1383,10 +1206,10 @@ export class Game {
       const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
       if (isPendingLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
+        this.linePainter.renderDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
-        this.renderLine(linePreview ?? lineCommitted, l, 1, linePreview ? this.multiverse : pendingMove.multiverseBefore)
+        this.linePainter.render(linePreview ?? lineCommitted, l, 1, linePreview ? this.multiverse : pendingMove.multiverseBefore)
       }
 
       for (const [m, board] of Line.getBoardEntries(lineCommitted)) {
@@ -1413,7 +1236,7 @@ export class Game {
 
     if (! renderedCreatedBoard) {
       const createdLine = Multiverse.getLine(this.multiverse, pendingMove.created.l)
-      if (createdLine) this.renderLine(createdLine, pendingMove.created.l, progress, this.multiverse)
+      if (createdLine) this.linePainter.render(createdLine, pendingMove.created.l, progress, this.multiverse)
       this.renderPendingCreatedBoard(pendingMove, progress)
     }
   }
@@ -1426,10 +1249,10 @@ export class Game {
       const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
       if (isSourceLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
+        this.linePainter.renderDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
-        this.renderLine(lineCommitted, l, 1, pendingMove.multiverseBefore)
+        this.linePainter.render(lineCommitted, l, 1, pendingMove.multiverseBefore)
       }
 
       for (const [m, board] of Line.getBoardEntries(lineCommitted)) {
@@ -1448,7 +1271,13 @@ export class Game {
   }
 
   private renderMultiverseTargetAnimation(pendingMove: PendingMove, progress: number) {
-    this.renderPresentAnimated(progress)
+    this.presentPainter.renderAnimated({
+      multiverse: this.multiverse,
+      multiverseCommitted: this.multiverseCommitted,
+      player: this.player,
+      pendingMove,
+      progress,
+    })
     let renderedCreatedBoard = false
     const targetBoardIndex = Coord.boardIndex(pendingMove.move.to, this.player)
 
@@ -1461,13 +1290,13 @@ export class Game {
       const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
       if (isSourceLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, 1, pendingMove.multiverseBefore)
+        this.linePainter.renderDuringMoveAnimation(lineCommitted, l, 1, pendingMove.multiverseBefore)
       }
       else if (isTargetLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
+        this.linePainter.renderDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
-        this.renderLine(linePreview ?? lineCommitted, l, 1, linePreview ? this.multiverse : pendingMove.multiverseBefore)
+        this.linePainter.render(linePreview ?? lineCommitted, l, 1, linePreview ? this.multiverse : pendingMove.multiverseBefore)
       }
 
       for (const [m, board] of Line.getBoardEntries(lineCommitted)) {
@@ -1495,7 +1324,7 @@ export class Game {
 
     if (! renderedCreatedBoard) {
       const createdLine = Multiverse.getLine(this.multiverse, pendingMove.created.l)
-      if (createdLine) this.renderLine(createdLine, pendingMove.created.l, progress, this.multiverse)
+      if (createdLine) this.linePainter.render(createdLine, pendingMove.created.l, progress, this.multiverse)
       this.renderPendingCreatedBoard(pendingMove, progress)
     }
   }
@@ -1506,8 +1335,8 @@ export class Game {
     const createdBoard = linePreview?.boards[sourceCreatedM]
     if (! createdBoard) return false
 
-    const [fromPos] = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
-    const [toPos] = this.getBoardRect(pendingMove.from.l, sourceCreatedM)
+    const [fromPos] = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+    const [toPos] = this.layout.getBoardRect(pendingMove.from.l, sourceCreatedM)
     this.renderBoard(createdBoard, pendingMove.from.l, sourceCreatedM, true, true, {
       activeProgress: 1,
       temporaryProgress: progress,
@@ -1524,10 +1353,10 @@ export class Game {
     const createdBoard = linePreview?.boards[pendingMove.created.m]
     if (! createdBoard) return false
 
-    const [fromPos] = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
-    const [toPos] = this.getBoardRect(pendingMove.created.l, pendingMove.created.m)
+    const [fromPos] = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+    const [toPos] = this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m)
     const [startPos] = pendingMove.is5D
-      ? this.getBoardRect(pendingMove.created.l, pendingMove.created.m - 1)
+      ? this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m - 1)
       : [fromPos]
     this.renderBoard(createdBoard, pendingMove.created.l, pendingMove.created.m, true, true, {
       activeProgress: 1,
@@ -1548,10 +1377,10 @@ export class Game {
   private followPendingBoardAnimation(pendingMove: PendingMove, progress: number) {
     if (! this.moveAnimation) return
 
-    const [fromPos, fromSize] = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
-    const [toPos] = this.getBoardRect(pendingMove.created.l, pendingMove.created.m)
+    const [fromPos, fromSize] = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+    const [toPos] = this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m)
     const [startPos] = pendingMove.is5D
-      ? this.getBoardRect(pendingMove.created.l, pendingMove.created.m - 1)
+      ? this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m - 1)
       : [fromPos]
     const followCenter = Vec2.add(Vec2.mix(startPos, toPos, progress), Vec2.scale(fromSize, 0.5))
     const center = Vec2.mix(this.moveAnimation.cameraCenter, followCenter, progress)
@@ -1565,21 +1394,22 @@ export class Game {
   private followTravelAnimationViewport(pendingMove: PendingMove, progress: number) {
     if (! this.moveAnimation) return
 
-    const sourceOldRect = this.getBoardRect(pendingMove.from.l, pendingMove.from.m)
-    const targetOldRect = this.getBoardRect(
+    const sourceOldRect = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+    const targetOldRect = this.layout.getBoardRect(
       pendingMove.move.to.l,
       Coord.boardIndex(pendingMove.move.to, this.player),
     )
-    const sourceNewRect = this.getBoardRect(pendingMove.from.l, pendingMove.from.m + 1)
-    const targetNewRect = this.getBoardRect(pendingMove.created.l, pendingMove.created.m)
-    const sourceOldCenter = this.getRectCenter(sourceOldRect)
-    const targetOldCenter = this.getRectCenter(targetOldRect)
-    const sourceNewCenter = this.getRectCenter(sourceNewRect)
-    const targetNewCenter = this.getRectCenter(targetNewRect)
-    const targetScale = this.getMoveTravelTargetScale(this.moveAnimation.cameraScale, [
+    const sourceNewRect = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m + 1)
+    const targetNewRect = this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m)
+    const sourceOldCenter = Rect.center(sourceOldRect)
+    const targetOldCenter = Rect.center(targetOldRect)
+    const sourceNewCenter = Rect.center(sourceNewRect)
+    const targetNewCenter = Rect.center(targetNewRect)
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    const targetScale = getMoveTravelTargetScale(this.moveAnimation.cameraScale, [
       sourceOldRect,
       targetOldRect,
-    ], Sizes.BoardWidth / 2)
+    ], [widthCss, heightCss], Sizes.BoardWidth / 2)
     const scale = Scalar.lerp(this.moveAnimation.cameraScale, targetScale, progress)
     const center: Vec2 = [
       Scalar.lerp(
@@ -1602,11 +1432,6 @@ export class Game {
     })
   }
 
-  private getMoveTravelTargetScale(baseScale: number, rects: Rect[], padding = 0): number {
-    const fitScale = this.getScaleToContainRects(rects, padding)
-    return Math.min(baseScale, fitScale)
-  }
-
   private getMoveTravelPathProgress(pendingMove: PendingMove, progress: number): number {
     const geometry = this.getMoveArrowGeometry(pendingMove.move, this.player)
     if (! geometry) return progress
@@ -1618,40 +1443,6 @@ export class Game {
       progress,
       Sizes.MoveArrowCurveSamples,
     )
-  }
-
-  private getScaleToContainRects(rects: Rect[], padding = 0): number {
-    const bounds = this.getRectBounds(rects)
-    if (! bounds) return this.renderer.getCamera().scale
-
-    const [, [w, h]] = bounds
-    const { widthCss, heightCss } = this.renderer.getScreen()
-    const paddedWidth = w + padding * 2
-    const paddedHeight = h + padding * 2
-    const xScale = paddedWidth > 0 ? widthCss / paddedWidth : CameraControl.ZoomMax
-    const yScale = paddedHeight > 0 ? heightCss / paddedHeight : CameraControl.ZoomMax
-    return Math.min(xScale, yScale, CameraControl.ZoomMax)
-  }
-
-  private getRectBounds(rects: Rect[]): Rect | null {
-    let x0 = Infinity
-    let y0 = Infinity
-    let x1 = -Infinity
-    let y1 = -Infinity
-
-    for (const [[x, y], [w, h]] of rects) {
-      x0 = Math.min(x0, x)
-      y0 = Math.min(y0, y)
-      x1 = Math.max(x1, x + w)
-      y1 = Math.max(y1, y + h)
-    }
-
-    if (! Number.isFinite(x0) || ! Number.isFinite(y0)) return null
-    return [[x0, y0], [x1 - x0, y1 - y0]]
-  }
-
-  private getRectCenter([pos, size]: Rect): Vec2 {
-    return Vec2.add(pos, Vec2.scale(size, 0.5))
   }
 
   private renderTravelPiece(pendingMove: PendingMove, progress: number, alpha: number) {
@@ -1704,951 +1495,6 @@ export class Game {
       && this.getSourceCreatedBoardIndex(pendingMove) === m
   }
 
-  private renderPresent(multiverse: Multiverse, displayPlayer: Player, boundsOverride?: VerticalBounds | null) {
-    const present = Multiverse.getPresent(multiverse, this.player)
-    if (! present) return
-
-    this.renderPresentAt(present.m, this.getPresentColors(displayPlayer), undefined, multiverse, boundsOverride)
-  }
-
-  private renderPresentAnimated(progress: number) {
-    const multiverseBefore = this.pendingMove?.multiverseBefore ?? this.multiverseCommitted
-    const presentCommitted = Multiverse.getPresent(multiverseBefore, this.player)
-    const presentPreview = Multiverse.getPresent(this.multiverse, this.player)
-    if (! presentCommitted || ! presentPreview) return
-
-    const displayPlayerBefore = this.getPresentDisplayPlayer(multiverseBefore)
-    const displayPlayerPreview = this.getPresentDisplayPlayer(this.multiverse)
-    const bounds = this.getAnimatedBoardVerticalBounds(multiverseBefore, this.multiverse, progress)
-
-    if (presentCommitted.m === presentPreview.m && displayPlayerBefore === displayPlayerPreview) {
-      this.renderPresent(this.multiverse, displayPlayerPreview, bounds)
-      return
-    }
-
-    const [[x0]] = this.getPresentViewportRect(presentCommitted.m)
-    const [[x1]] = this.getPresentViewportRect(presentPreview.m)
-    const colors = this.mixPresentColors(
-      this.getPresentColors(displayPlayerBefore),
-      this.getPresentColors(displayPlayerPreview),
-      progress,
-    )
-    this.renderPresentAt(presentPreview.m, colors, x0 + (x1 - x0) * progress, this.multiverse, bounds)
-  }
-
-  private renderPresentAt(
-    m: number,
-    colors: PresentColors,
-    xOverride?: number,
-    multiverse = this.multiverse,
-    boundsOverride?: VerticalBounds | null,
-  ) {
-    const [[xRect, y], [w, h]] = this.getPresentViewportRect(m)
-    const x = xOverride ?? xRect
-    const boardBounds = boundsOverride ?? this.getBoardVerticalBounds(multiverse)
-
-    this.renderer.submit({
-      type: RenderItemType.Quad,
-      layer: RenderLayer.PresentShadow,
-      mat: Mat3.transform(Vec2.add([x, y], Sizes.LineShadowOffset), [w, h]),
-      color: Colors.Shadow,
-    })
-
-    this.renderer.submit({
-      type: RenderItemType.Quad,
-      layer: RenderLayer.Present,
-      mat: Mat3.transform([x + Sizes.PresentBorder, y], [w - Sizes.PresentBorder * 2, h]),
-      color: colors.fill,
-    })
-
-    this.renderer.submit({
-      type: RenderItemType.Quad,
-      layer: RenderLayer.Present,
-      mat: Mat3.transform([x, y], [Sizes.PresentBorder, h]),
-      color: colors.border,
-    })
-    this.renderer.submit({
-      type: RenderItemType.Quad,
-      layer: RenderLayer.Present,
-      mat: Mat3.transform([x + w - Sizes.PresentBorder, y], [Sizes.PresentBorder, h]),
-      color: colors.border,
-    })
-
-    if (boardBounds) {
-      this.renderPresentLabels(x, w, boardBounds, colors.label)
-      this.renderPresentIcons(x, w, boardBounds)
-    }
-  }
-
-  private getPresentDisplayColor(): Player {
-    return this.getPresentDisplayPlayer(this.multiverse)
-  }
-
-  private getPresentDisplayPlayer(multiverse: Multiverse): Player {
-    const committedPresent = Multiverse.getPresent(this.multiverseCommitted, this.player)
-    const present = Multiverse.getPresent(multiverse, this.player)
-    if (! committedPresent || ! present) return this.player
-    return present.m > committedPresent.m ? CorePlayers.opponent(this.player) : this.player
-  }
-
-  private getPresentColors(player: Player): PresentColors {
-    return {
-      border: player === Player.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack,
-      fill: player === Player.W ? Colors.BoardBorderWhiteDim : Colors.BoardBorderBlackDim,
-      label: player === Player.W ? Colors.BoardBorderBlack : Colors.BoardBorderWhite,
-    }
-  }
-
-  private mixPresentColors(a: PresentColors, b: PresentColors, progress: number): PresentColors {
-    return {
-      border: Color4.mix(a.border, b.border, progress),
-      fill: Color4.mix(a.fill, b.fill, progress),
-      label: Color4.mix(a.label, b.label, progress),
-    }
-  }
-
-  private getPresentViewportRect(m: number): Rect {
-    const { widthCss, heightCss } = this.renderer.getScreen()
-    const topLeft = this.renderer.screenToWorld([0, 0])
-    const bottomRight = this.renderer.screenToWorld([widthCss, heightCss])
-    const y0 = Math.min(topLeft[1], bottomRight[1])
-    const y1 = Math.max(topLeft[1], bottomRight[1])
-    const margin = (y1 - y0) * Sizes.PresentViewportMarginRatio + Sizes.TurnHeight
-
-    return [
-      [
-        m * (Sizes.BoardWidth + Sizes.BoardGap) + (Sizes.BoardWidth - Sizes.PresentWidth) / 2,
-        y0 - margin,
-      ],
-      [
-        Sizes.PresentWidth,
-        y1 - y0 + margin * 2,
-      ],
-    ]
-  }
-
-  private getBoardVerticalBounds(multiverse = this.multiverse): VerticalBounds | null {
-    let top = Infinity
-    let bottom = -Infinity
-
-    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
-      if (! line) continue
-
-      for (const [m, board] of Line.getBoardEntries(line)) {
-        if (! board) continue
-        const [[, y], [, h]] = this.getBoardRect(l, m)
-        top = Math.min(top, y)
-        bottom = Math.max(bottom, y + h)
-      }
-    }
-
-    if (! Number.isFinite(top) || ! Number.isFinite(bottom)) return null
-    return { top, bottom }
-  }
-
-  private getAnimatedBoardVerticalBounds(
-    fromMultiverse: Multiverse,
-    toMultiverse: Multiverse,
-    progress: number,
-  ): VerticalBounds | null {
-    const from = this.getBoardVerticalBounds(fromMultiverse)
-    const to = this.getBoardVerticalBounds(toMultiverse)
-    if (! from) return to
-    if (! to) return from
-
-    return {
-      top: Scalar.lerp(from.top, to.top, progress),
-      bottom: Scalar.lerp(from.bottom, to.bottom, progress),
-    }
-  }
-
-  private renderPresentLabels(x: number, w: number, bounds: VerticalBounds, color: Color4) {
-    const cx = x + w * Sizes.PresentLabelXRatio
-    const topY = bounds.top - Sizes.TurnHeight * Sizes.PresentLabelOffsetTurns
-    const bottomY = bounds.bottom + Sizes.TurnHeight * Sizes.PresentLabelOffsetTurns
-
-    this.renderPresentLabel([cx, topY], Math.PI / 2, color)
-    this.renderPresentLabel([cx, bottomY], Math.PI / 2, color)
-  }
-
-  private renderPresentLabel(pos: Vec2, angle: number, color: Color4) {
-    this.renderer.submit({
-      type: RenderItemType.Text,
-      layer: RenderLayer.Present,
-      pos,
-      angle,
-      text: PRESENT_LABEL,
-      fontSize: Sizes.PresentLabelFontSize,
-      fontFamily: PRESENT_LABEL_FONT,
-      fontStyle: 'italic',
-      color,
-      align: 'center',
-      baseline: 'middle',
-    })
-  }
-
-  private renderPresentIcons(x: number, w: number, bounds: VerticalBounds) {
-    const cx = x + w / 2
-
-    const iconCenter: Vec2 = [cx, bounds.top - Sizes.TurnHeight * Sizes.PresentIconOffsetTurns]
-    this.renderPresentIcon(
-      iconCenter,
-      -1,
-      this.canCreateTimelinePresent(Player.B),
-      Colors.BoardBorderBlack,
-      Colors.BoardBorderBlackDim,
-    )
-
-    const lowerIconCenter: Vec2 = [cx, bounds.bottom + Sizes.TurnHeight * Sizes.PresentIconOffsetTurns]
-    this.renderPresentIcon(
-      lowerIconCenter,
-      1,
-      this.canCreateTimelinePresent(Player.W),
-      Colors.BoardBorderWhite,
-      Colors.BoardBorderWhiteDim,
-    )
-  }
-
-  private canCreateTimelinePresent(player: Player): boolean {
-    return Multiverse.canCreateActiveTimeline(this.multiverse, player)
-  }
-
-  private renderPresentIcon(
-    center: Vec2,
-    direction: -1 | 1,
-    canCreateTimeline: boolean,
-    borderColor: Color4,
-    fillColor: Color4,
-  ) {
-    if (canCreateTimeline) {
-      const radius = Sizes.PresentIconActiveRadius
-      this.renderPresentCircle({
-        center,
-        radius,
-        stroke: borderColor,
-        strokeWidth: 0,
-        fill: fillColor
-      })
-      this.renderPresentArrow(center, direction, radius)
-      this.renderPresentCircle({
-        center,
-        radius,
-        stroke: borderColor,
-        strokeWidth: Sizes.PresentBorder,
-        fill: Colors.Transparent
-      })
-    }
-    else {
-      this.renderPresentCircle({
-        center,
-        radius: Sizes.PresentIconInactiveRadius,
-        stroke: borderColor,
-        strokeWidth: Sizes.PresentBorder,
-        fill: fillColor,
-      })
-    }
-  }
-
-  private renderPresentArrow(center: Vec2, direction: -1 | 1, radius: number) {
-    const xStart = - radius * Sizes.PresentArrowHalfShaftRatio
-    const xEnd = radius * Sizes.PresentArrowHalfShaftRatio
-    const xTip = 0
-
-    const yStart = - direction * (radius - Sizes.PresentArrowTailInset)
-    const yStartFill = - direction * (radius - Sizes.PresentArrowTailFillInset)
-    const yTip = direction * radius * Sizes.PresentArrowTipRatio
-    const yTipBase = - direction * radius * Sizes.PresentArrowTipBaseRatio
-    const xTipBaseLeft = - (Math.abs(yTip) + Math.abs(yTipBase))
-    const xTipBaseRight = Math.abs(yTip) + Math.abs(yTipBase)
-
-    const getPoints = (yStart: number): Vec2[] => {
-      const pointsModel: Vec2[] = [
-        [xStart, yStart],
-        [xEnd, yStart],
-        [xEnd, yTipBase],
-        [xTipBaseRight, yTipBase],
-        [xTip, yTip],
-        [xTipBaseLeft, yTipBase],
-        [xStart, yTipBase],
-      ]
-      return pointsModel.map(Vec2.curry.add(center))
-    }
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.Present,
-      points: getPoints(yStart),
-      fill: Colors.Purple,
-      stroke: Colors.PurpleDark,
-      strokeWidth: Sizes.PresentArrowStrokeWidth,
-    })
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.Present,
-      points: getPoints(yStartFill),
-      fill: Colors.Purple,
-      stroke: null,
-      strokeWidth: 0,
-    })
-  }
-
-  private renderPresentCircle(attrs: Omit<CircleRenderItem, 'type' | 'layer'>) {
-    this.renderer.submit({
-      type: RenderItemType.Circle,
-      layer: RenderLayer.Present,
-      ...attrs,
-    })
-  }
-
-  private renderTimelineTiles() {
-    const tileViewport = this.getTimeTileViewportRect()
-    if (! tileViewport) return
-
-    const [[x, y], [w, h]] = tileViewport
-    const t0 = Math.floor((x + Sizes.BoardMargin) / Sizes.TurnWidth)
-    const t1 = Math.ceil((x + w + Sizes.BoardMargin) / Sizes.TurnWidth)
-    const l0 = Math.floor(- (y + h) / Sizes.TurnHeight - 0.5)
-    const l1 = Math.ceil(- y / Sizes.TurnHeight - 0.5)
-    const tileOverdraw = Sizes.BoardTimeOverdrawDevicePixels
-      / this.renderer.getScreen().dpr
-      / this.renderer.getCamera().scale
-
-    for (let t = t0; t < t1; t ++) {
-      for (let l = l0; l < l1; l ++) {
-        const [turnPos, turnSize] = this.getTurnRect(l, t)
-
-        this.renderer.submit({
-          type: RenderItemType.Quad,
-          layer: RenderLayer.BoardTime,
-          mat: Mat3.transform(
-            Vec2.sub(turnPos, [tileOverdraw / 2, tileOverdraw / 2]),
-            Vec2.add(turnSize, [tileOverdraw, tileOverdraw]),
-          ),
-          color: (t + l) % 2 === 0 ? Colors.BoardTimeWhite : Colors.BoardTimeBlack,
-        })
-      }
-    }
-  }
-
-  private getBoardViewportRect(multiverse = this.multiverse, extraRects: Rect[] = []): Rect | null {
-    let x0 = Infinity
-    let y0 = Infinity
-    let x1 = -Infinity
-    let y1 = -Infinity
-
-    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
-      if (! line) continue
-
-      for (const [m, board] of Line.getBoardEntries(line)) {
-        if (! board) continue
-        const [[x, y], [w, h]] = this.getBoardRect(l, m)
-        x0 = Math.min(x0, x)
-        y0 = Math.min(y0, y)
-        x1 = Math.max(x1, x + w)
-        y1 = Math.max(y1, y + h)
-      }
-    }
-
-    for (const [[x, y], [w, h]] of extraRects) {
-      x0 = Math.min(x0, x)
-      y0 = Math.min(y0, y)
-      x1 = Math.max(x1, x + w)
-      y1 = Math.max(y1, y + h)
-    }
-
-    if (! Number.isFinite(x0) || ! Number.isFinite(y0)) return null
-    return [[x0, y0], [x1 - x0, y1 - y0]]
-  }
-
-  private getScreenWorldSize(): Vec2 {
-    const { widthCss, heightCss } = this.renderer.getScreen()
-    const topLeft = this.renderer.screenToWorld([0, 0])
-    const bottomRight = this.renderer.screenToWorld([widthCss, heightCss])
-    return [
-      Math.abs(bottomRight[0] - topLeft[0]),
-      Math.abs(bottomRight[1] - topLeft[1]),
-    ]
-  }
-
-  private getValidViewportRect(multiverse = this.multiverse, extraRects: Rect[] = []): Rect | null {
-    const boardViewport = this.getBoardViewportRect(multiverse, extraRects)
-    if (! boardViewport) return null
-
-    const center = Vec2.add(boardViewport[0], Vec2.scale(boardViewport[1], 0.5))
-    const screenWorldSize = this.getScreenWorldSize()
-    const padding = this.getValidViewportPadding(screenWorldSize)
-    const size: Vec2 = [
-      Math.max(boardViewport[1][0] + padding[0] * 2, screenWorldSize[0]),
-      Math.max(boardViewport[1][1] + padding[1] * 2, screenWorldSize[1]),
-    ]
-    return [
-      Vec2.sub(center, Vec2.scale(size, 0.5)),
-      size,
-    ]
-  }
-
-  private getValidViewportPadding(screenWorldSize: Vec2): Vec2 {
-    return [
-      Math.max(0, (screenWorldSize[0] - Sizes.BoardBorderSize[0]) / 2),
-      Math.max(0, (screenWorldSize[1] - Sizes.BoardBorderSize[1]) / 2),
-    ]
-  }
-
-  private getTimeTileViewportRect(): Rect | null {
-    const validViewport = this.getValidViewportRect()
-    if (! validViewport) return null
-
-    const screenWorldSize = this.getScreenWorldSize()
-    return [
-      Vec2.sub(validViewport[0], screenWorldSize),
-      Vec2.add(validViewport[1], Vec2.scale(screenWorldSize, 2)),
-    ]
-  }
-
-  private getRenderViewportRect(): Rect | null {
-    return this.getTimeTileViewportRect()
-  }
-
-  private clampCameraCenterToViewport(center: Vec2, viewport: Rect): Vec2 {
-    const screenWorldSize = this.getScreenWorldSize()
-    const [[x, y], [w, h]] = viewport
-    return Rect.clampPoint(center, [
-      [
-        x + screenWorldSize[0] / 2,
-        y + screenWorldSize[1] / 2,
-      ],
-      [
-        Math.max(0, w - screenWorldSize[0]),
-        Math.max(0, h - screenWorldSize[1]),
-      ],
-    ])
-  }
-
-  private renderLine(line: Line, l: number, alpha = 1, multiverse = this.multiverse) {
-    const branch = this.getLineBranchGeometry(multiverse, line, l)
-    const order = this.getLineRenderOrder(line)
-    const colors = this.getLineColors(multiverse, l)
-    if (branch) {
-      this.renderLineBranchArrow(line, l, branch, alpha, order, colors)
-      return
-    }
-
-    this.renderLineStart(line, l, alpha, branch, order, colors)
-    const points = this.getLinePoints(line, l)
-    this.renderLinePolygon(points, alpha, order, colors)
-  }
-
-  private renderLineStart(
-    line: Line,
-    l: number,
-    alpha = 1,
-    branch = this.getLineBranchGeometry(this.multiverse, line, l),
-    order = this.getLineRenderOrder(line),
-    colors = this.getLineColors(this.multiverse, l),
-  ) {
-    if (branch) {
-      this.renderLineBranch(branch, alpha, order, colors)
-      return
-    }
-
-    this.renderLineInitialStartSegment(line, l, alpha, order, colors)
-  }
-
-  private renderLineInitialStartSegment(line: Line, l: number, alpha: number, order: number, colors: LineColors) {
-    if (alpha <= 0) return
-
-    const y = this.getLineY(l)
-    const xEnd = line.mStart * (Sizes.BoardWidth + Sizes.BoardGap)
-    const xStart = xEnd - Sizes.LineStartSegmentLength
-    const points: Vec2[] = [
-      [xStart, y - Sizes.LineArrowRadius],
-      [xEnd, y - Sizes.LineArrowRadius],
-      [xEnd, y + Sizes.LineArrowRadius],
-      [xStart, y + Sizes.LineArrowRadius],
-    ]
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.LineShadow,
-      order,
-      points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
-      fill: {
-        type: 'linear-gradient',
-        from: Vec2.add([xStart, y], Sizes.LineShadowOffset),
-        to: Vec2.add([xEnd, y], Sizes.LineShadowOffset),
-        stops: [
-          { offset: 0, color: Color4.withAlpha(Colors.Shadow, 0) },
-          { offset: 1, color: Color4.withAlpha(Colors.Shadow, alpha) },
-        ],
-      },
-      stroke: null,
-    })
-
-    const fill = {
-      type: 'linear-gradient' as const,
-      from: [xStart, y] satisfies Vec2,
-      to: [xEnd, y] satisfies Vec2,
-      stops: [
-        { offset: 0, color: Color4.withAlpha(colors.fill, 0) },
-        { offset: 1, color: Color4.withAlpha(colors.fill, alpha) },
-      ],
-    }
-    const stroke = {
-      type: 'linear-gradient' as const,
-      from: [xStart, y] satisfies Vec2,
-      to: [xEnd, y] satisfies Vec2,
-      stops: [
-        { offset: 0, color: Color4.withAlpha(colors.border, 0) },
-        { offset: 1, color: Color4.withAlpha(colors.border, alpha) },
-      ],
-    }
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.Line,
-      order,
-      points,
-      fill,
-      stroke,
-      strokeWidth: Sizes.LineBorderWidth,
-    })
-  }
-
-  private renderLineDuringMoveAnimation(line: Line, l: number, progress: number, multiverse = this.multiverse) {
-    const branch = this.getLineBranchGeometry(multiverse, line, l)
-    const order = this.getLineRenderOrder(line)
-    const colors = this.getLineColors(multiverse, l)
-    this.renderLineStart(line, l, 1, branch, order, colors)
-    const latestM = Line.getLatestBoardIndex(line)
-    if (latestM === null) {
-      return
-    }
-
-    this.renderLineStableSegment(line, l, latestM, branch?.target[0], order, colors)
-    const oldSegment = this.getLineLatestSegmentGeometry(latestM, l)
-    this.renderLinePolygon(oldSegment.points, 1 - progress, order, colors)
-    this.renderLineBridgeSegment(latestM, l, oldSegment.xStart, progress, order, colors)
-    this.renderLinePolygon(this.getMovingLineLatestSegmentPoints(latestM, l, progress), progress, order, colors)
-  }
-
-  private renderLinePolygon(points: Vec2[], alpha: number, order: number, colors: LineColors) {
-    if (alpha <= 0) return
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.LineShadow,
-      order,
-      points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
-      fill: Color4.withAlpha(Colors.Shadow, alpha),
-      stroke: null,
-    })
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.Line,
-      order,
-      points,
-      fill: Color4.withAlpha(colors.fill, alpha),
-      stroke: Color4.withAlpha(colors.border, alpha),
-      strokeWidth: Sizes.LineBorderWidth,
-    })
-  }
-
-  private renderLineBranchArrow(line: Line, l: number, branch: LineBranchGeometry, alpha: number, order: number, colors: LineColors) {
-    const points = this.getLineBranchArrowPoints(line, l, branch)
-    if (points.length === 0 || alpha <= 0) return
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.LineShadow,
-      order,
-      points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
-      fill: Color4.withAlpha(Colors.Shadow, alpha),
-      stroke: null,
-    })
-
-    this.renderer.submit({
-      type: RenderItemType.Polygon,
-      layer: RenderLayer.Line,
-      order,
-      points,
-      fill: Color4.withAlpha(colors.fill, alpha),
-      stroke: Color4.withAlpha(colors.border, alpha),
-      strokeWidth: Sizes.LineBorderWidth,
-    })
-  }
-
-  private getLineBranchArrowPoints(line: Line, l: number, branch: LineBranchGeometry): Vec2[] {
-    const step = Sizes.BoardWidth + Sizes.BoardGap
-    const y = this.getLineY(l)
-    const yUpTip = y - Sizes.LineArrowRadius - Sizes.LineArrowTip
-    const yDownTip = y + Sizes.LineArrowRadius + Sizes.LineArrowTip
-    const xTip = line.boards.length * step + Sizes.LineArrowShaftLength
-    const xEnd = xTip + Sizes.LineArrowRadius + Sizes.LineArrowTip
-    const centerline = this.getLineBranchArrowCenterline(branch, [xTip, y])
-    if (centerline.length < 2) return []
-
-    const upper: Vec2[] = []
-    const lower: Vec2[] = []
-
-    for (let i = 0; i < centerline.length; i ++) {
-      const point = centerline[i]
-      const previous = centerline[Math.max(0, i - 1)]
-      const next = centerline[Math.min(centerline.length - 1, i + 1)]
-      const tangent = Vec2.sub(next, previous)
-      const length = Vec2.length(tangent)
-      if (length === 0) continue
-
-      const unit = Vec2.scale(tangent, 1 / length)
-      const normal: Vec2 = [-unit[1], unit[0]]
-      upper.push(Vec2.sub(point, Vec2.scale(normal, Sizes.LineArrowRadius)))
-      lower.push(Vec2.add(point, Vec2.scale(normal, Sizes.LineArrowRadius)))
-    }
-
-    return [
-      ...upper,
-      [xTip, yUpTip],
-      [xEnd, y],
-      [xTip, yDownTip],
-      ...lower.reverse(),
-    ]
-  }
-
-  private getLineBranchArrowCenterline(branch: LineBranchGeometry, end: Vec2): Vec2[] {
-    const points: Vec2[] = []
-    const pushPoint = (point: Vec2) => {
-      const previous = points.at(-1)
-      if (previous && Vec2.length(Vec2.sub(point, previous)) < 0.001) return
-      points.push(point)
-    }
-    const pushCubic = (from: Vec2, control1: Vec2, control2: Vec2, to: Vec2) => {
-      for (let i = 0; i <= Sizes.LineBranchCurveSamples; i ++) {
-        pushPoint(CubicBezier.point(from, control1, control2, to, i / Sizes.LineBranchCurveSamples))
-      }
-    }
-
-    pushCubic(branch.source, branch.bend1Control1, branch.bend1Control2, branch.bend1End)
-    pushPoint(branch.lineEnd)
-    pushCubic(branch.lineEnd, branch.bend2Control1, branch.bend2Control2, branch.target)
-    pushPoint(end)
-    return points
-  }
-
-  private renderLineBranch(geometry: LineBranchGeometry, alpha: number, order: number, colors: LineColors) {
-    this.renderLineBranchStroke(geometry, {
-      alpha,
-      layer: RenderLayer.LineShadow,
-      order,
-      offset: Sizes.LineShadowOffset,
-      stroke: Colors.Shadow,
-      strokeWidth: Sizes.LineBranchWidth,
-    })
-    this.renderLineBranchStroke(geometry, {
-      alpha,
-      layer: RenderLayer.Line,
-      order,
-      offset: [0, 0],
-      stroke: colors.border,
-      strokeWidth: Sizes.LineBranchWidth + Sizes.LineBorderWidth * 2,
-    })
-    this.renderLineBranchStroke(geometry, {
-      alpha,
-      layer: RenderLayer.Line,
-      order,
-      offset: [0, 0],
-      stroke: colors.fill,
-      strokeWidth: Sizes.LineBranchWidth,
-    })
-  }
-
-  private renderLineBranchStroke(
-    geometry: LineBranchGeometry,
-    {
-      alpha,
-      layer,
-      order,
-      offset,
-      stroke,
-      strokeWidth,
-    }: {
-      alpha: number
-      layer: RenderLayer
-      order: number
-      offset: Vec2
-      stroke: Color4
-      strokeWidth: number
-    },
-  ) {
-    const color = Color4.withAlpha(stroke, alpha)
-    const addOffset = Vec2.curry.add(offset)
-
-    this.renderLineCurve(
-      addOffset(geometry.source),
-      addOffset(geometry.bend1Control1),
-      addOffset(geometry.bend1Control2),
-      addOffset(geometry.bend1End),
-      layer,
-      color,
-      strokeWidth,
-      order,
-    )
-    this.renderLineCurve(
-      addOffset(geometry.bend1End),
-      addOffset(geometry.bend1End),
-      addOffset(geometry.lineEnd),
-      addOffset(geometry.lineEnd),
-      layer,
-      color,
-      strokeWidth,
-      order,
-    )
-    this.renderLineCurve(
-      addOffset(geometry.lineEnd),
-      addOffset(geometry.bend2Control1),
-      addOffset(geometry.bend2Control2),
-      addOffset(geometry.target),
-      layer,
-      color,
-      strokeWidth,
-      order,
-    )
-  }
-
-  private renderLineCurve(
-    from: Vec2,
-    control1: Vec2,
-    control2: Vec2,
-    to: Vec2,
-    layer: RenderLayer,
-    stroke: Color4,
-    strokeWidth: number,
-    order: number,
-  ) {
-    this.renderer.submit({
-      type: RenderItemType.Curve,
-      layer,
-      order,
-      from,
-      control1,
-      control2,
-      to,
-      stroke,
-      strokeWidth,
-    })
-  }
-
-  private getLineBranchGeometry(multiverse: Multiverse, line: Line, l: number): LineBranchGeometry | null {
-    const base = this.getLineBranchBaseGeometry(line, l)
-    if (! base) return null
-
-    const offsetIndex = this.getLineBranchOverlapCount(multiverse, base)
-    const branchX = base.baseBranchX - offsetIndex * Sizes.LineBranchOverlapOffset
-    const { sourceY, targetY } = base
-    const dy = targetY - sourceY
-    if (dy === 0) return null
-
-    const direction = dy > 0 ? 1 : -1
-    const radius = Math.min(
-      Sizes.LineBranchRadius,
-      Math.abs(dy) / 2,
-    )
-    const k = 0.5522847498307936
-    const sourceX = branchX - radius
-    const targetX = branchX + radius
-    const source: Vec2 = [sourceX, sourceY]
-    const bend1End: Vec2 = [branchX, sourceY + direction * radius]
-    const lineEnd: Vec2 = [branchX, targetY - direction * radius]
-    const target: Vec2 = [targetX, targetY]
-
-    return {
-      source,
-      bend1Control1: [sourceX + radius * k, sourceY],
-      bend1Control2: [branchX, sourceY + direction * radius * (1 - k)],
-      bend1End,
-      lineEnd,
-      bend2Control1: [branchX, targetY - direction * radius * (1 - k)],
-      bend2Control2: [target[0] - radius * k, targetY],
-      target,
-    }
-  }
-
-  private getLineBranchBaseGeometry(line: Line, l: number): LineBranchBaseGeometry | null {
-    const board = line.boards[line.mStart]
-    if (! board?.createdBy || board.createdByPlayer === null) return null
-    if (board.createdByRole !== 'target') return null
-    if (Coord.isSameBoard(board.createdBy.from, board.createdBy.to)) return null
-    if (board.createdBy.to.l === l) return null
-
-    const step = Sizes.BoardWidth + Sizes.BoardGap
-    const baseBranchX = Coord.boardIndex(board.createdBy.to, board.createdByPlayer) * step
-      + Sizes.BoardWidth
-      + Sizes.BoardGap / 2
-    const sourceY = this.getLineY(board.createdBy.to.l)
-    const targetY = this.getLineY(l)
-    const dy = targetY - sourceY
-    if (dy === 0) return null
-
-    return {
-      baseBranchX,
-      sourceY,
-      targetY,
-      order: board.createdByOrder ?? 0,
-    }
-  }
-
-  private getLineBranchOverlapCount(multiverse: Multiverse, branch: LineBranchBaseGeometry): number {
-    let count = 0
-    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
-      if (! line) continue
-      const existing = this.getLineBranchBaseGeometry(line, l)
-      if (! existing) continue
-      if (existing.order >= branch.order) continue
-      if (existing.baseBranchX !== branch.baseBranchX) continue
-      if (! this.doLineBranchRangesOverlap(existing, branch)) continue
-      count += 1
-    }
-    return count
-  }
-
-  private doLineBranchRangesOverlap(a: LineBranchBaseGeometry, b: LineBranchBaseGeometry): boolean {
-    const aMin = Math.min(a.sourceY, a.targetY)
-    const aMax = Math.max(a.sourceY, a.targetY)
-    const bMin = Math.min(b.sourceY, b.targetY)
-    const bMax = Math.max(b.sourceY, b.targetY)
-    return aMin < bMax && bMin < aMax
-  }
-
-  private getLineRenderOrder(line: Line): number {
-    const board = line.boards[line.mStart]
-    if (! board?.createdBy) return 0
-    if (board.createdByRole !== 'target') return 0
-    if (Coord.isSameBoard(board.createdBy.from, board.createdBy.to)) return 0
-    return board.createdByOrder ?? 0
-  }
-
-  private getLineColors(multiverse: Multiverse, l: number): LineColors {
-    if (! Multiverse.isInactiveLine(multiverse, l)) {
-      return {
-        border: Colors.PurpleDark,
-        fill: Colors.Purple,
-      }
-    }
-
-    switch (Multiverse.getLinePlayer(l)) {
-      case Player.W:
-        return {
-          border: Colors.InactiveLineWhiteBorder,
-          fill: Colors.BoardBorderWhiteDim,
-        }
-      case Player.B:
-        return {
-          border: Colors.BoardBorderBlack,
-          fill: Colors.BoardBorderBlackDim,
-        }
-      case null:
-        return {
-          border: Colors.PurpleDark,
-          fill: Colors.Purple,
-        }
-    }
-  }
-
-  private renderLineStableSegment(
-    line: Line,
-    l: number,
-    latestM: number,
-    xStartOverride?: number,
-    order = this.getLineRenderOrder(line),
-    colors = this.getLineColors(this.multiverse, l),
-  ) {
-    const y = this.getLineY(l)
-    const xStart = xStartOverride ?? line.mStart * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
-    const xEnd = latestM * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
-    if (xEnd <= xStart) return
-
-    this.renderLinePolygon([
-      [xStart, y - Sizes.LineArrowRadius],
-      [xEnd, y - Sizes.LineArrowRadius],
-      [xEnd, y + Sizes.LineArrowRadius],
-      [xStart, y + Sizes.LineArrowRadius],
-    ], 1, order, colors)
-  }
-
-  private renderLineBridgeSegment(m: number, l: number, xStart: number, progress: number, order: number, colors: LineColors) {
-    const y = this.getLineY(l)
-    const xEndFrom = m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
-    const xEndTo = (m + 1) * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
-    const xEnd = Scalar.lerp(xEndFrom, xEndTo, progress)
-    if (xEnd <= xStart) return
-
-    this.renderLinePolygon([
-      [xStart, y - Sizes.LineArrowRadius],
-      [xEnd, y - Sizes.LineArrowRadius],
-      [xEnd, y + Sizes.LineArrowRadius],
-      [xStart, y + Sizes.LineArrowRadius],
-    ], progress, order, colors)
-  }
-
-  private getLineLatestSegmentGeometry(m: number, l: number): { points: Vec2[], xStart: number } {
-    const points = this.getLineLatestSegmentPoints(m, l)
-    return {
-      points,
-      xStart: points[0][0],
-    }
-  }
-
-  private getMovingLineLatestSegmentPoints(m: number, l: number, progress: number): Vec2[] {
-    const from = this.getLineLatestSegmentPoints(m, l)
-    const to = this.getLineLatestSegmentPoints(m + 1, l)
-    return from.map((point, index) => Vec2.mix(point, to[index], progress))
-  }
-
-  private getLineLatestSegmentPoints(m: number, l: number, xStartOverride?: number): Vec2[] {
-    const y = this.getLineY(l)
-    const yUp = y - Sizes.LineArrowRadius
-    const yDown = y + Sizes.LineArrowRadius
-    const xStart = xStartOverride ?? m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
-    const xTip = (m + 1) * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.LineArrowShaftLength
-    const yUpTip = yUp - Sizes.LineArrowTip
-    const yDownTip = yDown + Sizes.LineArrowTip
-    const xEnd = xTip + Sizes.LineArrowRadius + Sizes.LineArrowTip
-
-    return [
-      [xStart, yUp],
-      [xTip, yUp],
-      [xTip, yUpTip],
-      [xEnd, y],
-      [xTip, yDownTip],
-      [xTip, yDown],
-      [xStart, yDown],
-    ]
-  }
-
-  private getLinePoints(line: Line, l: number, xStartOverride?: number): Vec2[] {
-    const y = this.getLineY(l)
-    const yUp = y - Sizes.LineArrowRadius
-    const yDown = y + Sizes.LineArrowRadius
-
-    const xStart = xStartOverride ?? line.mStart * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
-
-    const xTip = line.boards.length * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.LineArrowShaftLength
-
-    const yUpTip = yUp - Sizes.LineArrowTip
-    const yDownTip = yDown + Sizes.LineArrowTip
-    const xEnd = xTip + Sizes.LineArrowRadius + Sizes.LineArrowTip
-
-    return [
-      [xStart, yUp],
-      [xTip, yUp],
-      [xTip, yUpTip],
-      [xEnd, y],
-      [xTip, yDownTip],
-      [xTip, yDown],
-      [xStart, yDown],
-    ]
-  }
-
   private renderBoard(
     board: Board,
     l: number,
@@ -2658,7 +1504,7 @@ export class Game {
     options: BoardRenderOptions = {},
   ) {
     const boardPlayer = options.basePlayer ?? m % 2
-    const [[boardRectX, boardRectY]] = this.getBoardRect(l, m)
+    const [[boardRectX, boardRectY]] = this.layout.getBoardRect(l, m)
     const [borderX, borderY] = options.pos ?? [boardRectX, boardRectY]
     const x0 = borderX + Sizes.BoardBorder
     const y0 = borderY + Sizes.BoardBorder
@@ -2684,7 +1530,7 @@ export class Game {
       radius: outerBorderRadius,
     }
 
-    const layers = this.getBoardRenderLayers(options.animatedLayer === true)
+    const layers = getBoardRenderLayers(options.animatedLayer === true)
 
     this.renderBoardShadow(boardFrame, layers, alpha)
 
@@ -2782,7 +1628,7 @@ export class Game {
     const geometry = this.getMoveArrowGeometry(move, player)
     if (! geometry) return
 
-    const points = this.getMoveArrowPolygon(
+    const points = getMoveArrowPolygon(
       geometry.from,
       geometry.control1,
       geometry.control2,
@@ -2796,12 +1642,12 @@ export class Game {
       layer: RenderLayer.MoveHighlight,
       order,
       points,
-      fill: this.getMoveArrowMaskFill(
+      fill: getMoveArrowMaskFill(
         Color4.withAlpha(Colors.MoveArrowFill, alpha),
         geometry.from,
         geometry.control1,
       ),
-      stroke: this.getMoveArrowMaskFill(
+      stroke: getMoveArrowMaskFill(
         Color4.withAlpha(stroke, alpha),
         geometry.from,
         geometry.control1,
@@ -2815,8 +1661,8 @@ export class Game {
 
     const fromM = Coord.boardIndex(move.from, player)
     const toM = Coord.boardIndex(move.to, player)
-    const from = this.getSquareCenter(move.from.l, fromM, move.from)
-    const to = this.getSquareCenter(move.to.l, toM, move.to)
+    const from = this.layout.getSquareCenter(move.from.l, fromM, move.from)
+    const to = this.layout.getSquareCenter(move.to.l, toM, move.to)
     const horizontal = Math.abs(to[0] - from[0]) >= Math.abs(to[1] - from[1])
     const direction = Vec2.sub(to, from)
     const playerBendDirection = player === Player.W ? 1 : -1
@@ -2830,87 +1676,6 @@ export class Game {
     const control2 = Vec2.add(Vec2.add(from, Vec2.scale(direction, 0.65)), bend)
 
     return { from, control1, control2, to }
-  }
-
-  private getMoveArrowPolygon(from: Vec2, control1: Vec2, control2: Vec2, tip: Vec2): Vec2[] {
-    const tangentAtTip = CubicBezier.tangent(from, control1, control2, tip, 1)
-    const tangentLength = Vec2.length(tangentAtTip)
-    if (tangentLength === 0) return []
-
-    const unit = Vec2.scale(tangentAtTip, 1 / tangentLength)
-    const normal: Vec2 = [-unit[1], unit[0]]
-    const headBaseCenter = Vec2.sub(tip, Vec2.scale(unit, Sizes.MoveArrowHeadLength))
-    const left: Vec2[] = []
-    const right: Vec2[] = []
-    const halfShaft = Sizes.MoveArrowShaftWidth / 2
-
-    for (let i = 0; i <= Sizes.MoveArrowCurveSamples; i ++) {
-      const t = i / Sizes.MoveArrowCurveSamples
-      const center = CubicBezier.point(from, control1, control2, headBaseCenter, t)
-      const tangent = CubicBezier.tangent(from, control1, control2, headBaseCenter, t)
-      const length = Vec2.length(tangent)
-      if (length === 0) continue
-
-      const tangentUnit = Vec2.scale(tangent, 1 / length)
-      const n: Vec2 = [-tangentUnit[1], tangentUnit[0]]
-      left.push(Vec2.add(center, Vec2.scale(n, halfShaft)))
-      right.push(Vec2.sub(center, Vec2.scale(n, halfShaft)))
-    }
-
-    return [
-      ...left,
-      Vec2.add(headBaseCenter, Vec2.scale(normal, Sizes.MoveArrowHeadWidth)),
-      tip,
-      Vec2.sub(headBaseCenter, Vec2.scale(normal, Sizes.MoveArrowHeadWidth)),
-      ...right.reverse(),
-    ]
-  }
-
-  private getMoveArrowMaskFill(color: Color4, from: Vec2, control1: Vec2): LinearGradientFill {
-    const tangent = Vec2.sub(control1, from)
-    const length = Vec2.length(tangent)
-    const unit: Vec2 = length === 0 ? [1, 0] : Vec2.scale(tangent, 1 / length)
-    return {
-      type: 'linear-gradient',
-      from,
-      to: Vec2.add(from, Vec2.scale(unit, Sizes.MoveArrowFadeLength)),
-      stops: [
-        { offset: 0, color: Color4.withAlpha(color, 0) },
-        { offset: 1, color },
-      ],
-    }
-  }
-
-  private getSquareCenter(l: number, m: number, coord: CoordSpacelike): Vec2 {
-    const [borderPos] = this.getBoardRect(l, m)
-    return Vec2.add(borderPos, [
-      Sizes.BoardBorder + (coord.x + 0.5) * Sizes.PieceWidth,
-      Sizes.BoardBorder + (coord.y + 0.5) * Sizes.PieceWidth,
-    ])
-  }
-
-  private getBoardRenderLayers(animated: boolean): {
-    shadowBase: RenderLayer
-    shadowHigh: RenderLayer
-    border: RenderLayer
-    board: RenderLayer
-    piece: RenderLayer
-  } {
-    return animated
-      ? {
-          shadowBase: RenderLayer.BoardShadowBase,
-          shadowHigh: RenderLayer.BoardShadowHigh,
-          border: RenderLayer.AnimatedBoardBorder,
-          board: RenderLayer.AnimatedBoard,
-          piece: RenderLayer.AnimatedPiece,
-        }
-      : {
-          shadowBase: RenderLayer.BoardShadowBase,
-          shadowHigh: RenderLayer.BoardShadowHigh,
-          border: RenderLayer.BoardBorder,
-          board: RenderLayer.Board,
-          piece: RenderLayer.Piece,
-        }
   }
 
   private isHighlightedBoardSquare(l: number, m: number, coord: CoordSpacelike): boolean {
@@ -2936,7 +1701,7 @@ export class Game {
 
   private renderBoardShadow(
     frame: BoardFrame,
-    layers = this.getBoardRenderLayers(false),
+    layers = getBoardRenderLayers(false),
     alpha = 1,
   ) {
     const pos = Vec2.add(frame.pos, Sizes.BoardShadowOffset)
