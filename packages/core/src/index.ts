@@ -86,23 +86,56 @@ export namespace Multiverse {
   ]
 
   export const getActiveTimelineCount = (
+    multiverse: Multiverse,
+    player: Player,
+  ): number => {
+    const ownCount = Multiverse.getCreatedTimelineCount(multiverse, player)
+    const opponentCount = Multiverse.getCreatedTimelineCount(
+      multiverse,
+      player === Player.W ? Player.B : Player.W,
+    )
+    return Math.min(ownCount, opponentCount + 1) + 1
+  }
+
+  export const getCreatedTimelineCount = (
     { lOffset, lFurthestB, lFurthestW }: Multiverse,
     player: Player,
   ): number => {
     switch (player) {
       case Player.W:
-        return lFurthestW - lOffset + 1
+        return lFurthestW - lOffset
       case Player.B:
-        return lOffset - lFurthestB + 1
+        return lOffset - lFurthestB
     }
+  }
+
+  export const getLinePlayer = (l: number): Player | null => {
+    if (l > 0) return Player.W
+    if (l < 0) return Player.B
+    return null
+  }
+
+  export const isInactiveLine = (
+    multiverse: Multiverse,
+    l: number,
+  ): boolean => {
+    const player = Multiverse.getLinePlayer(l)
+    if (player === null) return false
+
+    const ownCount = Multiverse.getCreatedTimelineCount(multiverse, player)
+    const opponentCount = Multiverse.getCreatedTimelineCount(
+      multiverse,
+      player === Player.W ? Player.B : Player.W,
+    )
+    return Math.abs(l) > opponentCount + 1 && ownCount > opponentCount + 1
   }
 
   export const canCreateActiveTimeline = (
     multiverse: Multiverse,
     player: Player,
   ): boolean => {
-    const ownCount = Multiverse.getActiveTimelineCount(multiverse, player)
-    const opponentCount = Multiverse.getActiveTimelineCount(
+    const ownCount = Multiverse.getCreatedTimelineCount(multiverse, player)
+    const opponentCount = Multiverse.getCreatedTimelineCount(
       multiverse,
       player === Player.W ? Player.B : Player.W,
     )
@@ -115,6 +148,7 @@ export namespace Multiverse {
   ) {
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
+      if (Multiverse.isInactiveLine(multiverse, l)) continue
       if (Line.getLatestBoardIndex(line) === null) continue
       yield [l, line] as const
     }

@@ -103,6 +103,10 @@ interface PresentColors {
   fill: Color4
   label: Color4
 }
+interface LineColors {
+  border: Color4
+  fill: Color4
+}
 interface MoveArrowGeometry {
   from: Vec2
   control1: Vec2
@@ -1428,7 +1432,7 @@ export class Game {
   private renderMultiverseStatic(multiverse: Multiverse) {
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
-      this.renderLine(line, l)
+      this.renderLine(line, l, 1, multiverse)
       const activeM = Line.getLatestBoardIndex(line)
 
       for (const [m, board] of Line.getBoardEntries(line)) {
@@ -1478,10 +1482,10 @@ export class Game {
       const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
       if (isPendingLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, progress)
+        this.renderLineDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
-        this.renderLine(linePreview ?? lineCommitted, l)
+        this.renderLine(linePreview ?? lineCommitted, l, 1, linePreview ? this.multiverse : pendingMove.multiverseBefore)
       }
 
       for (const [m, board] of Line.getBoardEntries(lineCommitted)) {
@@ -1508,7 +1512,7 @@ export class Game {
 
     if (! renderedCreatedBoard) {
       const createdLine = Multiverse.getLine(this.multiverse, pendingMove.created.l)
-      if (createdLine) this.renderLine(createdLine, pendingMove.created.l, progress)
+      if (createdLine) this.renderLine(createdLine, pendingMove.created.l, progress, this.multiverse)
       this.renderPendingCreatedBoard(pendingMove, progress)
     }
   }
@@ -1521,10 +1525,10 @@ export class Game {
       const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
       if (isSourceLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, progress)
+        this.renderLineDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
-        this.renderLine(lineCommitted, l)
+        this.renderLine(lineCommitted, l, 1, pendingMove.multiverseBefore)
       }
 
       for (const [m, board] of Line.getBoardEntries(lineCommitted)) {
@@ -1556,13 +1560,13 @@ export class Game {
       const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
       if (isSourceLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, 1)
+        this.renderLineDuringMoveAnimation(lineCommitted, l, 1, pendingMove.multiverseBefore)
       }
       else if (isTargetLine && activeCommitted !== null) {
-        this.renderLineDuringMoveAnimation(lineCommitted, l, progress)
+        this.renderLineDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
-        this.renderLine(linePreview ?? lineCommitted, l)
+        this.renderLine(linePreview ?? lineCommitted, l, 1, linePreview ? this.multiverse : pendingMove.multiverseBefore)
       }
 
       for (const [m, board] of Line.getBoardEntries(lineCommitted)) {
@@ -1590,7 +1594,7 @@ export class Game {
 
     if (! renderedCreatedBoard) {
       const createdLine = Multiverse.getLine(this.multiverse, pendingMove.created.l)
-      if (createdLine) this.renderLine(createdLine, pendingMove.created.l, progress)
+      if (createdLine) this.renderLine(createdLine, pendingMove.created.l, progress, this.multiverse)
       this.renderPendingCreatedBoard(pendingMove, progress)
     }
   }
@@ -2220,28 +2224,29 @@ export class Game {
     ])
   }
 
-  private renderLine(line: Line, l: number, alpha = 1) {
+  private renderLine(line: Line, l: number, alpha = 1, multiverse = this.multiverse) {
     const branch = this.getLineBranchGeometry(line, l)
+    const colors = this.getLineColors(multiverse, l)
     if (branch) {
-      this.renderLineBranchArrow(line, l, branch, alpha)
+      this.renderLineBranchArrow(line, l, branch, alpha, colors)
       return
     }
 
-    this.renderLineStart(line, l, alpha, branch)
+    this.renderLineStart(line, l, alpha, branch, colors)
     const points = this.getLinePoints(line, l)
-    this.renderLinePolygon(points, alpha)
+    this.renderLinePolygon(points, alpha, colors)
   }
 
-  private renderLineStart(line: Line, l: number, alpha = 1, branch = this.getLineBranchGeometry(line, l)) {
+  private renderLineStart(line: Line, l: number, alpha = 1, branch = this.getLineBranchGeometry(line, l), colors = this.getLineColors(this.multiverse, l)) {
     if (branch) {
-      this.renderLineBranch(branch, alpha)
+      this.renderLineBranch(branch, alpha, colors)
       return
     }
 
-    this.renderLineInitialStartSegment(line, l, alpha)
+    this.renderLineInitialStartSegment(line, l, alpha, colors)
   }
 
-  private renderLineInitialStartSegment(line: Line, l: number, alpha: number) {
+  private renderLineInitialStartSegment(line: Line, l: number, alpha: number, colors: LineColors) {
     if (alpha <= 0) return
 
     const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
@@ -2275,8 +2280,8 @@ export class Game {
       from: [xStart, y] satisfies Vec2,
       to: [xEnd, y] satisfies Vec2,
       stops: [
-        { offset: 0, color: Color4.withAlpha(Colors.Purple, 0) },
-        { offset: 1, color: Color4.withAlpha(Colors.Purple, alpha) },
+        { offset: 0, color: Color4.withAlpha(colors.fill, 0) },
+        { offset: 1, color: Color4.withAlpha(colors.fill, alpha) },
       ],
     }
     const stroke = {
@@ -2284,8 +2289,8 @@ export class Game {
       from: [xStart, y] satisfies Vec2,
       to: [xEnd, y] satisfies Vec2,
       stops: [
-        { offset: 0, color: Color4.withAlpha(Colors.PurpleDark, 0) },
-        { offset: 1, color: Color4.withAlpha(Colors.PurpleDark, alpha) },
+        { offset: 0, color: Color4.withAlpha(colors.border, 0) },
+        { offset: 1, color: Color4.withAlpha(colors.border, alpha) },
       ],
     }
 
@@ -2299,22 +2304,23 @@ export class Game {
     })
   }
 
-  private renderLineDuringMoveAnimation(line: Line, l: number, progress: number) {
+  private renderLineDuringMoveAnimation(line: Line, l: number, progress: number, multiverse = this.multiverse) {
     const branch = this.getLineBranchGeometry(line, l)
-    this.renderLineStart(line, l, 1, branch)
+    const colors = this.getLineColors(multiverse, l)
+    this.renderLineStart(line, l, 1, branch, colors)
     const latestM = Line.getLatestBoardIndex(line)
     if (latestM === null) {
       return
     }
 
-    this.renderLineStableSegment(line, l, latestM, branch?.target[0])
+    this.renderLineStableSegment(line, l, latestM, branch?.target[0], colors)
     const oldSegment = this.getLineLatestSegmentGeometry(latestM, l)
-    this.renderLinePolygon(oldSegment.points, 1 - progress)
-    this.renderLineBridgeSegment(latestM, l, oldSegment.xStart, progress)
-    this.renderLinePolygon(this.getMovingLineLatestSegmentPoints(latestM, l, progress), progress)
+    this.renderLinePolygon(oldSegment.points, 1 - progress, colors)
+    this.renderLineBridgeSegment(latestM, l, oldSegment.xStart, progress, colors)
+    this.renderLinePolygon(this.getMovingLineLatestSegmentPoints(latestM, l, progress), progress, colors)
   }
 
-  private renderLinePolygon(points: Vec2[], alpha: number) {
+  private renderLinePolygon(points: Vec2[], alpha: number, colors: LineColors) {
     if (alpha <= 0) return
 
     this.renderer.submit({
@@ -2329,13 +2335,13 @@ export class Game {
       type: RenderItemType.Polygon,
       layer: RenderLayer.Line,
       points,
-      fill: Color4.withAlpha(Colors.Purple, alpha),
-      stroke: Color4.withAlpha(Colors.PurpleDark, alpha),
+      fill: Color4.withAlpha(colors.fill, alpha),
+      stroke: Color4.withAlpha(colors.border, alpha),
       strokeWidth: Sizes.LineBorderWidth,
     })
   }
 
-  private renderLineBranchArrow(line: Line, l: number, branch: LineBranchGeometry, alpha: number) {
+  private renderLineBranchArrow(line: Line, l: number, branch: LineBranchGeometry, alpha: number, colors: LineColors) {
     const points = this.getLineBranchArrowPoints(line, l, branch)
     if (points.length === 0 || alpha <= 0) return
 
@@ -2351,8 +2357,8 @@ export class Game {
       type: RenderItemType.Polygon,
       layer: RenderLayer.Line,
       points,
-      fill: Color4.withAlpha(Colors.Purple, alpha),
-      stroke: Color4.withAlpha(Colors.PurpleDark, alpha),
+      fill: Color4.withAlpha(colors.fill, alpha),
+      stroke: Color4.withAlpha(colors.border, alpha),
       strokeWidth: Sizes.LineBorderWidth,
     })
   }
@@ -2413,7 +2419,7 @@ export class Game {
     return points
   }
 
-  private renderLineBranch(geometry: LineBranchGeometry, alpha: number) {
+  private renderLineBranch(geometry: LineBranchGeometry, alpha: number, colors: LineColors) {
     this.renderLineBranchStroke(geometry, {
       alpha,
       layer: RenderLayer.LineShadow,
@@ -2425,16 +2431,43 @@ export class Game {
       alpha,
       layer: RenderLayer.Line,
       offset: [0, 0],
-      stroke: Colors.PurpleDark,
+      stroke: colors.border,
       strokeWidth: Sizes.LineBranchWidth + Sizes.LineBorderWidth * 2,
     })
     this.renderLineBranchStroke(geometry, {
       alpha,
       layer: RenderLayer.Line,
       offset: [0, 0],
-      stroke: Colors.Purple,
+      stroke: colors.fill,
       strokeWidth: Sizes.LineBranchWidth,
     })
+  }
+
+  private getLineColors(multiverse: Multiverse, l: number): LineColors {
+    if (! Multiverse.isInactiveLine(multiverse, l)) {
+      return {
+        border: Colors.PurpleDark,
+        fill: Colors.Purple,
+      }
+    }
+
+    switch (Multiverse.getLinePlayer(l)) {
+      case Player.W:
+        return {
+          border: Colors.InactiveLineWhiteBorder,
+          fill: Colors.BoardBorderWhiteDim,
+        }
+      case Player.B:
+        return {
+          border: Colors.BoardBorderBlack,
+          fill: Colors.BoardBorderBlackDim,
+        }
+      case null:
+        return {
+          border: Colors.PurpleDark,
+          fill: Colors.Purple,
+        }
+    }
   }
 
   private renderLineBranchStroke(
@@ -2547,7 +2580,13 @@ export class Game {
     }
   }
 
-  private renderLineStableSegment(line: Line, l: number, latestM: number, xStartOverride?: number) {
+  private renderLineStableSegment(
+    line: Line,
+    l: number,
+    latestM: number,
+    xStartOverride: number | undefined,
+    colors: LineColors,
+  ) {
     const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
     const xStart = xStartOverride ?? line.mStart * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
     const xEnd = latestM * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
@@ -2558,10 +2597,10 @@ export class Game {
       [xEnd, y - Sizes.LineArrowRadius],
       [xEnd, y + Sizes.LineArrowRadius],
       [xStart, y + Sizes.LineArrowRadius],
-    ], 1)
+    ], 1, colors)
   }
 
-  private renderLineBridgeSegment(m: number, l: number, xStart: number, progress: number) {
+  private renderLineBridgeSegment(m: number, l: number, xStart: number, progress: number, colors: LineColors) {
     const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
     const xEndFrom = m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
     const xEndTo = (m + 1) * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
@@ -2573,7 +2612,7 @@ export class Game {
       [xEnd, y - Sizes.LineArrowRadius],
       [xEnd, y + Sizes.LineArrowRadius],
       [xStart, y + Sizes.LineArrowRadius],
-    ], progress)
+    ], progress, colors)
   }
 
   private getLineLatestSegmentGeometry(m: number, l: number): { points: Vec2[], xStart: number } {

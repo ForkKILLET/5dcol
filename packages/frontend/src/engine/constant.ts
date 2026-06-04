@@ -131,6 +131,8 @@ export namespace Colors {
   export const BoardBorderWhiteDim = Color4.fromRgba(225, 226, 216, 1)
   export const BoardBorderBlackDim = Color4.fromRgba(64, 64, 74, 1)
 
+  export const InactiveLineWhiteBorder = Color4.fromRgba(244, 245, 237, 1)
+
   export const Purple = Color4.fromRgba(153, 113, 169, 1)
   export const PurpleDark = Color4.fromRgba(132, 93, 156, 1)
 
