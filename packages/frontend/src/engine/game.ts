@@ -365,29 +365,29 @@ export class Game extends Disposable(Empty) {
 
     this.collect(Effect.useListener(window, 'mouseup', e => {
       if (this.gameInputDisabled) {
-        this.clearPointerDrag()
+        this.finishPointerDrag()
         return
       }
 
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
       if (! this.pointer.dragExceeded) this.handleBoardClick(screen)
-      this.clearPointerDrag()
+      this.finishPointerDrag()
     }))
 
     this.collect(Effect.useListener(window, 'mouseleave', () => {
-      this.clearPointerDrag()
+      this.finishPointerDrag()
     }))
 
     this.collect(Effect.useListener(window, 'blur', () => {
-      this.clearPointerDrag()
+      this.finishPointerDrag()
     }))
 
     this.collect(Effect.useListener(window, 'contextmenu', e => {
       if (this.gameInputDisabled) return
       e.preventDefault()
       if (! this.isMoveAnimating()) this.deselectPiece()
-      this.clearPointerDrag()
+      this.finishPointerDrag()
     }))
 
     this.collect(Effect.useListener(window, 'keydown', e => {
@@ -413,7 +413,7 @@ export class Game extends Disposable(Empty) {
     this.setViewportImmediate({
       center: Vec2.sub(camera.center, delta),
     }, {
-      viewport: this.layout.getValidViewportRect(this.multiverse),
+      viewport: null,
       cancelMotion: true,
     })
     this.pointer.dragLastScreen = screen
@@ -431,6 +431,11 @@ export class Game extends Disposable(Empty) {
     this.pointer.dragStartScreen = null
     this.pointer.dragLastScreen = null
     this.pointer.dragExceeded = false
+  }
+
+  private finishPointerDrag() {
+    this.clearPointerDrag()
+    this.updateCameraBounds()
   }
 
   private handleKeyDown(e: KeyboardEvent) {
@@ -542,7 +547,9 @@ export class Game extends Disposable(Empty) {
       })
     }
 
-    const viewport = options.viewport ?? this.layout.getValidViewportRect(this.multiverse)
+    const viewport = options.viewport === undefined
+      ? this.layout.getValidViewportRect(this.multiverse)
+      : options.viewport
     const targetCenter = camera.center ?? this.renderer.getCamera().center
     this.renderer.setCamera({
       center: viewport ? this.layout.clampCameraCenterToViewport(targetCenter, viewport) : targetCenter,
