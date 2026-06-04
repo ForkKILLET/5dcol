@@ -375,7 +375,8 @@ export class Game extends Disposable(Empty) {
     this.setViewportImmediate({
       center: Vec2.sub(camera.center, delta),
     }, {
-      viewport: this.layout.getRenderViewportRect(this.multiverse),
+      viewport: this.layout.getValidViewportRect(this.multiverse),
+      cancelMotion: true,
     })
     this.pointer.dragLastScreen = screen
   }
@@ -1112,7 +1113,7 @@ export class Game extends Disposable(Empty) {
   private updateCameraMotion() {
     if (! this.cameraMotion) return
 
-    const viewport = this.getCameraMotionViewport(this.cameraMotion)
+    const viewport = this.getCameraMotionViewport(this.cameraMotion, this.cameraMotion.targetScale)
     if (viewport) {
       const targetCenter = this.getCameraMotionTargetCenterAtScale(this.cameraMotion, this.cameraMotion.targetScale)
       const clampedTargetCenter = this.layout.clampCameraCenterToViewport(
@@ -1145,7 +1146,10 @@ export class Game extends Disposable(Empty) {
       : Vec2.add(cameraAfterScale.center, Vec2.scale(centerDelta, CameraControl.BounceBackSmoothing))
     this.renderer.setCamera({ center: centerNext })
 
-    this.smoothCameraToViewport(viewport, CameraControl.BounceBackSmoothing)
+    this.smoothCameraToViewport(
+      this.getCameraMotionViewport(this.cameraMotion, scaleNext),
+      CameraControl.BounceBackSmoothing,
+    )
 
     const cameraAfterBounds = this.renderer.getCamera()
     const targetCenterAfterBounds = this.getCameraMotionTargetCenterAtScale(this.cameraMotion, scaleNext)
@@ -1179,14 +1183,17 @@ export class Game extends Disposable(Empty) {
     if (! this.cameraMotion) return
     this.cameraMotion.targetCenter = this.renderer.getCamera().center
     this.cameraMotion.targetScale = this.renderer.getCamera().scale
+    this.cameraMotion.viewportWorldCenter = undefined
   }
 
   private getViewportCenterScreen(): Vec2 {
     return this.layout.getViewportCenterScreen()
   }
 
-  private getCameraMotionViewport(motion: CameraMotion): Rect | null {
-    return motion.viewport === undefined ? this.layout.getValidViewportRect(this.multiverse) : motion.viewport
+  private getCameraMotionViewport(motion: CameraMotion, scale = motion.targetScale): Rect | null {
+    return motion.viewport === undefined
+      ? this.layout.getValidViewportRect(this.multiverse, [], scale)
+      : motion.viewport
   }
 
   private updateCameraBounds() {

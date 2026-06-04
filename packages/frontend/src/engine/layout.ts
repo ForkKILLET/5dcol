@@ -157,37 +157,28 @@ export class GameLayout {
     return Rect.bounds(rects)
   }
 
-  getScreenWorldSize(): Vec2Type {
-    const [[x, y], [w, h]] = this.getViewportScreenRect()
-    const topLeft = this.renderer.screenToWorld([x, y])
-    const bottomRight = this.renderer.screenToWorld([x + w, y + h])
-    return [
-      Math.abs(bottomRight[0] - topLeft[0]),
-      Math.abs(bottomRight[1] - topLeft[1]),
-    ]
+  getScreenWorldSize(scale = this.renderer.getCamera().scale): Vec2Type {
+    const [, [w, h]] = this.getViewportScreenRect()
+    return [w / scale, h / scale]
   }
 
-  getFullScreenWorldSize(): Vec2Type {
+  getFullScreenWorldSize(scale = this.renderer.getCamera().scale): Vec2Type {
     const { widthCss, heightCss } = this.renderer.getScreen()
-    const topLeft = this.renderer.screenToWorld([0, 0])
-    const bottomRight = this.renderer.screenToWorld([widthCss, heightCss])
-    return [
-      Math.abs(bottomRight[0] - topLeft[0]),
-      Math.abs(bottomRight[1] - topLeft[1]),
-    ]
+    return [widthCss / scale, heightCss / scale]
   }
 
-  getValidViewportRect(multiverse: Multiverse, extraRects: RectType[] = []): RectType | null {
+  getValidViewportRect(
+    multiverse: Multiverse,
+    extraRects: RectType[] = [],
+    scale = this.renderer.getCamera().scale,
+  ): RectType | null {
     const boardViewport = this.getBoardViewportRect(multiverse, extraRects)
     if (! boardViewport) return null
 
     const center = Rect.center(boardViewport)
-    const screenWorldSize = this.getScreenWorldSize()
+    const screenWorldSize = this.getScreenWorldSize(scale)
     const padding = this.getValidViewportPadding(screenWorldSize)
-    const size: Vec2Type = [
-      Math.max(boardViewport[1][0] + padding[0] * 2, screenWorldSize[0]),
-      Math.max(boardViewport[1][1] + padding[1] * 2, screenWorldSize[1]),
-    ]
+    const size = Vec2.add(boardViewport[1], Vec2.scale(padding, 2))
     return [
       Vec2.sub(center, Vec2.scale(size, 0.5)),
       size,
@@ -217,7 +208,7 @@ export class GameLayout {
   }
 
   clampCameraCenterToViewport(center: Vec2Type, viewport: RectType, scale = this.renderer.getCamera().scale): Vec2Type {
-    const screenWorldSize = this.getScreenWorldSize()
+    const screenWorldSize = this.getScreenWorldSize(scale)
     const viewportCenter = this.getViewportWorldCenter(center, scale)
     const [[x, y], [w, h]] = viewport
     const clampedViewportCenter = Rect.clampPoint(viewportCenter, [
