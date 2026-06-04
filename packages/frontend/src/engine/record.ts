@@ -3,6 +3,7 @@ import { Coord, Player, type Action, type CoordSpacelike, type Move } from '@5dc
 const FILES = 'abcdefgh'
 
 export interface GameRecordAction {
+  index: number
   serial: string
   player: 'w' | 'b'
   moves: GameRecordMove[]
@@ -22,6 +23,7 @@ export const buildGameRecordActions = (actions: Action[]): GameRecordAction[] =>
   actions.map((action, index) => {
     const player = index % 2 === 0 ? Player.W : Player.B
     return {
+      index,
       serial: getActionSerial(index),
       player: player === Player.W ? 'w' : 'b',
       moves: action.moves.map(move => toGameRecordMove(move, player)),

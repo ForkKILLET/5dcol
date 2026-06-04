@@ -41,6 +41,7 @@ export interface GameConfig {
 export interface GameExportRequest {
   text: string
   hasPendingMoves: boolean
+  currentActionIndex: number
   actions: GameRecordAction[]
 }
 
@@ -61,6 +62,7 @@ interface CameraMotion {
   targetCenter: Vec2
   targetScale: number
   anchorScreen: Vec2
+  viewportWorldCenter?: Vec2
   viewport?: Rect | null
 }
 interface ViewportMoveOptions {
@@ -200,6 +202,8 @@ export class Game extends Disposable(Empty) {
     this.layout.setViewportInsets(insets)
     this.moveViewportTo({
       targetCenter: this.layout.getCameraCenterForViewportWorldCenter(viewportWorldCenter, camera.scale),
+    }, {
+      anchorScreen: this.getViewportCenterScreen(),
     })
   }
 
@@ -218,13 +222,14 @@ export class Game extends Disposable(Empty) {
       }
 
       const actions = state.actions ?? CoreGameState.extractActions(state.multiverseCommitted)
+      const actionIndex = Scalar.clamp(Math.floor(state.actionIndex), 0, actions.length)
       const pendingMoveMoves = state.pendingMoves.map(pendingMove => pendingMove.move)
-      const coreState = CoreGameState.create(actions, pendingMoveMoves)
+      const coreState = CoreGameState.create(actions.slice(0, actionIndex), pendingMoveMoves)
 
       this.multiverseCommitted = coreState.multiverseCommitted
       this.player = coreState.player
       this.actionIndex = coreState.actionIndex
-      this.actions = coreState.actions
+      this.actions = actions
       this.fillMissingMoveOrders(this.multiverseCommitted, this.getCommittedMoveOrderBase())
       const preview = this.createPendingMoves(pendingMoveMoves)
       this.pendingMoves = preview.pendingMoves
@@ -447,13 +452,20 @@ export class Game extends Disposable(Empty) {
 
   private zoomCameraByStep(step: number) {
     const camera = this.renderer.getCamera()
+    const targetCenter = this.cameraMotion?.targetCenter ?? camera.center
     const targetScale = this.cameraMotion?.targetScale ?? camera.scale
+    const nextScale = Scalar.clamp(
+      targetScale + step,
+      CameraControl.ZoomMin,
+      CameraControl.ZoomMax,
+    )
+    const viewportWorldCenter = this.layout.getViewportWorldCenter(targetCenter, targetScale)
     this.moveViewportTo({
-      targetScale: Scalar.clamp(
-        targetScale + step,
-        CameraControl.ZoomMin,
-        CameraControl.ZoomMax,
-      ),
+      targetCenter: this.layout.getCameraCenterForViewportWorldCenter(viewportWorldCenter, nextScale),
+      targetScale: nextScale,
+      viewportWorldCenter,
+    }, {
+      anchorScreen: this.getViewportCenterScreen(),
     })
   }
 
@@ -464,6 +476,7 @@ export class Game extends Disposable(Empty) {
       targetCenter: motion.targetCenter ?? this.cameraMotion?.targetCenter ?? camera.center,
       targetScale: motion.targetScale ?? this.cameraMotion?.targetScale ?? camera.scale,
       anchorScreen: options.anchorScreen ?? motion.anchorScreen ?? this.cameraMotion?.anchorScreen ?? this.getViewportCenterScreen(),
+      viewportWorldCenter: motion.viewportWorldCenter,
       viewport: options.viewport,
     }
     return this.cameraMotion
@@ -562,6 +575,7 @@ export class Game extends Disposable(Empty) {
     this.moveViewportTo({
       targetCenter: this.layout.getCameraCenterForViewportWorldCenter(Rect.center(bounds), targetScale),
       targetScale,
+      viewportWorldCenter: Rect.center(bounds),
     }, {
       smooth: options.smooth,
     })
@@ -804,6 +818,9 @@ export class Game extends Disposable(Empty) {
   }
 
   private finalizeSubmitMoves() {
+    if (this.actionIndex < this.actions.length) {
+      this.actions = this.actions.slice(0, this.actionIndex)
+    }
     this.actions.push({ moves: this.pendingMoves.map(pendingMove => pendingMove.move) })
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
@@ -831,8 +848,32 @@ export class Game extends Disposable(Empty) {
     return {
       text: FiveDPGN.exportGameState({ actions: this.actions }),
       hasPendingMoves: this.pendingMoves.length > 0,
+      currentActionIndex: this.actionIndex,
       actions: buildGameRecordActions(this.actions),
     }
+  }
+
+  public rollbackToActionEnd(actionIndex: number) {
+    if (this.isMoveAnimating()) return
+
+    const targetActionIndex = Scalar.clamp(Math.floor(actionIndex), 0, this.actions.length)
+    const state = CoreGameState.create(this.actions.slice(0, targetActionIndex))
+    this.multiverseCommitted = state.multiverseCommitted
+    this.multiverse = state.multiverse
+    this.player = state.player
+    this.actionIndex = state.actionIndex
+    this.selectedPiece = null
+    this.hoverSquare = null
+    this.hoverPiece = null
+    this.pendingMove = null
+    this.pendingMoves = []
+    this.moveAnimation = null
+    this.submitRequestedDuringMoveAnimation = false
+    this.cameraMotion = null
+    this.clearPointerDrag()
+    this.persistGameState()
+    this.focusCurrentPresent()
+    this.syncToolbarButtons()
   }
 
   private requestImportFiveDPGN() {
@@ -1071,36 +1112,57 @@ export class Game extends Disposable(Empty) {
   private updateCameraMotion() {
     if (! this.cameraMotion) return
 
+    const viewport = this.getCameraMotionViewport(this.cameraMotion)
+    if (viewport) {
+      const targetCenter = this.getCameraMotionTargetCenterAtScale(this.cameraMotion, this.cameraMotion.targetScale)
+      const clampedTargetCenter = this.layout.clampCameraCenterToViewport(
+        targetCenter,
+        viewport,
+        this.cameraMotion.targetScale,
+      )
+      this.cameraMotion.targetCenter = clampedTargetCenter
+      if (this.cameraMotion.viewportWorldCenter) {
+        this.cameraMotion.viewportWorldCenter = this.layout.getViewportWorldCenter(
+          clampedTargetCenter,
+          this.cameraMotion.targetScale,
+        )
+      }
+    }
+
     const camera = this.renderer.getCamera()
     const scaleDelta = this.cameraMotion.targetScale - camera.scale
     const scaleNext = Math.abs(scaleDelta) <= CameraControl.ZoomSnapEpsilon
       ? this.cameraMotion.targetScale
       : camera.scale + scaleDelta * CameraControl.ZoomSmoothing
+    const targetCenterAtScale = this.getCameraMotionTargetCenterAtScale(this.cameraMotion, scaleNext)
 
     this.setCameraScaleAt(this.cameraMotion.anchorScreen, scaleNext)
 
     const cameraAfterScale = this.renderer.getCamera()
-    const centerDelta = Vec2.sub(this.cameraMotion.targetCenter, cameraAfterScale.center)
+    const centerDelta = Vec2.sub(targetCenterAtScale, cameraAfterScale.center)
     const centerNext = Vec2.length(centerDelta) <= CameraControl.BounceBackSnapEpsilon
-      ? this.cameraMotion.targetCenter
+      ? targetCenterAtScale
       : Vec2.add(cameraAfterScale.center, Vec2.scale(centerDelta, CameraControl.BounceBackSmoothing))
     this.renderer.setCamera({ center: centerNext })
 
-    const viewport = this.getCameraMotionViewport(this.cameraMotion)
     this.smoothCameraToViewport(viewport, CameraControl.BounceBackSmoothing)
 
     const cameraAfterBounds = this.renderer.getCamera()
-    this.cameraMotion.targetCenter = viewport
-      ? this.layout.clampCameraCenterToViewport(this.cameraMotion.targetCenter, viewport)
-      : this.cameraMotion.targetCenter
+    const targetCenterAfterBounds = this.getCameraMotionTargetCenterAtScale(this.cameraMotion, scaleNext)
 
     if (
       scaleNext === this.cameraMotion.targetScale
-      && Vec2.length(Vec2.sub(cameraAfterBounds.center, this.cameraMotion.targetCenter)) <= CameraControl.BounceBackSnapEpsilon
+      && Vec2.length(Vec2.sub(cameraAfterBounds.center, targetCenterAfterBounds)) <= CameraControl.BounceBackSnapEpsilon
     ) {
-      this.renderer.setCamera({ center: this.cameraMotion.targetCenter })
+      this.renderer.setCamera({ center: targetCenterAfterBounds })
       this.cameraMotion = null
     }
+  }
+
+  private getCameraMotionTargetCenterAtScale(motion: CameraMotion, scale: number): Vec2 {
+    return motion.viewportWorldCenter
+      ? this.layout.getCameraCenterForViewportWorldCenter(motion.viewportWorldCenter, scale)
+      : motion.targetCenter
   }
 
   private setCameraScaleAt(anchorScreen: Vec2, scale: number) {
@@ -1617,24 +1679,8 @@ export class Game extends Disposable(Empty) {
     const temporaryProgress = options.temporaryProgress ?? (isTemporary ? 1 : 0)
     const temporaryPreset = options.temporaryPreset ?? ButtonColors.Yellow
     const alpha = options.alpha ?? 1
-    const focusPulse = this.getBoardFocusPulseProgress(l, m)
-    const focusPreset = boardPlayer === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
-    const borderColor = Color4.withAlpha(
-      Color4.mix(
-        Color4.mix(baseBorderColor, temporaryPreset.border, temporaryProgress),
-        focusPreset.border,
-        focusPulse,
-      ),
-      alpha,
-    )
-    const activeBorderFill = Color4.withAlpha(
-      Color4.mix(
-        Color4.mix(baseActiveBorderFill, temporaryPreset.fill, temporaryProgress),
-        focusPreset.fill,
-        focusPulse,
-      ),
-      alpha,
-    )
+    const borderColor = Color4.withAlpha(Color4.mix(baseBorderColor, temporaryPreset.border, temporaryProgress), alpha)
+    const activeBorderFill = Color4.withAlpha(Color4.mix(baseActiveBorderFill, temporaryPreset.fill, temporaryProgress), alpha)
     const activeProgress = options.activeProgress ?? (isActive ? 1 : 0)
     const outerBorder = Sizes.BoardBorder + Sizes.ActiveBoardBorder * activeProgress
     const outerBorderPos: Vec2 = [x0 - outerBorder, y0 - outerBorder]
@@ -1709,7 +1755,25 @@ export class Game extends Disposable(Empty) {
       if (this.shouldRenderPieceGhost(l, m, coord)) this.renderPieceGhost(this.selectedPiece!.piece, pos)
     }
 
+    this.renderBoardFocusMask(l, m, boardPlayer, [x0, y0], alpha)
     this.renderMoveFormationArrow(board, alpha)
+  }
+
+  private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number) {
+    const focusPulse = this.getBoardFocusPulseProgress(l, m)
+    if (focusPulse <= 0) return
+
+    const focusPreset = boardPlayer === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
+    this.renderer.submit({
+      type: RenderItemType.Quad,
+      layer: RenderLayer.MoveHighlight,
+      order: -1,
+      mat: Mat3.transform(pos, Sizes.BoardSize),
+      color: Color4.withAlpha(
+        focusPreset.fill,
+        alpha * focusPulse * Animations.BoardFocusMaskAlpha,
+      ),
+    })
   }
 
   private getMoveFormationHighlightColor(

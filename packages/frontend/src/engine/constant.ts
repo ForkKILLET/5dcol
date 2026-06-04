@@ -77,7 +77,7 @@ export namespace Sizes {
   export const ButtonFontSize = 26
   export const ButtonIconSize = 28
   export const ButtonContentGap = 8
-  export const RecordPanelWidth = 260
+  export const RecordPanelWidth = 300
 
   export const PresentWidth = 104
   export const PresentBorder = 3
@@ -155,6 +155,7 @@ export namespace Animations {
   export const BoardFocusPulseReleaseDuration = 220
   export const BoardFocusPulseSettleDistance = 6
   export const BoardFocusPulseSettleScale = 0.02
+  export const BoardFocusMaskAlpha = 0.42
   export const PulseEffectDuration = 1000
 }
 

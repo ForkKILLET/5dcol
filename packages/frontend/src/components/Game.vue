@@ -16,6 +16,8 @@ const recordPanelOpen = ref(false)
 const recordText = ref('')
 const recordActions = ref<GameRecordAction[]>([])
 const recordHasPendingMoves = ref(false)
+const recordCurrentActionIndex = ref(0)
+const recordHoveredActionIndex = ref<number | null>(null)
 const secondaryMenuOpen = ref(false)
 const dialogMode = ref<'none' | 'import' | 'export'>('none')
 const importText = ref('')
@@ -121,6 +123,13 @@ function updateRecord(request: GameExportRequest) {
   recordText.value = request.text
   recordActions.value = request.actions
   recordHasPendingMoves.value = request.hasPendingMoves
+  recordCurrentActionIndex.value = request.currentActionIndex
+  if (
+    recordHoveredActionIndex.value !== null
+    && ! request.actions.some(action => action.index === recordHoveredActionIndex.value)
+  ) {
+    recordHoveredActionIndex.value = null
+  }
 }
 
 function toggleRecordPanel() {
@@ -133,6 +142,15 @@ function toggleRecordPanel() {
 
 function focusRecordSegment(segment: GameRecordMoveSegment) {
   game?.focusBoard(segment.l, segment.m)
+}
+
+function getRecordMarker(action: GameRecordAction) {
+  if (recordHoveredActionIndex.value === action.index) return '@'
+  return action.index === recordCurrentActionIndex.value - 1 ? '*' : ''
+}
+
+function rollbackToRecordAction(action: GameRecordAction) {
+  game?.rollbackToActionEnd(action.index + 1)
 }
 
 function toggleSecondaryMenu() {
@@ -367,7 +385,13 @@ watch(recordPanelOpen, syncGameViewportInsets)
                 'record-row--black': row.player === 'b',
                 'record-row--white': row.player !== 'b',
               }"
+              @mouseenter="recordHoveredActionIndex = row.index"
+              @mouseleave="recordHoveredActionIndex = null"
             >
+              <span
+                class="record-marker"
+                @click="rollbackToRecordAction(row)"
+              >{{ getRecordMarker(row) }}</span>
               <span class="record-serial">{{ row.serial }}</span>
               <span class="record-action">
                 <span
@@ -377,11 +401,11 @@ watch(recordPanelOpen, syncGameViewportInsets)
                 >
                   <button
                     v-for="(segment, segmentIndex) in move.segments"
-                    :key="`${row.serial}-${moveIndex}-${segmentIndex}`"
-                    class="record-segment"
-                    type="button"
-                    @click="focusRecordSegment(segment)"
-                  >
+                  :key="`${row.serial}-${moveIndex}-${segmentIndex}`"
+                  class="record-segment"
+                  type="button"
+                  @click.stop="focusRecordSegment(segment)"
+                >
                     {{ segment.text }}
                   </button>
                 </span>
@@ -620,16 +644,19 @@ canvas {
 
 .record-table {
   display: grid;
+  grid-template-columns: 20px max-content minmax(0, 1fr);
+  column-gap: var(--button-content-gap);
   row-gap: calc(var(--button-content-gap) * 0.75);
 }
 
 .record-row {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  column-gap: var(--button-content-gap);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: start;
   padding: 2px var(--button-content-gap);
   border-radius: 8px;
+  cursor: pointer;
 }
 
 .record-row--white {
@@ -640,6 +667,13 @@ canvas {
 .record-row--black {
   background: var(--record-black-bg);
   color: var(--record-black-text);
+}
+
+.record-marker {
+  min-width: 20px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .record-serial {
