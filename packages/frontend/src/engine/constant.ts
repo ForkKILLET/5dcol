@@ -97,7 +97,7 @@ export namespace Sizes {
 export namespace CameraControl {
   export const WheelZoomStep = 0.1
   export const KeyboardZoomStep = 0.18
-  export const ZoomMin = 0.5
+  export const ZoomMin = 0.3
   export const ZoomMax = 4
   export const ZoomSmoothing = 0.12
   export const ZoomSnapEpsilon = 0.001
