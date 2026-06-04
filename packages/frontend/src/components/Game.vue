@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
+import { Player } from '@5dcol/core'
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
@@ -7,17 +8,20 @@ import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMov
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { Logger, type GameMessage } from '@engine/logger'
 import { CanvasRenderer } from '@engine/canvas/renderer'
+import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
 
 const canvas = useTemplateRef('canvas')
 
 const messages = reactive<GameMessage[]>([])
 const toolbarButtons = ref<GameToolbarButton[]>([])
 const gameStatus = ref<GameStatusView>({
-  text: "White's turn",
+  kind: 'turn',
+  player: Player.W,
   color: Color4.toRgbaString(Colors.BoardBorderWhite),
   shadowColor: Color4.toRgbaString(Colors.BoardBorderBlack),
   ended: false,
 })
+const language = ref<Language>(getStoredLanguage())
 const recordPanelOpen = ref(false)
 const recordText = ref('')
 const recordActions = ref<GameRecordAction[]>([])
@@ -25,7 +29,7 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordHoveredActionIndex = ref<number | null>(null)
 const secondaryMenuOpen = ref(false)
-const dialogMode = ref<'none' | 'import' | 'export'>('none')
+const dialogMode = ref<'none' | 'language' | 'import' | 'export'>('none')
 const importText = ref('')
 const importError = ref('')
 const exportText = ref('')
@@ -37,6 +41,22 @@ let game: Game | null = null
 const query = new URLSearchParams(window.location.search)
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
 const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
+const t = computed(() => createTranslator(language.value))
+const gameStatusText = computed(() => {
+  if (gameStatus.value.kind === 'stalemate') return t.value('status.stalemate')
+
+  const player = gameStatus.value.player === Player.B
+    ? t.value('player.black')
+    : t.value('player.white')
+  return t.value(
+    gameStatus.value.kind === 'checkmate' ? 'status.checkmate' : 'status.turn',
+    { player },
+  )
+})
+const languageOptions = computed(() => LANGUAGES.map(value => ({
+  value,
+  label: t.value(`language.${value}`),
+})))
 
 const primaryButtons = computed(() => (
   toolbarButtons.value.filter(button => primaryButtonIds.has(button.id))
@@ -134,6 +154,10 @@ function clickToolbarButton(button: GameToolbarButton) {
   secondaryMenuOpen.value = false
 }
 
+function getButtonText(button: GameToolbarButton): string {
+  return t.value(button.labelKey, button.labelParams)
+}
+
 function updateRecord(request: GameExportRequest) {
   recordText.value = request.text
   recordActions.value = request.actions
@@ -185,6 +209,17 @@ function closeSecondaryMenu() {
   secondaryMenuOpen.value = false
 }
 
+function openLanguageDialog() {
+  secondaryMenuOpen.value = false
+  dialogMode.value = 'language'
+}
+
+function selectLanguage(nextLanguage: Language) {
+  language.value = nextLanguage
+  storeLanguage(nextLanguage)
+  dialogMode.value = 'none'
+}
+
 function openImportDialog() {
   secondaryMenuOpen.value = false
   importText.value = ''
@@ -232,7 +267,7 @@ function submitImportDialog() {
 
   const error = game?.importFiveDPGNText(text)
   if (error) {
-    importError.value = error
+    importError.value = error === 'Failed to import 5dpgn' ? t.value('error.importFailed') : error
     return
   }
 
@@ -243,10 +278,10 @@ async function copyExportText() {
   exportCopyStatus.value = ''
   try {
     await navigator.clipboard.writeText(exportText.value)
-    exportCopyStatus.value = 'Copied'
+    exportCopyStatus.value = t.value('export.copied')
   }
   catch {
-    exportCopyStatus.value = 'Select the text and copy it manually'
+    exportCopyStatus.value = t.value('export.copyManual')
   }
 }
 
@@ -313,6 +348,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
     <canvas ref="canvas"></canvas>
     <div
       class="ui-layer"
+      :data-lang="language"
       :style="uiStyle"
       @mousemove.stop
       @mousedown.stop
@@ -333,7 +369,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
           type="button"
           @click="clickToolbarButton(button)"
         >
-          <span>{{ button.text }}</span>
+          <span>{{ getButtonText(button) }}</span>
           <img
             v-if="button.pieceImageUrl"
             class="piece-icon"
@@ -351,7 +387,29 @@ watch(recordPanelOpen, syncGameViewportInsets)
           class="game-button game-button--circle"
           :style="menuButtonStyle"
           type="button"
-          aria-label="Open menu"
+          :aria-label="t('dialog.languageTitle')"
+          @click="openLanguageDialog"
+        >
+          <svg
+            class="button-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+            />
+            <path d="M3 12h18" />
+            <path d="M12 3c2.3 2.5 3.5 5.5 3.5 9s-1.2 6.5-3.5 9" />
+            <path d="M12 3c-2.3 2.5-3.5 5.5-3.5 9s1.2 6.5 3.5 9" />
+          </svg>
+        </button>
+        <button
+          class="game-button game-button--circle"
+          :style="menuButtonStyle"
+          type="button"
+          :aria-label="t('button.menu')"
           :aria-expanded="secondaryMenuOpen"
           @click="toggleSecondaryMenu"
         >
@@ -363,7 +421,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
         class="game-status"
         :class="{ 'game-status--ended': gameStatus.ended }"
       >
-        {{ gameStatus.text }}
+        {{ gameStatusText }}
       </div>
 
       <aside
@@ -373,7 +431,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
         @wheel.stop
       >
         <div class="record-header-bar">
-          <h2 class="record-title">Record</h2>
+          <h2 class="record-title">{{ t('record.title') }}</h2>
           <div class="record-header-actions">
             <button
               v-for="button in recordActionButtons"
@@ -385,7 +443,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
               type="button"
               @click="clickToolbarButton(button)"
             >
-              <span>{{ button.text }}</span>
+              <span>{{ getButtonText(button) }}</span>
             </button>
           </div>
         </div>
@@ -393,7 +451,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
           v-if="recordHasPendingMoves"
           class="record-message"
         >
-          Pending moves are not recorded.
+          {{ t('record.pendingNotRecorded') }}
         </p>
         <div class="record-content">
           <div
@@ -451,7 +509,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
             v-else
             class="record-empty"
           >
-            No moves recorded.
+            {{ t('record.empty') }}
           </div>
         </div>
       </aside>
@@ -473,7 +531,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
             :aria-expanded="recordPanelOpen"
             @click="clickRecordMenuButton"
           >
-            <span>Record</span>
+            <span>{{ t('button.record') }}</span>
           </button>
           <button
             v-for="button in menuButtons"
@@ -485,7 +543,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
             type="button"
             @click="clickToolbarButton(button)"
           >
-            <span>{{ button.text }}</span>
+            <span>{{ getButtonText(button) }}</span>
             <img
               v-if="button.pieceImageUrl"
               class="piece-icon"
@@ -503,12 +561,34 @@ watch(recordPanelOpen, syncGameViewportInsets)
         @click="closeDialog"
       >
         <div
-          v-if="dialogMode === 'import'"
+          v-if="dialogMode === 'language'"
+          class="dialog-card dialog-card--narrow"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">{{ t('dialog.languageTitle') }}</h2>
+          <div class="language-list">
+            <button
+              v-for="option in languageOptions"
+              :key="option.value"
+              class="game-button language-button"
+              :class="{ 'is-open': option.value === language }"
+              :style="getPresetButtonStyle(option.value === language ? ButtonColors.GreenWhite : ButtonColors.White)"
+              type="button"
+              @click="selectLanguage(option.value)"
+            >
+              <span>{{ option.label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else-if="dialogMode === 'import'"
           class="dialog-card"
           :style="menuButtonStyle"
           @click.stop
         >
-          <h2 class="dialog-title">Import 5dpgn</h2>
+          <h2 class="dialog-title">{{ t('dialog.importTitle') }}</h2>
           <textarea
             v-model="importText"
             class="dialog-textarea"
@@ -516,10 +596,11 @@ watch(recordPanelOpen, syncGameViewportInsets)
             autofocus
           ></textarea>
           <p
-            v-if="importError"
             class="dialog-message dialog-message-error"
+            :class="{ 'dialog-message--empty': !importError }"
+            aria-live="polite"
           >
-            {{ importError }}
+            {{ importError || t('error.importFailed') }}
           </p>
           <div class="dialog-actions">
             <button
@@ -528,7 +609,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
               type="button"
               @click="closeDialog"
             >
-              <span>Cancel</span>
+              <span>{{ t('button.cancel') }}</span>
             </button>
             <button
               class="game-button dialog-button"
@@ -537,7 +618,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
               type="button"
               @click="submitImportDialog"
             >
-              <span>Import</span>
+              <span>{{ t('button.import') }}</span>
             </button>
           </div>
         </div>
@@ -548,12 +629,12 @@ watch(recordPanelOpen, syncGameViewportInsets)
           :style="menuButtonStyle"
           @click.stop
         >
-          <h2 class="dialog-title">Export 5dpgn</h2>
+          <h2 class="dialog-title">{{ t('dialog.exportTitle') }}</h2>
           <p
             v-if="exportHasPendingMoves"
             class="dialog-message"
           >
-            Pending moves are not exported.
+            {{ t('export.pendingNotExported') }}
           </p>
           <textarea
             v-model="exportText"
@@ -562,10 +643,11 @@ watch(recordPanelOpen, syncGameViewportInsets)
             spellcheck="false"
           ></textarea>
           <p
-            v-if="exportCopyStatus"
             class="dialog-message"
+            :class="{ 'dialog-message--empty': !exportCopyStatus }"
+            aria-live="polite"
           >
-            {{ exportCopyStatus }}
+            {{ exportCopyStatus || t('export.copied') }}
           </p>
           <div class="dialog-actions">
             <button
@@ -574,7 +656,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
               type="button"
               @click="copyExportText"
             >
-              <span>Copy</span>
+              <span>{{ t('button.copy') }}</span>
             </button>
             <button
               class="game-button dialog-button"
@@ -582,7 +664,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
               type="button"
               @click="closeDialog"
             >
-              <span>Close</span>
+              <span>{{ t('button.close') }}</span>
             </button>
           </div>
         </div>
@@ -611,7 +693,15 @@ canvas {
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  font-family: Georgia, 'Times New Roman', serif;
+  --latin-serif-font: "Latin Serif", Georgia, 'Times New Roman', serif;
+  --cjk-serif-font: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", "Source Han Serif SC", "Source Han Serif CN", "Noto Serif SC", "PMingLiU", serif;
+  --ui-text-y: 0;
+  font-family: var(--latin-serif-font);
+}
+
+.ui-layer[data-lang='zh'] {
+  --ui-text-y: 1px;
+  font-family: var(--latin-serif-font), var(--cjk-serif-font);
 }
 
 .toolbar {
@@ -711,7 +801,7 @@ canvas {
   overflow: auto;
   padding: 0;
   color: var(--button-text-color);
-  font: 18px/1.35 Georgia, 'Times New Roman', serif;
+  font: 18px/1.35 var(--latin-serif-font);
 }
 
 .record-headers {
@@ -847,6 +937,12 @@ canvas {
   pointer-events: auto;
 }
 
+.dialog-card--narrow {
+  align-items: center;
+  width: fit-content;
+  max-width: calc(100vw - var(--button-top) * 4);
+}
+
 .dialog-title {
   margin: 0;
   color: var(--button-text-color);
@@ -876,10 +972,15 @@ canvas {
 }
 
 .dialog-message {
+  min-height: 1.25em;
   margin: 0;
   color: var(--button-text-color);
   font-size: 18px;
   line-height: 1.25;
+}
+
+.dialog-message--empty {
+  visibility: hidden;
 }
 
 .dialog-message-error {
@@ -890,6 +991,19 @@ canvas {
   display: flex;
   justify-content: flex-end;
   gap: calc(var(--button-content-gap) * 2);
+}
+
+.language-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--button-content-gap) * 2);
+  width: 100%;
+}
+
+.language-button {
+  width: var(--secondary-button-width);
+  max-width: calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10);
 }
 
 .game-button {
@@ -912,6 +1026,16 @@ canvas {
   cursor: pointer;
   outline: none;
   user-select: none;
+}
+
+.game-button > span,
+.dialog-title,
+.game-status,
+.record-title,
+.record-message,
+.record-empty,
+.dialog-message {
+  transform: translateY(var(--ui-text-y));
 }
 
 .toolbar-secondary .game-button {
@@ -971,6 +1095,17 @@ canvas {
   width: var(--button-icon-size);
   height: var(--button-icon-size);
   object-fit: contain;
+  pointer-events: none;
+}
+
+.button-icon {
+  width: calc(var(--button-icon-size) * 0.9);
+  height: calc(var(--button-icon-size) * 0.9);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   pointer-events: none;
 }
 

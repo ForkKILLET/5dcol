@@ -47,7 +47,8 @@ export interface GameExportRequest {
 }
 
 export interface GameStatusView {
-  text: string
+  kind: 'turn' | 'checkmate' | 'stalemate'
+  player: Player | null
   color: string
   shadowColor: string
   ended: boolean
@@ -677,7 +678,7 @@ export class Game extends Disposable(Empty) {
           disabled: false,
           colorPreset: this.getGameStatusButtonColor(),
           turnPlayer: this.getGameStatusPlayer(),
-          text: 'Finish Game',
+          labelKey: 'button.finishGame',
           piece: null,
           onClick: () => {},
         } satisfies ButtonConfig
@@ -688,7 +689,7 @@ export class Game extends Disposable(Empty) {
           disabled: this.isMoveAnimating(),
           colorPreset: ButtonColors.Board,
           turnPlayer: this.player,
-          text: 'Deselect',
+          labelKey: 'button.deselect',
           piece: this.selectedPiece.piece,
           onClick: () => {
             this.deselectPiece()
@@ -701,7 +702,7 @@ export class Game extends Disposable(Empty) {
             ? ButtonColors.Red
             : getUndoMoveButtonColor(this.pendingMoves.at(-1)?.is5D ?? false),
           turnPlayer: this.player,
-          text: 'Undo Move',
+          labelKey: 'button.undoMove',
           piece: null,
           onClick: () => {
             this.undoMove()
@@ -715,7 +716,7 @@ export class Game extends Disposable(Empty) {
         disabled: ! this.canSubmitMoves() || this.submitRequestedDuringMoveAnimation,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
-        text: 'Submit Moves',
+        labelKey: 'button.submitMoves',
         piece: null,
         effect: 'pulse',
         onClick: () => {
@@ -727,7 +728,7 @@ export class Game extends Disposable(Empty) {
         disabled: false,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
-        text: 'Restart',
+        labelKey: 'button.restart',
         piece: null,
         onClick: () => {
           this.restartGame()
@@ -738,7 +739,7 @@ export class Game extends Disposable(Empty) {
         disabled: this.isMoveAnimating(),
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
-        text: 'Import',
+        labelKey: 'button.import',
         piece: null,
         onClick: () => {
           this.requestImportFiveDPGN()
@@ -749,7 +750,7 @@ export class Game extends Disposable(Empty) {
         disabled: false,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
-        text: 'Export',
+        labelKey: 'button.export',
         piece: null,
         onClick: () => {
           this.requestExportFiveDPGN()
@@ -824,7 +825,8 @@ export class Game extends Disposable(Empty) {
       const winner = CorePlayers.opponent(this.player)
       const colors = this.getStatusTextColors(winner)
       return {
-        text: `Game ended - ${this.getPlayerName(winner)} wins`,
+        kind: 'checkmate',
+        player: winner,
         ...colors,
         ended: true,
       }
@@ -833,7 +835,8 @@ export class Game extends Disposable(Empty) {
     if (this.gameEndStatus === 'stalemate') {
       const colors = this.getStatusTextColors(Player.W)
       return {
-        text: 'Game ended - Draw',
+        kind: 'stalemate',
+        player: null,
         ...colors,
         ended: true,
       }
@@ -841,7 +844,8 @@ export class Game extends Disposable(Empty) {
 
     const colors = this.getStatusTextColors(this.player)
     return {
-      text: `${this.getPlayerName(this.player)}'s turn`,
+      kind: 'turn',
+      player: this.player,
       ...colors,
       ended: this.gameEndTrial,
     }
@@ -864,10 +868,6 @@ export class Game extends Disposable(Empty) {
   private getGameStatusPlayer(): Player {
     if (this.gameEndStatus === 'stalemate') return Player.W
     return this.gameEndStatus === 'checkmate' ? CorePlayers.opponent(this.player) : this.player
-  }
-
-  private getPlayerName(player: Player): string {
-    return player === Player.W ? 'White' : 'Black'
   }
 
   private isGameEnded(): boolean {

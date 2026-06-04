@@ -1,0 +1,37 @@
+button.deselect: "取消选择"
+button.undoMove: "撤销小步"
+button.submitMoves: "提交回合"
+button.finishGame: "结束对局"
+button.restart: "重新开始"
+button.import: "导入"
+button.export: "导出"
+button.record: "记谱"
+button.cancel: "取消"
+button.copy: "复制"
+button.close: "关闭"
+button.menu: "菜单"
+
+dialog.languageTitle: "语言"
+dialog.importTitle: "导入 5dpgn"
+dialog.exportTitle: "导出 5dpgn"
+
+language.en: "English"
+language.zh: "中文"
+
+player.white: "白方"
+player.black: "黑方"
+
+status.turn: "{player}回合"
+status.checkmate: "对局结束 - {player}获胜"
+status.stalemate: "对局结束 - 和棋"
+
+record.title: "记谱"
+record.pendingNotRecorded: "未提交的小步不会记录。"
+record.empty: "暂无记谱。"
+
+export.pendingNotExported: "未提交的小步不会导出。"
+export.copied: "已复制"
+export.copyManual: "请选择文本并手动复制"
+
+error.importFailed: "导入 5dpgn 失败"
+error.saveFailed: "保存对局状态失败"

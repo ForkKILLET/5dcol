@@ -1,0 +1,37 @@
+button.deselect: "Deselect"
+button.undoMove: "Undo Move"
+button.submitMoves: "Submit Moves"
+button.finishGame: "Finish Game"
+button.restart: "Restart"
+button.import: "Import"
+button.export: "Export"
+button.record: "Record"
+button.cancel: "Cancel"
+button.copy: "Copy"
+button.close: "Close"
+button.menu: "Menu"
+
+dialog.languageTitle: "Language"
+dialog.importTitle: "Import 5dpgn"
+dialog.exportTitle: "Export 5dpgn"
+
+language.en: "English"
+language.zh: "中文"
+
+player.white: "White"
+player.black: "Black"
+
+status.turn: "{player}'s turn"
+status.checkmate: "Game ended - {player} wins"
+status.stalemate: "Game ended - Draw"
+
+record.title: "Record"
+record.pendingNotRecorded: "Pending moves are not recorded."
+record.empty: "No moves recorded."
+
+export.pendingNotExported: "Pending moves are not exported."
+export.copied: "Copied"
+export.copyManual: "Select the text and copy it manually"
+
+error.importFailed: "Failed to import 5dpgn"
+error.saveFailed: "Failed to save game state"

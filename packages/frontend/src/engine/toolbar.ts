@@ -2,13 +2,15 @@ import { Player, type Piece } from '@5dcol/core'
 import { Color4 } from '@engine/basic'
 import { ButtonColors, type ButtonColorPreset } from '@engine/constant'
 import { PIECE_TO_TEXTURE_ID, TEXTURE_ID_TO_NAME } from '@engine/texture'
+import { type TranslationKey, type TranslationParams } from '@/i18n'
 
 export interface ButtonConfig {
   id: string
   disabled: boolean
   colorPreset: ButtonColorPreset
   turnPlayer: Player
-  text: string
+  labelKey: TranslationKey
+  labelParams?: TranslationParams
   piece: Piece | null
   effect?: 'pulse'
   onClick: () => void
@@ -23,7 +25,8 @@ export interface GameToolbarButtonColors {
 export interface GameToolbarButton {
   id: string
   disabled: boolean
-  text: string
+  labelKey: TranslationKey
+  labelParams: TranslationParams
   pieceImageUrl: string | null
   effect?: 'pulse'
   colors: GameToolbarButtonColors
@@ -51,7 +54,8 @@ export const toToolbarButtonView = (button: ButtonConfig): GameToolbarButton => 
   return {
     id: button.id,
     disabled: button.disabled,
-    text: button.text,
+    labelKey: button.labelKey,
+    labelParams: button.labelParams ?? {},
     pieceImageUrl: button.piece === null ? null : getPieceImageUrl(button.piece),
     effect: button.disabled ? undefined : button.effect,
     colors: toToolbarButtonColors(colors),
