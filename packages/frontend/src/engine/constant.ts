@@ -148,7 +148,7 @@ export namespace Animations {
   export const MoveTravelViewportDuration = 260
   export const MoveTravelDuration = 380
   export const MoveTravelSpeed = Sizes.BoardMarginWidth / MoveTravelDuration
-  export const PulseEffectDuration = 300
+  export const PulseEffectDuration = 1000
 }
 
 export interface ButtonColorPreset {

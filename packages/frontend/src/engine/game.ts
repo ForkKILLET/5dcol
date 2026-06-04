@@ -3,13 +3,14 @@ import { Effect } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { type Logger } from '@engine/logger'
-import { CircleRenderItem, type FillStyle, LinearGradientFill, type Renderer, RenderItemType } from '@engine/renderer'
-import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
+import { CircleRenderItem, LinearGradientFill, type Renderer, RenderItemType } from '@engine/renderer'
+import { PIECE_TO_TEXTURE_ID, TEXTURE_ID_TO_NAME } from '@engine/texture'
 
 export interface GameConfig {
   debug: boolean
   logger: Logger
   renderer: Renderer
+  onToolbarChange?: (buttons: GameToolbarButton[]) => void
 }
 
 interface PointerState {
@@ -130,11 +131,8 @@ interface LineBranchBaseGeometry {
   order: number
 }
 
-type ScreenRect = [pos: Vec2, size: Vec2]
-
 interface ButtonConfig {
   id: string
-  rect: ScreenRect
   disabled: boolean
   colorPreset: ButtonColorPreset
   turnPlayer: Player
@@ -144,9 +142,25 @@ interface ButtonConfig {
   onClick: () => void
 }
 
+export interface GameToolbarButtonColors {
+  border: string
+  fill: string
+  text: string
+}
+
+export interface GameToolbarButton {
+  id: string
+  disabled: boolean
+  text: string
+  pieceImageUrl: string | null
+  effect?: 'pulse'
+  colors: GameToolbarButtonColors
+  hoverColors: GameToolbarButtonColors
+  pulseColors: GameToolbarButtonColors
+}
+
 const PRESENT_LABEL = 'The Present'
 const PRESENT_LABEL_FONT = 'Georgia, Times New Roman, serif'
-const UI_FONT = 'Georgia, Times New Roman, serif'
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
 const GAME_STORAGE_KEY = '5dcol.gameState'
@@ -169,176 +183,6 @@ const isSameLocatedSquare = (
   square.l === l && square.m === m && Coord.isSameSpace(square.coord, coord)
 )
 
-class ButtonControl {
-  private buttons: ButtonConfig[] = []
-  private pressedId: string | null = null
-  private hoverId: string | null = null
-
-  set(buttons: ButtonConfig[]) {
-    this.buttons = buttons
-    if (! buttons.some(button => button.id === this.pressedId)) this.pressedId = null
-    if (! buttons.some(button => button.id === this.hoverId)) this.hoverId = null
-  }
-
-  handleMouseMove(screen: Vec2) {
-    this.hoverId = this.getButtonAt(screen)?.id ?? null
-  }
-
-  clearHover() {
-    this.hoverId = null
-  }
-
-  handleMouseDown(screen: Vec2): boolean {
-    const button = this.getButtonAt(screen)
-    if (! button) return false
-    if (button.disabled) return true
-    this.pressedId = button.id
-    return true
-  }
-
-  handleMouseUp(screen: Vec2): boolean {
-    const pressedId = this.pressedId
-    this.pressedId = null
-
-    if (! pressedId) return false
-
-    const button = this.buttons.find(button => button.id === pressedId) ?? null
-    const pressed = button !== null && this.contains(button.rect, screen)
-    if (! button || ! pressed) return true
-    if (button.disabled || ! this.contains(button.rect, screen)) return true
-
-    button.onClick()
-    return true
-  }
-
-  render(renderer: Renderer) {
-    for (const button of this.buttons) this.renderButton(renderer, button)
-  }
-
-  private renderButton(renderer: Renderer, button: ButtonConfig) {
-    const pressed = this.pressedId === button.id
-    const hovered = this.hoverId === button.id
-    const collapsed = pressed || button.disabled
-    const colors = this.getButtonColors(button, hovered)
-    const shadowOffset = Sizes.ButtonShadowOffset
-    const bodyRect: ScreenRect = collapsed
-      ? [Vec2.add(button.rect[0], [0, shadowOffset]), button.rect[1]]
-      : button.rect
-
-    if (! collapsed) {
-      this.renderRoundRect(renderer, [
-        Vec2.add(button.rect[0], [shadowOffset, shadowOffset]),
-        button.rect[1],
-      ], Colors.Shadow, null)
-    }
-
-    this.renderRoundRect(
-      renderer,
-      bodyRect,
-      colors.fill,
-      colors.border,
-    )
-
-    this.renderContent(renderer, button, colors, bodyRect)
-  }
-
-  private getButtonAt(screen: Vec2): ButtonConfig | null {
-    return this.buttons.find(button => this.contains(button.rect, screen)) ?? null
-  }
-
-  private getButtonColors(button: ButtonConfig, hovered: boolean): ButtonColorPreset {
-    if (button.disabled) {
-      return button.turnPlayer === Player.W ? ButtonColors.DisabledWhite : ButtonColors.DisabledBlack
-    }
-    if (button.effect === 'pulse') return this.getPulseColors(button)
-    if (hovered) return this.getGreenColors(button.turnPlayer)
-    return button.colorPreset
-  }
-
-  private getPulseColors(button: ButtonConfig): ButtonColorPreset {
-    const phase = (Math.sin(performance.now() / Animations.PulseEffectDuration) + 1) / 2
-    const green = this.getGreenColors(button.turnPlayer)
-    return {
-      border: Color4.mix(button.colorPreset.border, green.border, phase),
-      fill: Color4.mix(button.colorPreset.fill, green.fill, phase),
-      text: Color4.mix(button.colorPreset.text, green.text, phase),
-    }
-  }
-
-  private getGreenColors(player: Player): ButtonColorPreset {
-    return player === Player.W ? ButtonColors.GreenWhite : ButtonColors.GreenBlack
-  }
-
-  private renderContent(
-    renderer: Renderer,
-    button: ButtonConfig,
-    colors: ButtonColorPreset,
-    [[x, y], [w, h]]: ScreenRect,
-  ) {
-    const iconSize = Sizes.ButtonIconSize
-    const gap = Sizes.ButtonContentGap
-    const textWidth = this.getTextWidth(button.text)
-    const contentWidth = button.piece === null ? textWidth : textWidth + gap + iconSize
-    const contentX = x + (w - contentWidth) / 2
-    const centerY = y + h / 2
-
-    renderer.submit({
-      type: RenderItemType.Text,
-      layer: RenderLayer.UI,
-      space: 'screen',
-      pos: [contentX + textWidth / 2, centerY + 3],
-      angle: 0,
-      text: button.text,
-      fontSize: Sizes.ButtonFontSize,
-      fontFamily: UI_FONT,
-      color: colors.text,
-      align: 'center',
-      baseline: 'middle',
-    })
-
-    if (button.piece === null) return
-
-    const iconPos: Vec2 = [
-      contentX + textWidth + gap,
-      centerY - iconSize / 2,
-    ]
-    renderer.submit({
-      type: RenderItemType.Texture,
-      layer: RenderLayer.UI,
-      space: 'screen',
-      mat: Mat3.transform(iconPos, [iconSize, iconSize]),
-      textureId: PIECE_TO_TEXTURE_ID.get(button.piece)!,
-    })
-  }
-
-  private renderRoundRect(
-    renderer: Renderer,
-    rect: ScreenRect,
-    fill: FillStyle | null,
-    stroke: Color4 | null,
-  ) {
-    renderer.submit({
-      type: RenderItemType.RoundRect,
-      layer: fill === Colors.Shadow ? RenderLayer.UIShadow : RenderLayer.UI,
-      space: 'screen',
-      pos: rect[0],
-      size: rect[1],
-      radius: Sizes.ButtonHeight / 2,
-      fill,
-      stroke,
-      strokeWidth: Sizes.ButtonBorder,
-    })
-  }
-
-  private getTextWidth(text: string): number {
-    return Math.ceil(text.length * Sizes.ButtonFontSize * 0.52)
-  }
-
-  private contains([[x, y], [w, h]]: ScreenRect, [px, py]: Vec2): boolean {
-    return px >= x && px <= x + w && py >= y && py <= y + h
-  }
-}
-
 export class Game {
   constructor(public readonly config: GameConfig) {
     this.logger = config.logger
@@ -360,7 +204,6 @@ export class Game {
     dragExceeded: false,
   }
   private readonly effects: Effect[] = []
-  private readonly buttonControl = new ButtonControl()
   private cameraMotion: CameraMotion | null = null
   private selectedPiece: PieceSelection | null = null
   private hoverSquare: SquareHover | null = null
@@ -369,6 +212,7 @@ export class Game {
   private pendingMoves: PendingMove[] = []
   private moveAnimation: MoveAnimation | null = null
   private submitRequestedDuringMoveAnimation = false
+  private toolbarSignature = ''
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -380,6 +224,7 @@ export class Game {
     if (restored) this.focusCurrentPresent({ smooth: false })
     else this.focusInitialTurn({ smooth: false })
     this.bindEvents()
+    this.syncToolbarButtons()
     this.animationFrame = requestAnimationFrame(this.loop)
     this.logger.info('Game started')
   }
@@ -512,7 +357,6 @@ export class Game {
     this.submitRequestedDuringMoveAnimation = false
     this.cameraMotion = null
     this.clearPointerDrag()
-    this.buttonControl.clearHover()
     this.clearStoredGameState()
     this.persistGameState()
     this.focusInitialTurn()
@@ -526,7 +370,6 @@ export class Game {
     this.collect(Effect.useListener(window, 'mousemove', e => {
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
-      this.buttonControl.handleMouseMove(screen)
       this.updatePointerDragExceeded(screen)
       this.panByPointerDrag(screen)
     }))
@@ -535,7 +378,6 @@ export class Game {
       if (e.button !== 0) return
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
-      if (this.buttonControl.handleMouseDown(screen)) return
       this.pointer.dragStartScreen = screen
       this.pointer.dragLastScreen = screen
       this.pointer.dragExceeded = false
@@ -544,22 +386,15 @@ export class Game {
     this.collect(Effect.useListener(window, 'mouseup', e => {
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
-      if (this.buttonControl.handleMouseUp(screen)) {
-        this.clearPointerDrag()
-        return
-      }
       if (! this.pointer.dragExceeded) this.handleBoardClick(screen)
       this.clearPointerDrag()
     }))
 
     this.collect(Effect.useListener(window, 'mouseleave', () => {
-      this.buttonControl.clearHover()
       this.clearPointerDrag()
     }))
 
     this.collect(Effect.useListener(window, 'blur', () => {
-      this.buttonControl.handleMouseUp([-Infinity, -Infinity])
-      this.buttonControl.clearHover()
       this.clearPointerDrag()
     }))
 
@@ -825,14 +660,13 @@ export class Game {
     if (this.config.debug) {
       this.renderPointer()
     }
-    this.buttonControl.render(this.renderer)
   }
 
   private updateInteraction() {
     if (this.isMoveAnimating()) {
       this.hoverSquare = null
       this.hoverPiece = null
-      this.buttonControl.set(this.getToolbarButtons())
+      this.syncToolbarButtons()
       return
     }
 
@@ -840,40 +674,13 @@ export class Game {
     this.hoverSquare = hit ? { l: hit.l, m: hit.m, coord: hit.coord } : null
     const playableHit = this.getPlayableBoardSquareAtScreen(this.pointer.screen)
     this.hoverPiece = this.selectedPiece || ! playableHit ? null : this.getPieceSelectionFromHit(playableHit)
-    this.buttonControl.set(this.getToolbarButtons())
+    this.syncToolbarButtons()
   }
 
   private getToolbarButtons(): ButtonConfig[] {
-    const { widthCss, heightCss } = this.renderer.getScreen()
-    const gap = Sizes.ButtonContentGap * 2
-    const leftX = (widthCss - Sizes.ButtonWidth * 2 - gap) / 2
-    const rightX = leftX + Sizes.ButtonWidth + gap
-    const importRect: ScreenRect = [
-      [
-        widthCss - Sizes.RestartButtonWidth * 3 - gap * 2 - Sizes.ButtonTop,
-        heightCss - Sizes.ButtonHeight - Sizes.ButtonTop,
-      ],
-      [Sizes.RestartButtonWidth, Sizes.ButtonHeight],
-    ]
-    const exportRect: ScreenRect = [
-      [
-        widthCss - Sizes.RestartButtonWidth * 2 - gap - Sizes.ButtonTop,
-        heightCss - Sizes.ButtonHeight - Sizes.ButtonTop,
-      ],
-      [Sizes.RestartButtonWidth, Sizes.ButtonHeight],
-    ]
-    const restartRect: ScreenRect = [
-      [
-        widthCss - Sizes.RestartButtonWidth - Sizes.ButtonTop,
-        heightCss - Sizes.ButtonHeight - Sizes.ButtonTop,
-      ],
-      [Sizes.RestartButtonWidth, Sizes.ButtonHeight],
-    ]
-
     const leftButton: ButtonConfig = this.selectedPiece
       ? {
           id: 'deselect-piece',
-          rect: [[leftX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
           disabled: this.isMoveAnimating(),
           colorPreset: ButtonColors.Board,
           turnPlayer: this.player,
@@ -885,7 +692,6 @@ export class Game {
         }
       : {
           id: 'undo-move',
-          rect: [[leftX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
           disabled: this.pendingMoves.length === 0 || this.submitRequestedDuringMoveAnimation,
           colorPreset: this.getUndoMoveButtonColor(),
           turnPlayer: this.player,
@@ -900,9 +706,8 @@ export class Game {
       leftButton,
       {
         id: 'submit-moves',
-        rect: [[rightX, Sizes.ButtonTop], [Sizes.ButtonWidth, Sizes.ButtonHeight]],
         disabled: ! this.canSubmitMoves() || this.submitRequestedDuringMoveAnimation,
-        colorPreset: this.getSubmitMovesButtonColor(),
+        colorPreset: this.getPlayerButtonColor(),
         turnPlayer: this.player,
         text: 'Submit Moves',
         piece: null,
@@ -913,9 +718,8 @@ export class Game {
       },
       {
         id: 'import-5dpgn',
-        rect: importRect,
         disabled: this.isMoveAnimating(),
-        colorPreset: ButtonColors.Board,
+        colorPreset: this.getPlayerButtonColor(),
         turnPlayer: this.player,
         text: 'Import',
         piece: null,
@@ -925,9 +729,8 @@ export class Game {
       },
       {
         id: 'export-5dpgn',
-        rect: exportRect,
         disabled: false,
-        colorPreset: ButtonColors.Board,
+        colorPreset: this.getPlayerButtonColor(),
         turnPlayer: this.player,
         text: 'Export',
         piece: null,
@@ -937,9 +740,8 @@ export class Game {
       },
       {
         id: 'restart-game',
-        rect: restartRect,
         disabled: false,
-        colorPreset: ButtonColors.Board,
+        colorPreset: this.getPlayerButtonColor(),
         turnPlayer: this.player,
         text: 'Restart',
         piece: null,
@@ -948,6 +750,65 @@ export class Game {
         },
       },
     ]
+  }
+
+  public clickToolbarButton(id: string): boolean {
+    const button = this.getToolbarButtons().find(button => button.id === id)
+    if (! button) return false
+    if (button.disabled) return true
+    button.onClick()
+    this.syncToolbarButtons()
+    return true
+  }
+
+  public getToolbarButtonViews(): GameToolbarButton[] {
+    return this.getToolbarButtons().map(button => this.toToolbarButtonView(button))
+  }
+
+  private syncToolbarButtons() {
+    if (! this.config.onToolbarChange) return
+
+    const buttons = this.getToolbarButtonViews()
+    const signature = JSON.stringify(buttons)
+    if (signature === this.toolbarSignature) return
+
+    this.toolbarSignature = signature
+    this.config.onToolbarChange(buttons)
+  }
+
+  private toToolbarButtonView(button: ButtonConfig): GameToolbarButton {
+    const colors = button.disabled
+      ? (button.turnPlayer === Player.W ? ButtonColors.DisabledWhite : ButtonColors.DisabledBlack)
+      : button.colorPreset
+    const hoverColors = this.getGreenButtonColors(button.turnPlayer)
+    return {
+      id: button.id,
+      disabled: button.disabled,
+      text: button.text,
+      pieceImageUrl: button.piece === null ? null : this.getPieceImageUrl(button.piece),
+      effect: button.disabled ? undefined : button.effect,
+      colors: this.toToolbarButtonColors(colors),
+      hoverColors: this.toToolbarButtonColors(hoverColors),
+      pulseColors: this.toToolbarButtonColors(hoverColors),
+    }
+  }
+
+  private getGreenButtonColors(player: Player): ButtonColorPreset {
+    return player === Player.W ? ButtonColors.GreenWhite : ButtonColors.GreenBlack
+  }
+
+  private toToolbarButtonColors(colors: ButtonColorPreset): GameToolbarButtonColors {
+    return {
+      border: Color4.toRgbaString(colors.border),
+      fill: Color4.toRgbaString(colors.fill),
+      text: Color4.toRgbaString(colors.text),
+    }
+  }
+
+  private getPieceImageUrl(piece: Piece): string {
+    const textureId = PIECE_TO_TEXTURE_ID.get(piece)
+    if (textureId === undefined) return ''
+    return `./assets/canvas/textures/${TEXTURE_ID_TO_NAME.get(textureId)!}`
   }
 
   private handleBoardClick(screen: Vec2) {
@@ -1096,7 +957,6 @@ export class Game {
     this.submitRequestedDuringMoveAnimation = false
     this.cameraMotion = null
     this.clearPointerDrag()
-    this.buttonControl.clearHover()
     this.persistGameState()
     this.focusCurrentPresent()
   }
@@ -1168,7 +1028,7 @@ export class Game {
     return this.pendingMoves.at(-1)?.is5D ? ButtonColors.FiveD : ButtonColors.Yellow
   }
 
-  private getSubmitMovesButtonColor(): ButtonColorPreset {
+  private getPlayerButtonColor(): ButtonColorPreset {
     return this.player === Player.W ? ButtonColors.White : ButtonColors.Black
   }
 
