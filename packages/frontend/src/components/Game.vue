@@ -30,12 +30,19 @@ let game: Game | null = null
 
 const query = new URLSearchParams(window.location.search)
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
+const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
 
 const primaryButtons = computed(() => (
   toolbarButtons.value.filter(button => primaryButtonIds.has(button.id))
 ))
 const secondaryButtons = computed(() => (
   toolbarButtons.value.filter(button => ! primaryButtonIds.has(button.id))
+))
+const recordActionButtons = computed(() => (
+  secondaryButtons.value.filter(button => recordActionButtonIds.has(button.id))
+))
+const menuButtons = computed(() => (
+  secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
 const uiOverlayOpen = computed(() => (
   secondaryMenuOpen.value || dialogMode.value !== 'none'
@@ -140,6 +147,11 @@ function toggleRecordPanel() {
   recordPanelOpen.value = ! recordPanelOpen.value
 }
 
+function clickRecordMenuButton() {
+  toggleRecordPanel()
+  secondaryMenuOpen.value = false
+}
+
 function focusRecordSegment(segment: GameRecordMoveSegment) {
   game?.focusBoard(segment.l, segment.m)
 }
@@ -154,7 +166,6 @@ function rollbackToRecordAction(action: GameRecordAction) {
 }
 
 function toggleSecondaryMenu() {
-  if (secondaryButtons.value.length === 0) return
   secondaryMenuOpen.value = ! secondaryMenuOpen.value
 }
 
@@ -240,7 +251,6 @@ function handleWindowKeyDown(e: KeyboardEvent) {
     closeDialog()
     return
   }
-  if (secondaryButtons.value.length === 0) return
 
   e.preventDefault()
   toggleSecondaryMenu()
@@ -322,19 +332,8 @@ watch(recordPanelOpen, syncGameViewportInsets)
       </div>
 
       <div
-        v-if="secondaryButtons.length > 0"
         class="toolbar toolbar-secondary"
       >
-        <button
-          class="game-button record-toggle-button"
-          :class="{ 'is-open': recordPanelOpen }"
-          :style="menuButtonStyle"
-          type="button"
-          :aria-expanded="recordPanelOpen"
-          @click="toggleRecordPanel"
-        >
-          <span>Record</span>
-        </button>
         <button
           class="game-button game-button--circle"
           :style="menuButtonStyle"
@@ -353,7 +352,23 @@ watch(recordPanelOpen, syncGameViewportInsets)
         :style="menuButtonStyle"
         @wheel.stop
       >
-        <h2 class="record-title">Record</h2>
+        <div class="record-header-bar">
+          <h2 class="record-title">Record</h2>
+          <div class="record-header-actions">
+            <button
+              v-for="button in recordActionButtons"
+              :key="button.id"
+              class="game-button record-header-button"
+              :class="{ 'is-pulsing': button.effect === 'pulse' && !button.disabled }"
+              :style="menuButtonStyle"
+              :disabled="button.disabled"
+              type="button"
+              @click="clickToolbarButton(button)"
+            >
+              <span>{{ button.text }}</span>
+            </button>
+          </div>
+        </div>
         <p
           v-if="recordHasPendingMoves"
           class="record-message"
@@ -431,7 +446,17 @@ watch(recordPanelOpen, syncGameViewportInsets)
           @click.stop
         >
           <button
-            v-for="button in secondaryButtons"
+            class="game-button"
+            :class="{ 'is-open': recordPanelOpen }"
+            :style="menuButtonStyle"
+            type="button"
+            :aria-expanded="recordPanelOpen"
+            @click="clickRecordMenuButton"
+          >
+            <span>Record</span>
+          </button>
+          <button
+            v-for="button in menuButtons"
             :key="button.id"
             class="game-button"
             :class="{ 'is-pulsing': button.effect === 'pulse' && !button.disabled }"
@@ -605,13 +630,32 @@ canvas {
   pointer-events: auto;
 }
 
-.record-title {
+.record-header-bar {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--button-content-gap) * 1.5);
+}
+
+.record-title {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
   color: var(--button-text-color);
   font-size: var(--button-font-size);
   font-weight: 400;
   line-height: 1;
+}
+
+.record-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: calc(var(--button-content-gap) * 0.75);
+}
+
+.record-header-button {
+  flex: 0 0 auto;
 }
 
 .record-message {
@@ -848,6 +892,16 @@ canvas {
 
 .dialog-button {
   width: var(--secondary-button-width);
+}
+
+.record-header-actions .record-header-button {
+  width: auto;
+  min-width: 58px;
+  height: 28px;
+  padding: 0 8px;
+  border-width: 2px;
+  border-radius: 14px;
+  font-size: 14px;
 }
 
 .game-button:not(:disabled):hover,
