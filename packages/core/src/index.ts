@@ -1012,7 +1012,222 @@ export namespace Multiverse {
     multiverse.lastMove = move
   })
 
-  export const applyAction = (action: Action, player: Player, multiverseOld: Multiverse) => (
-    action.moves.reduce((multiverse, move, index) => applyMove(move, player, multiverse, index), multiverseOld)
+  export const applyAction = (action: Action, player: Player, multiverseOld: Multiverse, orderBase = 0) => (
+    action.moves.reduce((multiverse, move, index) => applyMove(move, player, multiverse, orderBase + index), multiverseOld)
   )
+}
+
+export interface GameState {
+  actions: Action[]
+  multiverseCommitted: Multiverse
+  multiverse: Multiverse
+  player: Player
+  actionIndex: number
+  pendingMoves: Move[]
+}
+
+export namespace GameState {
+  export const MOVE_ORDER_STRIDE = 1000000
+
+  export const create = (actions: Action[] = [], pendingMoves: Move[] = []): GameState => {
+    let multiverseCommitted = Multiverse.createInitial()
+    let player = Player.W
+
+    actions.forEach((action, actionIndex) => {
+      multiverseCommitted = applyMoves(
+        action.moves,
+        `action ${actionIndex + 1}`,
+        player,
+        multiverseCommitted,
+        actionIndex * MOVE_ORDER_STRIDE,
+      )
+      if (! hasSubmittedPresentMoves(multiverseCommitted, player)) {
+        throw new Error(`5dpgn action ${actionIndex + 1} does not submit the present`)
+      }
+      player = Players.opponent(player)
+    })
+
+    const multiverse = applyMoves(
+      pendingMoves,
+      'pending move',
+      player,
+      multiverseCommitted,
+      actions.length * MOVE_ORDER_STRIDE,
+    )
+
+    return {
+      actions,
+      multiverseCommitted,
+      multiverse,
+      player,
+      actionIndex: actions.length,
+      pendingMoves,
+    }
+  }
+
+  export const extractActions = (multiverse: Multiverse): Action[] => {
+    const byAction = new Map<number, Map<number, Move>>()
+    let fallbackOrder = 0
+
+    for (const [, line] of Multiverse.getLineEntries(multiverse)) {
+      if (! line) continue
+
+      for (const [, board] of Line.getBoardEntries(line)) {
+        if (! board?.createdBy) continue
+        if (board.createdByRole !== 'both' && board.createdByRole !== 'target') continue
+
+        const order = board.createdByOrder ?? fallbackOrder ++
+        const actionIndex = Math.floor(order / MOVE_ORDER_STRIDE)
+        const moveIndex = order % MOVE_ORDER_STRIDE
+        const moves = byAction.get(actionIndex) ?? new Map<number, Move>()
+        moves.set(moveIndex, board.createdBy)
+        byAction.set(actionIndex, moves)
+      }
+    }
+
+    return [...byAction.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, moves]) => ({
+        moves: [...moves.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([, move]) => move),
+      }))
+  }
+
+  export const hasSubmittedPresentMoves = (multiverse: Multiverse, player: Player): boolean => {
+    const present = Multiverse.getPresent(multiverse, player)
+    return present !== null && Multiverse.getPresentPlayer(present) !== player
+  }
+
+  const applyMoves = (
+    moves: Move[],
+    label: string,
+    player: Player,
+    multiverseOld: Multiverse,
+    orderBase: number,
+  ): Multiverse => (
+    moves.reduce((multiverse, move, index) => {
+      assertLegalMove(multiverse, move, player, `${label}, move ${index + 1}`)
+      return Multiverse.applyMove(move, player, multiverse, orderBase + index)
+    }, multiverseOld)
+  )
+
+  const assertLegalMove = (
+    multiverse: Multiverse,
+    move: Move,
+    player: Player,
+    label: string,
+  ): void => {
+    const targets = Multiverse.getMoveTargets(multiverse, move.from, player)
+    if (targets.some(target => Coord.isSameBoard(target, move.to) && Coord.isSameSpace(target, move.to))) return
+    throw new Error(`Illegal 5dpgn move in ${label}: ${formatCoord(move.from)} to ${formatCoord(move.to)}`)
+  }
+
+  const formatCoord = ({ l, t, x, y }: Coord): string => `(${l}T${t})${String.fromCharCode(97 + x)}${8 - y}`
+}
+
+export namespace FiveDPGN {
+  const FILES = 'abcdefgh'
+  const MOVE_RE = /\(([+-]?\d+)T([+-]?\d+)\)[A-Z]?([a-h])([1-8])x?(?:>{1,2})?(?:x?\(([+-]?\d+)T([+-]?\d+)\))?x?([a-h])([1-8])(?:=[A-Z])?(?:[+#*~]|!!|!\?|!\?|!|\?\?|\?)*\s*/y
+  const ACTION_RE = /(?:\d+[wb]?\.|\/)\s*((?:(?!\d+[wb]?\.|\/\s).)+)/gs
+
+  export const exportGameState = ({ actions }: Pick<GameState, 'actions'>): string => {
+    const lines = [
+      '[Board "Standard"]',
+      '',
+      ...actions.map((action, index) => `${getTurnSerial(index)} ${action.moves.map(formatMove).join(' ')}`),
+    ]
+    return `${lines.join('\n').trim()}\n`
+  }
+
+  export const importGameState = (input: string): GameState => {
+    const actions = parseActions(input)
+    return GameState.create(actions)
+  }
+
+  const parseActions = (input: string): Action[] => {
+    const body = stripHeadersAndComments(input)
+    assertSupportedBody(body)
+    const actions: Action[] = []
+
+    for (const match of body.matchAll(ACTION_RE)) {
+      const moves = parseMoves(match[1])
+      if (moves.length > 0) actions.push({ moves })
+    }
+
+    if (actions.length === 0 && body.trim() !== '') {
+      const moves = parseMoves(body)
+      if (moves.length > 0) actions.push({ moves })
+    }
+
+    return actions
+  }
+
+  const parseMoves = (input: string): Move[] => {
+    const moves: Move[] = []
+    let cursor = 0
+
+    while (cursor < input.length) {
+      if (/\s/.test(input[cursor])) {
+        cursor += 1
+        continue
+      }
+
+      MOVE_RE.lastIndex = cursor
+      const match = MOVE_RE.exec(input)
+      if (! match) {
+        throw new Error(`Unsupported 5dpgn move near "${input.slice(cursor, cursor + 24).trim()}"`)
+      }
+      const from = {
+        l: Number(match[1]),
+        t: Number(match[2]),
+        ...parseSquare(match[3], match[4]),
+      }
+      const to = {
+        l: match[5] === undefined ? from.l : Number(match[5]),
+        t: match[6] === undefined ? from.t : Number(match[6]),
+        ...parseSquare(match[7], match[8]),
+      }
+      moves.push({ from, to })
+      cursor = MOVE_RE.lastIndex
+    }
+
+    return moves
+  }
+
+  const assertSupportedBody = (body: string): void => {
+    const withoutAbsoluteBoards = body.replace(/\([+-]?\d+T[+-]?\d+\)/g, '')
+    if (! /[()$]/.test(withoutAbsoluteBoards)) return
+    throw new Error('Unsupported 5dpgn syntax: variations, relative boards, and timeline comments are not supported yet')
+  }
+
+  const stripHeadersAndComments = (input: string): string => (
+    input
+      .replace(/^\s*\[[^\]\n]*]\s*$/gm, '')
+      .replace(/\{[^{}]*}/g, ' ')
+  )
+
+  const parseSquare = (file: string, rank: string): CoordSpacelike => ({
+    x: FILES.indexOf(file),
+    y: 8 - Number(rank),
+  })
+
+  const formatMove = ({ from, to }: Move): string => {
+    const fromBoard = formatBoard(from)
+    const fromSquare = formatSquare(from)
+    const toSquare = formatSquare(to)
+    return Coord.isSameBoard(from, to)
+      ? `${fromBoard}${fromSquare}${toSquare}`
+      : `${fromBoard}${fromSquare}${formatBoard(to)}${toSquare}`
+  }
+
+  const formatBoard = ({ l, t }: CoordTimelike): string => `(${l}T${t})`
+
+  const formatSquare = ({ x, y }: CoordSpacelike): string => `${FILES[x]}${8 - y}`
+
+  const getTurnSerial = (actionIndex: number): string => {
+    const turn = Math.floor(actionIndex / 2) + 1
+    const player = actionIndex % 2 === 0 ? 'w' : 'b'
+    return `${turn}${player}.`
+  }
 }

@@ -1,4 +1,4 @@
-import { Board, Player, Players as CorePlayers, Coord, Line, Multiverse, Piece, Pieces, type CoordSpacelike, type Move } from '@5dcol/core'
+import { Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Multiverse, Piece, Pieces, type Action, type CoordSpacelike, type Move } from '@5dcol/core'
 import { Effect } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes, Animations } from '@engine/constant'
@@ -71,6 +71,7 @@ interface PendingMove {
 }
 interface StoredGameState {
   version: 1
+  actions?: Action[]
   multiverseCommitted: Multiverse
   multiverse: Multiverse
   player: Player
@@ -341,6 +342,7 @@ export class Game {
   private multiverse = this.multiverseCommitted
   private player: Player = Player.W
   private actionIndex = 0
+  private actions: Action[] = []
   private readonly pointer: PointerState = {
     screen: [0, 0],
     dragStartScreen: null,
@@ -398,15 +400,18 @@ export class Game {
         return false
       }
 
-      this.multiverseCommitted = state.multiverseCommitted
-      this.player = state.player
-      this.actionIndex = state.actionIndex
+      const actions = state.actions ?? CoreGameState.extractActions(state.multiverseCommitted)
+      const pendingMoveMoves = state.pendingMoves.map(pendingMove => pendingMove.move)
+      const coreState = CoreGameState.create(actions, pendingMoveMoves)
+
+      this.multiverseCommitted = coreState.multiverseCommitted
+      this.player = coreState.player
+      this.actionIndex = coreState.actionIndex
+      this.actions = coreState.actions
       this.fillMissingMoveOrders(this.multiverseCommitted, this.getCommittedMoveOrderBase())
-      this.pendingMoves = state.pendingMoves.map((pendingMove, index) => ({
-        ...pendingMove,
-        order: pendingMove.order ?? this.getMoveOrder(index),
-      }))
-      this.multiverse = this.replayPendingMoves()
+      const preview = this.createPendingMoves(pendingMoveMoves)
+      this.pendingMoves = preview.pendingMoves
+      this.multiverse = preview.multiverse
       this.pendingMove = this.pendingMoves.at(-1) ?? null
       this.moveAnimation = null
       this.submitRequestedDuringMoveAnimation = false
@@ -425,6 +430,7 @@ export class Game {
 
     const state: StoredGameState = {
       version: 1,
+      actions: this.actions,
       multiverseCommitted: this.multiverseCommitted,
       multiverse: this.multiverse,
       player: this.player,
@@ -444,6 +450,7 @@ export class Game {
     return state.version === 1
       && this.isMultiverseLike(state.multiverseCommitted)
       && this.isMultiverseLike(state.multiverse)
+      && (state.actions === undefined || Array.isArray(state.actions))
       && (state.player === Player.W || state.player === Player.B)
       && typeof state.actionIndex === 'number'
       && Array.isArray(state.pendingMoves)
@@ -485,6 +492,7 @@ export class Game {
     this.multiverse = this.multiverseCommitted
     this.player = Player.W
     this.actionIndex = 0
+    this.actions = []
     this.selectedPiece = null
     this.hoverSquare = null
     this.hoverPiece = null
@@ -822,6 +830,20 @@ export class Game {
     const gap = Sizes.ButtonContentGap * 2
     const leftX = (widthCss - Sizes.ButtonWidth * 2 - gap) / 2
     const rightX = leftX + Sizes.ButtonWidth + gap
+    const importRect: ScreenRect = [
+      [
+        widthCss - Sizes.RestartButtonWidth * 3 - gap * 2 - Sizes.ButtonTop,
+        heightCss - Sizes.ButtonHeight - Sizes.ButtonTop,
+      ],
+      [Sizes.RestartButtonWidth, Sizes.ButtonHeight],
+    ]
+    const exportRect: ScreenRect = [
+      [
+        widthCss - Sizes.RestartButtonWidth * 2 - gap - Sizes.ButtonTop,
+        heightCss - Sizes.ButtonHeight - Sizes.ButtonTop,
+      ],
+      [Sizes.RestartButtonWidth, Sizes.ButtonHeight],
+    ]
     const restartRect: ScreenRect = [
       [
         widthCss - Sizes.RestartButtonWidth - Sizes.ButtonTop,
@@ -869,6 +891,30 @@ export class Game {
         effect: 'pulse',
         onClick: () => {
           this.submitMoves()
+        },
+      },
+      {
+        id: 'import-5dpgn',
+        rect: importRect,
+        disabled: this.isMoveAnimating(),
+        colorPreset: ButtonColors.Board,
+        turnPlayer: this.player,
+        text: 'Import',
+        piece: null,
+        onClick: () => {
+          this.importFiveDPGN()
+        },
+      },
+      {
+        id: 'export-5dpgn',
+        rect: exportRect,
+        disabled: false,
+        colorPreset: ButtonColors.Board,
+        turnPlayer: this.player,
+        text: 'Export',
+        piece: null,
+        onClick: () => {
+          this.exportFiveDPGN()
         },
       },
       {
@@ -973,6 +1019,7 @@ export class Game {
   }
 
   private finalizeSubmitMoves() {
+    this.actions.push({ moves: this.pendingMoves.map(pendingMove => pendingMove.move) })
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
@@ -984,6 +1031,58 @@ export class Game {
     this.persistGameState()
   }
 
+  private importFiveDPGN() {
+    const input = window.prompt('Paste 5dpgn')
+    if (! input) return
+
+    try {
+      this.loadCoreGameState(FiveDPGN.importGameState(input))
+    }
+    catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to import 5dpgn')
+    }
+  }
+
+  private exportFiveDPGN() {
+    if (this.pendingMoves.length > 0) {
+      const confirmed = window.confirm('Pending moves are not exported. Export committed moves only?')
+      if (! confirmed) return
+    }
+
+    const text = FiveDPGN.exportGameState({ actions: this.actions })
+    const clipboard = navigator.clipboard
+    if (clipboard) {
+      clipboard.writeText(text)
+        .then(() => window.alert('5dpgn copied to clipboard'))
+        .catch(() => {
+          window.prompt('Copy 5dpgn', text)
+        })
+      return
+    }
+
+    window.prompt('Copy 5dpgn', text)
+  }
+
+  private loadCoreGameState(state: CoreGameState) {
+    this.actions = state.actions
+    this.multiverseCommitted = state.multiverseCommitted
+    this.multiverse = state.multiverse
+    this.player = state.player
+    this.actionIndex = state.actionIndex
+    this.selectedPiece = null
+    this.hoverSquare = null
+    this.hoverPiece = null
+    this.pendingMove = null
+    this.pendingMoves = []
+    this.moveAnimation = null
+    this.submitRequestedDuringMoveAnimation = false
+    this.cameraMotion = null
+    this.clearPointerDrag()
+    this.buttonControl.clearHover()
+    this.persistGameState()
+    this.focusCurrentPresent()
+  }
+
   private deselectPiece() {
     this.selectedPiece = null
   }
@@ -993,11 +1092,11 @@ export class Game {
   }
 
   private getMoveOrder(pendingMoveIndex: number): number {
-    return this.actionIndex * 1000000 + pendingMoveIndex
+    return this.actionIndex * CoreGameState.MOVE_ORDER_STRIDE + pendingMoveIndex
   }
 
   private getCommittedMoveOrderBase(): number {
-    return Math.max(0, this.actionIndex - 1) * 1000000
+    return Math.max(0, this.actionIndex - 1) * CoreGameState.MOVE_ORDER_STRIDE
   }
 
   private replayPendingMoves(): Multiverse {
@@ -1010,6 +1109,28 @@ export class Game {
       ),
       this.multiverseCommitted,
     )
+  }
+
+  private createPendingMoves(moves: Move[]): { pendingMoves: PendingMove[], multiverse: Multiverse } {
+    let multiverse = this.multiverseCommitted
+    const pendingMoves = moves.map((move, index): PendingMove => {
+      const order = this.getMoveOrder(index)
+      const pendingMove: PendingMove = {
+        move,
+        order,
+        multiverseBefore: multiverse,
+        is5D: ! Coord.isSameBoard(move.from, move.to),
+        from: {
+          l: move.from.l,
+          m: Coord.boardIndex(move.from, this.player),
+        },
+        created: Multiverse.getMoveArrivalBoardIndex(move, this.player, multiverse),
+      }
+      multiverse = Multiverse.applyMove(move, this.player, multiverse, order)
+      return pendingMove
+    })
+
+    return { pendingMoves, multiverse }
   }
 
   private fillMissingMoveOrders(multiverse: Multiverse, baseOrder: number) {
@@ -1114,9 +1235,7 @@ export class Game {
   }
 
   private hasSubmittedPresentMoves(): boolean {
-    const previewPresent = Multiverse.getPresent(this.multiverse, this.player)
-    if (! previewPresent) return false
-    return Multiverse.getPresentPlayer(previewPresent) !== this.player
+    return CoreGameState.hasSubmittedPresentMoves(this.multiverse, this.player)
   }
 
   private getPieceSelectionAtScreen(screen: Vec2): PieceSelection | null {
