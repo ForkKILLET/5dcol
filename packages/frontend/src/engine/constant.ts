@@ -60,6 +60,7 @@ export namespace Sizes {
   export const LineBranchRadius = (BoardWidth + BoardGap) / 2
   export const LineBranchWidth = LineArrowRadius * 2
   export const LineBranchCurveSamples = 8
+  export const LineBranchOverlapOffset = (LineBranchWidth + LineBorderWidth * 2) / 3
 
   export const LineShadowOffset: Vec2 = [-6, 5]
   export const BoardShadowOffset: Vec2 = [-13, 13]

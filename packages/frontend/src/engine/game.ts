@@ -123,6 +123,12 @@ interface LineBranchGeometry {
   bend2Control2: Vec2
   target: Vec2
 }
+interface LineBranchBaseGeometry {
+  baseBranchX: number
+  sourceY: number
+  targetY: number
+  order: number
+}
 
 type ScreenRect = [pos: Vec2, size: Vec2]
 
@@ -2233,7 +2239,7 @@ export class Game {
   }
 
   private renderLine(line: Line, l: number, alpha = 1, multiverse = this.multiverse) {
-    const branch = this.getLineBranchGeometry(line, l)
+    const branch = this.getLineBranchGeometry(multiverse, line, l)
     const order = this.getLineRenderOrder(line)
     const colors = this.getLineColors(multiverse, l)
     if (branch) {
@@ -2250,7 +2256,7 @@ export class Game {
     line: Line,
     l: number,
     alpha = 1,
-    branch = this.getLineBranchGeometry(line, l),
+    branch = this.getLineBranchGeometry(this.multiverse, line, l),
     order = this.getLineRenderOrder(line),
     colors = this.getLineColors(this.multiverse, l),
   ) {
@@ -2323,7 +2329,7 @@ export class Game {
   }
 
   private renderLineDuringMoveAnimation(line: Line, l: number, progress: number, multiverse = this.multiverse) {
-    const branch = this.getLineBranchGeometry(line, l)
+    const branch = this.getLineBranchGeometry(multiverse, line, l)
     const order = this.getLineRenderOrder(line)
     const colors = this.getLineColors(multiverse, l)
     this.renderLineStart(line, l, 1, branch, order, colors)
@@ -2469,41 +2475,6 @@ export class Game {
     })
   }
 
-  private getLineRenderOrder(line: Line): number {
-    const board = line.boards[line.mStart]
-    if (! board?.createdBy) return 0
-    if (board.createdByRole !== 'target') return 0
-    if (Coord.isSameBoard(board.createdBy.from, board.createdBy.to)) return 0
-    return board.createdByOrder ?? 0
-  }
-
-  private getLineColors(multiverse: Multiverse, l: number): LineColors {
-    if (! Multiverse.isInactiveLine(multiverse, l)) {
-      return {
-        border: Colors.PurpleDark,
-        fill: Colors.Purple,
-      }
-    }
-
-    switch (Multiverse.getLinePlayer(l)) {
-      case Player.W:
-        return {
-          border: Colors.InactiveLineWhiteBorder,
-          fill: Colors.BoardBorderWhiteDim,
-        }
-      case Player.B:
-        return {
-          border: Colors.BoardBorderBlack,
-          fill: Colors.BoardBorderBlackDim,
-        }
-      case null:
-        return {
-          border: Colors.PurpleDark,
-          fill: Colors.Purple,
-        }
-    }
-  }
-
   private renderLineBranchStroke(
     geometry: LineBranchGeometry,
     {
@@ -2580,19 +2551,13 @@ export class Game {
     })
   }
 
-  private getLineBranchGeometry(line: Line, l: number): LineBranchGeometry | null {
-    const board = line.boards[line.mStart]
-    if (! board?.createdBy || board.createdByPlayer === null) return null
-    if (board.createdByRole !== 'target') return null
-    if (Coord.isSameBoard(board.createdBy.from, board.createdBy.to)) return null
-    if (board.createdBy.to.l === l) return null
+  private getLineBranchGeometry(multiverse: Multiverse, line: Line, l: number): LineBranchGeometry | null {
+    const base = this.getLineBranchBaseGeometry(line, l)
+    if (! base) return null
 
-    const step = Sizes.BoardWidth + Sizes.BoardGap
-    const branchX = Coord.boardIndex(board.createdBy.to, board.createdByPlayer) * step
-      + Sizes.BoardWidth
-      + Sizes.BoardGap / 2
-    const sourceY = this.getLineY(board.createdBy.to.l)
-    const targetY = this.getLineY(l)
+    const offsetIndex = this.getLineBranchOverlapCount(multiverse, base)
+    const branchX = base.baseBranchX - offsetIndex * Sizes.LineBranchOverlapOffset
+    const { sourceY, targetY } = base
     const dy = targetY - sourceY
     if (dy === 0) return null
 
@@ -2618,6 +2583,87 @@ export class Game {
       bend2Control1: [branchX, targetY - direction * radius * (1 - k)],
       bend2Control2: [target[0] - radius * k, targetY],
       target,
+    }
+  }
+
+  private getLineBranchBaseGeometry(line: Line, l: number): LineBranchBaseGeometry | null {
+    const board = line.boards[line.mStart]
+    if (! board?.createdBy || board.createdByPlayer === null) return null
+    if (board.createdByRole !== 'target') return null
+    if (Coord.isSameBoard(board.createdBy.from, board.createdBy.to)) return null
+    if (board.createdBy.to.l === l) return null
+
+    const step = Sizes.BoardWidth + Sizes.BoardGap
+    const baseBranchX = Coord.boardIndex(board.createdBy.to, board.createdByPlayer) * step
+      + Sizes.BoardWidth
+      + Sizes.BoardGap / 2
+    const sourceY = this.getLineY(board.createdBy.to.l)
+    const targetY = this.getLineY(l)
+    const dy = targetY - sourceY
+    if (dy === 0) return null
+
+    return {
+      baseBranchX,
+      sourceY,
+      targetY,
+      order: board.createdByOrder ?? 0,
+    }
+  }
+
+  private getLineBranchOverlapCount(multiverse: Multiverse, branch: LineBranchBaseGeometry): number {
+    let count = 0
+    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
+      if (! line) continue
+      const existing = this.getLineBranchBaseGeometry(line, l)
+      if (! existing) continue
+      if (existing.order >= branch.order) continue
+      if (existing.baseBranchX !== branch.baseBranchX) continue
+      if (! this.doLineBranchRangesOverlap(existing, branch)) continue
+      count += 1
+    }
+    return count
+  }
+
+  private doLineBranchRangesOverlap(a: LineBranchBaseGeometry, b: LineBranchBaseGeometry): boolean {
+    const aMin = Math.min(a.sourceY, a.targetY)
+    const aMax = Math.max(a.sourceY, a.targetY)
+    const bMin = Math.min(b.sourceY, b.targetY)
+    const bMax = Math.max(b.sourceY, b.targetY)
+    return aMin < bMax && bMin < aMax
+  }
+
+  private getLineRenderOrder(line: Line): number {
+    const board = line.boards[line.mStart]
+    if (! board?.createdBy) return 0
+    if (board.createdByRole !== 'target') return 0
+    if (Coord.isSameBoard(board.createdBy.from, board.createdBy.to)) return 0
+    return board.createdByOrder ?? 0
+  }
+
+  private getLineColors(multiverse: Multiverse, l: number): LineColors {
+    if (! Multiverse.isInactiveLine(multiverse, l)) {
+      return {
+        border: Colors.PurpleDark,
+        fill: Colors.Purple,
+      }
+    }
+
+    switch (Multiverse.getLinePlayer(l)) {
+      case Player.W:
+        return {
+          border: Colors.InactiveLineWhiteBorder,
+          fill: Colors.BoardBorderWhiteDim,
+        }
+      case Player.B:
+        return {
+          border: Colors.BoardBorderBlack,
+          fill: Colors.BoardBorderBlackDim,
+        }
+      case null:
+        return {
+          border: Colors.PurpleDark,
+          fill: Colors.Purple,
+        }
     }
   }
 
