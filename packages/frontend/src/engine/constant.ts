@@ -141,6 +141,8 @@ export namespace Colors {
   export const ButtonTextInverted = Color4.fromRgba(244, 245, 237, 1)
   export const ButtonDisabledText = Color4.fromRgba(188, 188, 188, 1)
   export const ButtonDisabledTextInverted = Color4.fromRgba(248, 249, 244, 1)
+
+  export const OverlayMask = Color4.fromRgba(39, 39, 39, 0.38)
 }
 
 export namespace Animations {
@@ -189,8 +191,8 @@ export namespace ButtonColors {
   }
 
   export const White: ButtonColorPreset = {
-    border: Color4.fromRgba(249, 250, 246, 1),
-    fill: Color4.fromRgba(241, 241, 236, 1),
+    border: Color4.fromRgba(244, 245, 237, 1),
+    fill: Color4.fromRgba(225, 226, 216, 1),
     text: Colors.ButtonText,
   }
 

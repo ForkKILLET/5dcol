@@ -11,6 +11,13 @@ export interface GameConfig {
   logger: Logger
   renderer: Renderer
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
+  onImportRequest?: () => void
+  onExportRequest?: (request: GameExportRequest) => void
+}
+
+export interface GameExportRequest {
+  text: string
+  hasPendingMoves: boolean
 }
 
 interface PointerState {
@@ -213,6 +220,7 @@ export class Game {
   private moveAnimation: MoveAnimation | null = null
   private submitRequestedDuringMoveAnimation = false
   private toolbarSignature = ''
+  private gameInputDisabled = false
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -235,6 +243,17 @@ export class Game {
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame)
     this.renderer.dispose()
     this.disposed = true
+  }
+
+  public setGameInputDisabled(disabled: boolean) {
+    if (this.gameInputDisabled === disabled) return
+
+    this.gameInputDisabled = disabled
+    if (! disabled) return
+
+    this.hoverSquare = null
+    this.hoverPiece = null
+    this.clearPointerDrag()
   }
 
   private collect(effect: Effect) {
@@ -368,6 +387,7 @@ export class Game {
     }))
 
     this.collect(Effect.useListener(window, 'mousemove', e => {
+      if (this.gameInputDisabled) return
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
       this.updatePointerDragExceeded(screen)
@@ -375,6 +395,7 @@ export class Game {
     }))
 
     this.collect(Effect.useListener(window, 'mousedown', e => {
+      if (this.gameInputDisabled) return
       if (e.button !== 0) return
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
@@ -384,6 +405,11 @@ export class Game {
     }))
 
     this.collect(Effect.useListener(window, 'mouseup', e => {
+      if (this.gameInputDisabled) {
+        this.clearPointerDrag()
+        return
+      }
+
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
       if (! this.pointer.dragExceeded) this.handleBoardClick(screen)
@@ -399,6 +425,7 @@ export class Game {
     }))
 
     this.collect(Effect.useListener(window, 'contextmenu', e => {
+      if (this.gameInputDisabled) return
       e.preventDefault()
       if (! this.isMoveAnimating()) this.deselectPiece()
       this.clearPointerDrag()
@@ -409,6 +436,7 @@ export class Game {
     }))
 
     this.collect(Effect.useListener(window, 'wheel', e => {
+      if (this.gameInputDisabled) return
       e.preventDefault()
       this.zoomCameraByStep(- Math.sign(e.deltaY) * CameraControl.WheelZoomStep)
     }, { passive: false }))
@@ -446,7 +474,7 @@ export class Game {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
-    if (e.repeat || isTextInputEvent(e)) return
+    if (this.gameInputDisabled || e.repeat || isTextInputEvent(e)) return
 
     switch (e.key) {
       case 'z':
@@ -717,28 +745,6 @@ export class Game {
         },
       },
       {
-        id: 'import-5dpgn',
-        disabled: this.isMoveAnimating(),
-        colorPreset: this.getPlayerButtonColor(),
-        turnPlayer: this.player,
-        text: 'Import',
-        piece: null,
-        onClick: () => {
-          this.importFiveDPGN()
-        },
-      },
-      {
-        id: 'export-5dpgn',
-        disabled: false,
-        colorPreset: this.getPlayerButtonColor(),
-        turnPlayer: this.player,
-        text: 'Export',
-        piece: null,
-        onClick: () => {
-          this.exportFiveDPGN()
-        },
-      },
-      {
         id: 'restart-game',
         disabled: false,
         colorPreset: this.getPlayerButtonColor(),
@@ -749,16 +755,43 @@ export class Game {
           this.restartGame()
         },
       },
+      {
+        id: 'import-5dpgn',
+        disabled: this.isMoveAnimating(),
+        colorPreset: this.getPlayerButtonColor(),
+        turnPlayer: this.player,
+        text: 'Import',
+        piece: null,
+        onClick: () => {
+          this.requestImportFiveDPGN()
+        },
+      },
+      {
+        id: 'export-5dpgn',
+        disabled: false,
+        colorPreset: this.getPlayerButtonColor(),
+        turnPlayer: this.player,
+        text: 'Export',
+        piece: null,
+        onClick: () => {
+          this.requestExportFiveDPGN()
+        },
+      },
     ]
   }
 
   public clickToolbarButton(id: string): boolean {
     const button = this.getToolbarButtons().find(button => button.id === id)
     if (! button) return false
+    if (this.gameInputDisabled && this.isPrimaryGameToolbarButton(id)) return true
     if (button.disabled) return true
     button.onClick()
     this.syncToolbarButtons()
     return true
+  }
+
+  private isPrimaryGameToolbarButton(id: string): boolean {
+    return id === 'undo-move' || id === 'deselect-piece' || id === 'submit-moves'
   }
 
   public getToolbarButtonViews(): GameToolbarButton[] {
@@ -910,36 +943,30 @@ export class Game {
     this.persistGameState()
   }
 
-  private importFiveDPGN() {
-    const input = window.prompt('Paste 5dpgn')
-    if (! input) return
-
+  public importFiveDPGNText(input: string): string | null {
     try {
       this.loadCoreGameState(FiveDPGN.importGameState(input))
+      this.syncToolbarButtons()
+      return null
     }
     catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Failed to import 5dpgn')
+      return error instanceof Error ? error.message : 'Failed to import 5dpgn'
     }
   }
 
-  private exportFiveDPGN() {
-    if (this.pendingMoves.length > 0) {
-      const confirmed = window.confirm('Pending moves are not exported. Export committed moves only?')
-      if (! confirmed) return
+  public getFiveDPGNExport(): GameExportRequest {
+    return {
+      text: FiveDPGN.exportGameState({ actions: this.actions }),
+      hasPendingMoves: this.pendingMoves.length > 0,
     }
+  }
 
-    const text = FiveDPGN.exportGameState({ actions: this.actions })
-    const clipboard = navigator.clipboard
-    if (clipboard) {
-      clipboard.writeText(text)
-        .then(() => window.alert('5dpgn copied to clipboard'))
-        .catch(() => {
-          window.prompt('Copy 5dpgn', text)
-        })
-      return
-    }
+  private requestImportFiveDPGN() {
+    this.config.onImportRequest?.()
+  }
 
-    window.prompt('Copy 5dpgn', text)
+  private requestExportFiveDPGN() {
+    this.config.onExportRequest?.(this.getFiveDPGNExport())
   }
 
   private loadCoreGameState(state: CoreGameState) {

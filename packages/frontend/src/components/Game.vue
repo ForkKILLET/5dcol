@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
 
 import { Color4 } from '@engine/basic'
-import { Animations, Colors, Sizes } from '@engine/constant'
-import { Game, type GameToolbarButton } from '@engine/game'
+import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
+import { Game, type GameExportRequest, type GameToolbarButton } from '@engine/game'
 import { Logger, type GameMessage } from '@engine/logger'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 
@@ -11,6 +11,13 @@ const canvas = useTemplateRef('canvas')
 
 const messages = reactive<GameMessage[]>([])
 const toolbarButtons = ref<GameToolbarButton[]>([])
+const secondaryMenuOpen = ref(false)
+const dialogMode = ref<'none' | 'import' | 'export'>('none')
+const importText = ref('')
+const importError = ref('')
+const exportText = ref('')
+const exportHasPendingMoves = ref(false)
+const exportCopyStatus = ref('')
 const logger = new Logger(messages)
 let game: Game | null = null
 
@@ -23,9 +30,14 @@ const primaryButtons = computed(() => (
 const secondaryButtons = computed(() => (
   toolbarButtons.value.filter(button => ! primaryButtonIds.has(button.id))
 ))
+const uiOverlayOpen = computed(() => (
+  secondaryMenuOpen.value || dialogMode.value !== 'none'
+))
+const menuButtonStyle = computed(() => getPresetButtonStyle(ButtonColors.White))
 const uiStyle = computed(() => ({
   '--button-width': `${Sizes.ButtonWidth}px`,
   '--secondary-button-width': `${Sizes.RestartButtonWidth}px`,
+  '--button-circle-size': `${Sizes.ButtonHeight}px`,
   '--button-height': `${Sizes.ButtonHeight}px`,
   '--button-top': `${Sizes.ButtonTop}px`,
   '--button-shadow-offset': `${Sizes.ButtonShadowOffset}px`,
@@ -35,7 +47,38 @@ const uiStyle = computed(() => ({
   '--button-content-gap': `${Sizes.ButtonContentGap}px`,
   '--button-shadow-color': Color4.toRgbaString(Colors.Shadow),
   '--button-pulse-duration': `${Animations.PulseEffectDuration * 2}ms`,
+  '--overlay-mask-color': Color4.toRgbaString(Colors.OverlayMask),
+  '--menu-card-border-color': Color4.toRgbaString(ButtonColors.White.border),
+  '--menu-card-fill-color': Color4.toRgbaString(ButtonColors.White.fill),
 }))
+
+function getPresetButtonStyle(
+  preset: ButtonColorPreset,
+  hoverPreset: ButtonColorPreset = ButtonColors.GreenWhite,
+) {
+  const colors = {
+    border: Color4.toRgbaString(preset.border),
+    fill: Color4.toRgbaString(preset.fill),
+    text: Color4.toRgbaString(preset.text),
+  }
+  const hoverColors = {
+    border: Color4.toRgbaString(hoverPreset.border),
+    fill: Color4.toRgbaString(hoverPreset.fill),
+    text: Color4.toRgbaString(hoverPreset.text),
+  }
+
+  return {
+    '--button-border-color': colors.border,
+    '--button-fill-color': colors.fill,
+    '--button-text-color': colors.text,
+    '--button-hover-border-color': hoverColors.border,
+    '--button-hover-fill-color': hoverColors.fill,
+    '--button-hover-text-color': hoverColors.text,
+    '--button-pulse-border-color': hoverColors.border,
+    '--button-pulse-fill-color': hoverColors.fill,
+    '--button-pulse-text-color': hoverColors.text,
+  }
+}
 
 function getButtonStyle(button: GameToolbarButton) {
   return {
@@ -52,7 +95,80 @@ function getButtonStyle(button: GameToolbarButton) {
 }
 
 function clickToolbarButton(button: GameToolbarButton) {
+  if (button.disabled) return
   game?.clickToolbarButton(button.id)
+  secondaryMenuOpen.value = false
+}
+
+function toggleSecondaryMenu() {
+  if (secondaryButtons.value.length === 0) return
+  secondaryMenuOpen.value = ! secondaryMenuOpen.value
+}
+
+function closeSecondaryMenu() {
+  secondaryMenuOpen.value = false
+}
+
+function openImportDialog() {
+  secondaryMenuOpen.value = false
+  importText.value = ''
+  importError.value = ''
+  dialogMode.value = 'import'
+}
+
+function openExportDialog(request: GameExportRequest) {
+  secondaryMenuOpen.value = false
+  exportText.value = request.text
+  exportHasPendingMoves.value = request.hasPendingMoves
+  exportCopyStatus.value = ''
+  dialogMode.value = 'export'
+}
+
+function closeDialog() {
+  dialogMode.value = 'none'
+  importError.value = ''
+  exportCopyStatus.value = ''
+}
+
+function syncGameInputState() {
+  game?.setGameInputDisabled(uiOverlayOpen.value)
+}
+
+function submitImportDialog() {
+  const text = importText.value.trim()
+  if (! text) return
+
+  const error = game?.importFiveDPGNText(text)
+  if (error) {
+    importError.value = error
+    return
+  }
+
+  closeDialog()
+}
+
+async function copyExportText() {
+  exportCopyStatus.value = ''
+  try {
+    await navigator.clipboard.writeText(exportText.value)
+    exportCopyStatus.value = 'Copied'
+  }
+  catch {
+    exportCopyStatus.value = 'Select the text and copy it manually'
+  }
+}
+
+function handleWindowKeyDown(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return
+  if (dialogMode.value !== 'none') {
+    e.preventDefault()
+    closeDialog()
+    return
+  }
+  if (secondaryButtons.value.length === 0) return
+
+  e.preventDefault()
+  toggleSecondaryMenu()
 }
 
 async function init() {
@@ -65,7 +181,10 @@ async function init() {
       onToolbarChange: buttons => {
         toolbarButtons.value = buttons
       },
+      onImportRequest: openImportDialog,
+      onExportRequest: openExportDialog,
     })
+    syncGameInputState()
     game.start()
   }
   catch (err) {
@@ -74,8 +193,16 @@ async function init() {
   }
 }
 
-onMounted(init)
-onUnmounted(() => game?.dispose())
+onMounted(() => {
+  window.addEventListener('keydown', handleWindowKeyDown)
+  void init()
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleWindowKeyDown)
+  game?.dispose()
+})
+
+watch(uiOverlayOpen, syncGameInputState)
 </script>
 
 <template>
@@ -114,26 +241,142 @@ onUnmounted(() => game?.dispose())
         </button>
       </div>
 
-      <div class="toolbar toolbar-secondary">
+      <div
+        v-if="secondaryButtons.length > 0"
+        class="toolbar toolbar-secondary"
+      >
         <button
-          v-for="button in secondaryButtons"
-          :key="button.id"
-          class="game-button"
-          :class="{ 'is-pulsing': button.effect === 'pulse' && !button.disabled }"
-          :style="getButtonStyle(button)"
-          :disabled="button.disabled"
+          class="game-button game-button--circle"
+          :style="menuButtonStyle"
           type="button"
-          @click="clickToolbarButton(button)"
+          aria-label="Open menu"
+          :aria-expanded="secondaryMenuOpen"
+          @click="toggleSecondaryMenu"
         >
-          <span>{{ button.text }}</span>
-          <img
-            v-if="button.pieceImageUrl"
-            class="piece-icon"
-            :src="button.pieceImageUrl"
-            alt=""
-            draggable="false"
-          >
+          <span>...</span>
         </button>
+      </div>
+
+      <div
+        v-if="secondaryMenuOpen"
+        class="menu-backdrop"
+        @click="closeSecondaryMenu"
+      >
+        <div
+          class="secondary-menu-card"
+          @click.stop
+        >
+          <button
+            v-for="button in secondaryButtons"
+            :key="button.id"
+            class="game-button"
+            :class="{ 'is-pulsing': button.effect === 'pulse' && !button.disabled }"
+            :style="menuButtonStyle"
+            :disabled="button.disabled"
+            type="button"
+            @click="clickToolbarButton(button)"
+          >
+            <span>{{ button.text }}</span>
+            <img
+              v-if="button.pieceImageUrl"
+              class="piece-icon"
+              :src="button.pieceImageUrl"
+              alt=""
+              draggable="false"
+            >
+          </button>
+        </div>
+      </div>
+
+      <div
+        v-if="dialogMode !== 'none'"
+        class="dialog-backdrop"
+        @click="closeDialog"
+      >
+        <div
+          v-if="dialogMode === 'import'"
+          class="dialog-card"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">Import 5dpgn</h2>
+          <textarea
+            v-model="importText"
+            class="dialog-textarea"
+            spellcheck="false"
+            autofocus
+          ></textarea>
+          <p
+            v-if="importError"
+            class="dialog-message dialog-message-error"
+          >
+            {{ importError }}
+          </p>
+          <div class="dialog-actions">
+            <button
+              class="game-button dialog-button"
+              :style="menuButtonStyle"
+              type="button"
+              @click="closeDialog"
+            >
+              <span>Cancel</span>
+            </button>
+            <button
+              class="game-button dialog-button"
+              :style="menuButtonStyle"
+              :disabled="importText.trim().length === 0"
+              type="button"
+              @click="submitImportDialog"
+            >
+              <span>Import</span>
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else
+          class="dialog-card"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">Export 5dpgn</h2>
+          <p
+            v-if="exportHasPendingMoves"
+            class="dialog-message"
+          >
+            Pending moves are not exported.
+          </p>
+          <textarea
+            v-model="exportText"
+            class="dialog-textarea"
+            readonly
+            spellcheck="false"
+          ></textarea>
+          <p
+            v-if="exportCopyStatus"
+            class="dialog-message"
+          >
+            {{ exportCopyStatus }}
+          </p>
+          <div class="dialog-actions">
+            <button
+              class="game-button dialog-button"
+              :style="menuButtonStyle"
+              type="button"
+              @click="copyExportText"
+            >
+              <span>Copy</span>
+            </button>
+            <button
+              class="game-button dialog-button"
+              :style="menuButtonStyle"
+              type="button"
+              @click="closeDialog"
+            >
+              <span>Close</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -180,6 +423,96 @@ canvas {
   bottom: var(--button-top);
 }
 
+.menu-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay-mask-color);
+  pointer-events: auto;
+}
+
+.dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--overlay-mask-color);
+  pointer-events: auto;
+}
+
+.secondary-menu-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 2);
+  padding: calc(var(--button-content-gap) * 5);
+  border: var(--button-border) solid var(--menu-card-border-color);
+  border-radius: 8px;
+  background: var(--menu-card-fill-color);
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+.dialog-card {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 2);
+  width: min(720px, calc(100vw - var(--button-top) * 4));
+  padding: calc(var(--button-content-gap) * 5);
+  border: var(--button-border) solid var(--menu-card-border-color);
+  border-radius: 8px;
+  background: var(--menu-card-fill-color);
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
+  pointer-events: auto;
+}
+
+.dialog-title {
+  margin: 0;
+  color: var(--button-text-color);
+  font-size: var(--button-font-size);
+  font-weight: 400;
+  line-height: 1;
+}
+
+.dialog-textarea {
+  min-height: 220px;
+  padding: calc(var(--button-content-gap) * 2);
+  border: var(--button-border) solid var(--button-border-color);
+  border-radius: 8px;
+  background: var(--button-fill-color);
+  color: var(--button-text-color);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1.35;
+  outline: none;
+  resize: vertical;
+}
+
+.dialog-textarea:focus {
+  border-color: var(--button-hover-border-color);
+  background: var(--button-hover-fill-color);
+  color: var(--button-hover-text-color);
+}
+
+.dialog-message {
+  margin: 0;
+  color: var(--button-text-color);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.dialog-message-error {
+  color: #9b3a32;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--button-content-gap) * 2);
+}
+
 .game-button {
   display: inline-flex;
   align-items: center;
@@ -203,6 +536,21 @@ canvas {
 }
 
 .toolbar-secondary .game-button {
+  width: var(--secondary-button-width);
+}
+
+.game-button.game-button--circle {
+  width: var(--button-circle-size);
+  min-width: var(--button-circle-size);
+  padding: 0;
+  border-radius: 50%;
+}
+
+.secondary-menu-card .game-button {
+  width: var(--secondary-button-width);
+}
+
+.dialog-button {
   width: var(--secondary-button-width);
 }
 
