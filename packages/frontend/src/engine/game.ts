@@ -2234,27 +2234,35 @@ export class Game {
 
   private renderLine(line: Line, l: number, alpha = 1, multiverse = this.multiverse) {
     const branch = this.getLineBranchGeometry(line, l)
+    const order = this.getLineRenderOrder(line)
     const colors = this.getLineColors(multiverse, l)
     if (branch) {
-      this.renderLineBranchArrow(line, l, branch, alpha, colors)
+      this.renderLineBranchArrow(line, l, branch, alpha, order, colors)
       return
     }
 
-    this.renderLineStart(line, l, alpha, branch, colors)
+    this.renderLineStart(line, l, alpha, branch, order, colors)
     const points = this.getLinePoints(line, l)
-    this.renderLinePolygon(points, alpha, colors)
+    this.renderLinePolygon(points, alpha, order, colors)
   }
 
-  private renderLineStart(line: Line, l: number, alpha = 1, branch = this.getLineBranchGeometry(line, l), colors = this.getLineColors(this.multiverse, l)) {
+  private renderLineStart(
+    line: Line,
+    l: number,
+    alpha = 1,
+    branch = this.getLineBranchGeometry(line, l),
+    order = this.getLineRenderOrder(line),
+    colors = this.getLineColors(this.multiverse, l),
+  ) {
     if (branch) {
-      this.renderLineBranch(branch, alpha, colors)
+      this.renderLineBranch(branch, alpha, order, colors)
       return
     }
 
-    this.renderLineInitialStartSegment(line, l, alpha, colors)
+    this.renderLineInitialStartSegment(line, l, alpha, order, colors)
   }
 
-  private renderLineInitialStartSegment(line: Line, l: number, alpha: number, colors: LineColors) {
+  private renderLineInitialStartSegment(line: Line, l: number, alpha: number, order: number, colors: LineColors) {
     if (alpha <= 0) return
 
     const y = this.getLineY(l)
@@ -2270,6 +2278,7 @@ export class Game {
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.LineShadow,
+      order,
       points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
       fill: {
         type: 'linear-gradient',
@@ -2305,6 +2314,7 @@ export class Game {
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.Line,
+      order,
       points,
       fill,
       stroke,
@@ -2314,26 +2324,28 @@ export class Game {
 
   private renderLineDuringMoveAnimation(line: Line, l: number, progress: number, multiverse = this.multiverse) {
     const branch = this.getLineBranchGeometry(line, l)
+    const order = this.getLineRenderOrder(line)
     const colors = this.getLineColors(multiverse, l)
-    this.renderLineStart(line, l, 1, branch, colors)
+    this.renderLineStart(line, l, 1, branch, order, colors)
     const latestM = Line.getLatestBoardIndex(line)
     if (latestM === null) {
       return
     }
 
-    this.renderLineStableSegment(line, l, latestM, branch?.target[0], colors)
+    this.renderLineStableSegment(line, l, latestM, branch?.target[0], order, colors)
     const oldSegment = this.getLineLatestSegmentGeometry(latestM, l)
-    this.renderLinePolygon(oldSegment.points, 1 - progress, colors)
-    this.renderLineBridgeSegment(latestM, l, oldSegment.xStart, progress, colors)
-    this.renderLinePolygon(this.getMovingLineLatestSegmentPoints(latestM, l, progress), progress, colors)
+    this.renderLinePolygon(oldSegment.points, 1 - progress, order, colors)
+    this.renderLineBridgeSegment(latestM, l, oldSegment.xStart, progress, order, colors)
+    this.renderLinePolygon(this.getMovingLineLatestSegmentPoints(latestM, l, progress), progress, order, colors)
   }
 
-  private renderLinePolygon(points: Vec2[], alpha: number, colors: LineColors) {
+  private renderLinePolygon(points: Vec2[], alpha: number, order: number, colors: LineColors) {
     if (alpha <= 0) return
 
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.LineShadow,
+      order,
       points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
       fill: Color4.withAlpha(Colors.Shadow, alpha),
       stroke: null,
@@ -2342,6 +2354,7 @@ export class Game {
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.Line,
+      order,
       points,
       fill: Color4.withAlpha(colors.fill, alpha),
       stroke: Color4.withAlpha(colors.border, alpha),
@@ -2349,13 +2362,14 @@ export class Game {
     })
   }
 
-  private renderLineBranchArrow(line: Line, l: number, branch: LineBranchGeometry, alpha: number, colors: LineColors) {
+  private renderLineBranchArrow(line: Line, l: number, branch: LineBranchGeometry, alpha: number, order: number, colors: LineColors) {
     const points = this.getLineBranchArrowPoints(line, l, branch)
     if (points.length === 0 || alpha <= 0) return
 
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.LineShadow,
+      order,
       points: points.map(Vec2.curry.add(Sizes.LineShadowOffset)),
       fill: Color4.withAlpha(Colors.Shadow, alpha),
       stroke: null,
@@ -2364,6 +2378,7 @@ export class Game {
     this.renderer.submit({
       type: RenderItemType.Polygon,
       layer: RenderLayer.Line,
+      order,
       points,
       fill: Color4.withAlpha(colors.fill, alpha),
       stroke: Color4.withAlpha(colors.border, alpha),
@@ -2427,10 +2442,11 @@ export class Game {
     return points
   }
 
-  private renderLineBranch(geometry: LineBranchGeometry, alpha: number, colors: LineColors) {
+  private renderLineBranch(geometry: LineBranchGeometry, alpha: number, order: number, colors: LineColors) {
     this.renderLineBranchStroke(geometry, {
       alpha,
       layer: RenderLayer.LineShadow,
+      order,
       offset: Sizes.LineShadowOffset,
       stroke: Colors.Shadow,
       strokeWidth: Sizes.LineBranchWidth,
@@ -2438,6 +2454,7 @@ export class Game {
     this.renderLineBranchStroke(geometry, {
       alpha,
       layer: RenderLayer.Line,
+      order,
       offset: [0, 0],
       stroke: colors.border,
       strokeWidth: Sizes.LineBranchWidth + Sizes.LineBorderWidth * 2,
@@ -2445,10 +2462,19 @@ export class Game {
     this.renderLineBranchStroke(geometry, {
       alpha,
       layer: RenderLayer.Line,
+      order,
       offset: [0, 0],
       stroke: colors.fill,
       strokeWidth: Sizes.LineBranchWidth,
     })
+  }
+
+  private getLineRenderOrder(line: Line): number {
+    const board = line.boards[line.mStart]
+    if (! board?.createdBy) return 0
+    if (board.createdByRole !== 'target') return 0
+    if (Coord.isSameBoard(board.createdBy.from, board.createdBy.to)) return 0
+    return board.createdByOrder ?? 0
   }
 
   private getLineColors(multiverse: Multiverse, l: number): LineColors {
@@ -2483,12 +2509,14 @@ export class Game {
     {
       alpha,
       layer,
+      order,
       offset,
       stroke,
       strokeWidth,
     }: {
       alpha: number
       layer: RenderLayer
+      order: number
       offset: Vec2
       stroke: Color4
       strokeWidth: number
@@ -2505,6 +2533,7 @@ export class Game {
       layer,
       color,
       strokeWidth,
+      order,
     )
     this.renderLineCurve(
       addOffset(geometry.bend1End),
@@ -2514,6 +2543,7 @@ export class Game {
       layer,
       color,
       strokeWidth,
+      order,
     )
     this.renderLineCurve(
       addOffset(geometry.lineEnd),
@@ -2523,6 +2553,7 @@ export class Game {
       layer,
       color,
       strokeWidth,
+      order,
     )
   }
 
@@ -2534,10 +2565,12 @@ export class Game {
     layer: RenderLayer,
     stroke: Color4,
     strokeWidth: number,
+    order: number,
   ) {
     this.renderer.submit({
       type: RenderItemType.Curve,
       layer,
+      order,
       from,
       control1,
       control2,
@@ -2592,8 +2625,9 @@ export class Game {
     line: Line,
     l: number,
     latestM: number,
-    xStartOverride: number | undefined,
-    colors: LineColors,
+    xStartOverride?: number,
+    order = this.getLineRenderOrder(line),
+    colors = this.getLineColors(this.multiverse, l),
   ) {
     const y = this.getLineY(l)
     const xStart = xStartOverride ?? line.mStart * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
@@ -2605,10 +2639,10 @@ export class Game {
       [xEnd, y - Sizes.LineArrowRadius],
       [xEnd, y + Sizes.LineArrowRadius],
       [xStart, y + Sizes.LineArrowRadius],
-    ], 1, colors)
+    ], 1, order, colors)
   }
 
-  private renderLineBridgeSegment(m: number, l: number, xStart: number, progress: number, colors: LineColors) {
+  private renderLineBridgeSegment(m: number, l: number, xStart: number, progress: number, order: number, colors: LineColors) {
     const y = this.getLineY(l)
     const xEndFrom = m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
     const xEndTo = (m + 1) * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
@@ -2620,7 +2654,7 @@ export class Game {
       [xEnd, y - Sizes.LineArrowRadius],
       [xEnd, y + Sizes.LineArrowRadius],
       [xStart, y + Sizes.LineArrowRadius],
-    ], progress, colors)
+    ], progress, order, colors)
   }
 
   private getLineLatestSegmentGeometry(m: number, l: number): { points: Vec2[], xStart: number } {
