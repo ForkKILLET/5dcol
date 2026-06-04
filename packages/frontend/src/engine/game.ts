@@ -773,7 +773,7 @@ export class Game {
     return [
       [
         Sizes.TurnWidth * m - Sizes.BoardMargin,
-        - Sizes.TurnHeight * (l + 0.5),
+        this.getTurnY(l) - Sizes.TurnHeight / 2,
       ],
       Sizes.TurnSize,
     ]
@@ -783,10 +783,18 @@ export class Game {
     return [
       [
         m * (Sizes.BoardWidth + Sizes.BoardGap) - Sizes.BoardBorder,
-        - l * (Sizes.BoardWidth + Sizes.BoardGap) - Sizes.BoardWidth * 0.5 - Sizes.BoardBorder,
+        this.getLineY(l) - Sizes.BoardWidth * 0.5 - Sizes.BoardBorder,
       ],
       Sizes.BoardBorderSize,
     ]
+  }
+
+  private getTurnY(l: number): number {
+    return l * Sizes.TurnHeight
+  }
+
+  private getLineY(l: number): number {
+    return l * (Sizes.BoardWidth + Sizes.BoardGap)
   }
 
   private loop = () => {
@@ -1993,18 +2001,18 @@ export class Game {
     this.renderPresentIcon(
       iconCenter,
       -1,
-      this.canCreateTimelinePresent(Player.W),
-      Colors.BoardBorderWhite,
-      Colors.BoardBorderWhiteDim,
+      this.canCreateTimelinePresent(Player.B),
+      Colors.BoardBorderBlack,
+      Colors.BoardBorderBlackDim,
     )
 
     const lowerIconCenter: Vec2 = [cx, bounds.bottom + Sizes.TurnHeight * Sizes.PresentIconOffsetTurns]
     this.renderPresentIcon(
       lowerIconCenter,
       1,
-      this.canCreateTimelinePresent(Player.B),
-      Colors.BoardBorderBlack,
-      Colors.BoardBorderBlackDim,
+      this.canCreateTimelinePresent(Player.W),
+      Colors.BoardBorderWhite,
+      Colors.BoardBorderWhiteDim,
     )
   }
 
@@ -2249,7 +2257,7 @@ export class Game {
   private renderLineInitialStartSegment(line: Line, l: number, alpha: number, colors: LineColors) {
     if (alpha <= 0) return
 
-    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const y = this.getLineY(l)
     const xEnd = line.mStart * (Sizes.BoardWidth + Sizes.BoardGap)
     const xStart = xEnd - Sizes.LineStartSegmentLength
     const points: Vec2[] = [
@@ -2365,7 +2373,7 @@ export class Game {
 
   private getLineBranchArrowPoints(line: Line, l: number, branch: LineBranchGeometry): Vec2[] {
     const step = Sizes.BoardWidth + Sizes.BoardGap
-    const y = - l * step
+    const y = this.getLineY(l)
     const yUpTip = y - Sizes.LineArrowRadius - Sizes.LineArrowTip
     const yDownTip = y + Sizes.LineArrowRadius + Sizes.LineArrowTip
     const xTip = line.boards.length * step + Sizes.LineArrowShaftLength
@@ -2550,8 +2558,8 @@ export class Game {
     const branchX = Coord.boardIndex(board.createdBy.to, board.createdByPlayer) * step
       + Sizes.BoardWidth
       + Sizes.BoardGap / 2
-    const sourceY = - board.createdBy.to.l * step
-    const targetY = - l * step
+    const sourceY = this.getLineY(board.createdBy.to.l)
+    const targetY = this.getLineY(l)
     const dy = targetY - sourceY
     if (dy === 0) return null
 
@@ -2587,7 +2595,7 @@ export class Game {
     xStartOverride: number | undefined,
     colors: LineColors,
   ) {
-    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const y = this.getLineY(l)
     const xStart = xStartOverride ?? line.mStart * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
     const xEnd = latestM * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
     if (xEnd <= xStart) return
@@ -2601,7 +2609,7 @@ export class Game {
   }
 
   private renderLineBridgeSegment(m: number, l: number, xStart: number, progress: number, colors: LineColors) {
-    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const y = this.getLineY(l)
     const xEndFrom = m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
     const xEndTo = (m + 1) * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
     const xEnd = Scalar.lerp(xEndFrom, xEndTo, progress)
@@ -2630,7 +2638,7 @@ export class Game {
   }
 
   private getLineLatestSegmentPoints(m: number, l: number, xStartOverride?: number): Vec2[] {
-    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const y = this.getLineY(l)
     const yUp = y - Sizes.LineArrowRadius
     const yDown = y + Sizes.LineArrowRadius
     const xStart = xStartOverride ?? m * (Sizes.BoardWidth + Sizes.BoardGap) + Sizes.BoardWidth
@@ -2651,7 +2659,7 @@ export class Game {
   }
 
   private getLinePoints(line: Line, l: number, xStartOverride?: number): Vec2[] {
-    const y = - l * (Sizes.BoardWidth + Sizes.BoardGap)
+    const y = this.getLineY(l)
     const yUp = y - Sizes.LineArrowRadius
     const yDown = y + Sizes.LineArrowRadius
 
