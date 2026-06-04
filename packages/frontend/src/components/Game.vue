@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch 
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
-import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMoveSegment, type GameToolbarButton } from '@engine/game'
+import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMoveSegment, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isTextInputEvent } from '@engine/gameInput'
 import { Logger, type GameMessage } from '@engine/logger'
 import { CanvasRenderer } from '@engine/canvas/renderer'
@@ -12,6 +12,12 @@ const canvas = useTemplateRef('canvas')
 
 const messages = reactive<GameMessage[]>([])
 const toolbarButtons = ref<GameToolbarButton[]>([])
+const gameStatus = ref<GameStatusView>({
+  text: "White's turn",
+  color: Color4.toRgbaString(Colors.BoardBorderWhite),
+  shadowColor: Color4.toRgbaString(Colors.BoardBorderBlack),
+  ended: false,
+})
 const recordPanelOpen = ref(false)
 const recordText = ref('')
 const recordActions = ref<GameRecordAction[]>([])
@@ -76,6 +82,8 @@ const uiStyle = computed(() => ({
   '--record-white-text': Color4.toRgbaString(ButtonColors.White.text),
   '--record-black-bg': Color4.toRgbaString(ButtonColors.Black.fill),
   '--record-black-text': Color4.toRgbaString(ButtonColors.Black.text),
+  '--game-status-color': gameStatus.value.color,
+  '--game-status-shadow-color': gameStatus.value.shadowColor,
 }))
 
 function getPresetButtonStyle(
@@ -137,6 +145,10 @@ function updateRecord(request: GameExportRequest) {
   ) {
     recordHoveredActionIndex.value = null
   }
+}
+
+function updateGameStatus(status: GameStatusView) {
+  gameStatus.value = status
 }
 
 function toggleRecordPanel() {
@@ -267,6 +279,7 @@ async function init() {
         toolbarButtons.value = buttons
       },
       onRecordChange: updateRecord,
+      onStatusChange: updateGameStatus,
       onImportRequest: openImportDialog,
       onExportRequest: openExportDialog,
     })
@@ -344,6 +357,13 @@ watch(recordPanelOpen, syncGameViewportInsets)
         >
           <span>...</span>
         </button>
+      </div>
+
+      <div
+        class="game-status"
+        :class="{ 'game-status--ended': gameStatus.ended }"
+      >
+        {{ gameStatus.text }}
       </div>
 
       <aside
@@ -610,6 +630,25 @@ canvas {
 .toolbar-secondary {
   right: var(--button-top);
   bottom: var(--button-top);
+}
+
+.game-status {
+  position: absolute;
+  left: var(--button-top);
+  bottom: var(--button-top);
+  max-width: min(560px, calc(100vw - var(--button-top) * 2));
+  color: var(--game-status-color);
+  font-size: var(--button-font-size);
+  line-height: 1.1;
+  text-shadow:
+    0 2px 7px var(--game-status-shadow-color),
+    0 0 3px var(--game-status-shadow-color);
+  pointer-events: none;
+  user-select: none;
+}
+
+.game-status--ended {
+  max-width: min(720px, calc(100vw - var(--button-top) * 2));
 }
 
 .record-panel {

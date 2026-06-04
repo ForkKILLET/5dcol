@@ -7,7 +7,6 @@ import { CircleRenderItem, type Renderer, RenderItemType } from '@engine/rendere
 import { type PendingMove } from '@engine/gameState'
 
 const PRESENT_LABEL = 'The Present'
-const PRESENT_LABEL_FONT = 'Georgia, Times New Roman, serif'
 
 interface PresentRenderContext {
   multiverse: Multiverse
@@ -168,7 +167,6 @@ export class PresentPainter {
       angle,
       text: PRESENT_LABEL,
       fontSize: Sizes.PresentLabelFontSize,
-      fontFamily: PRESENT_LABEL_FONT,
       fontStyle: 'italic',
       color,
       align: 'center',

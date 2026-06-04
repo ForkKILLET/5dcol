@@ -2,6 +2,7 @@ import { Player, type Action, type Move, type Multiverse } from '@5dcol/core'
 
 export interface PendingMove {
   move: Move
+  isPass?: boolean
   order: number
   multiverseBefore: Multiverse
   is5D: boolean

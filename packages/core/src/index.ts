@@ -974,6 +974,27 @@ export namespace Multiverse {
     }
   })
 
+  export const createPass = (
+    multiverseOld: Multiverse,
+    player: Player,
+    lines: readonly number[],
+  ): Multiverse => create(multiverseOld, (multiverse) => {
+    for (const l of lines) {
+      const line = Multiverse.getLine(multiverse, l)
+      if (! line) continue
+
+      const m = Line.getLatestBoardIndex(line)
+      if (m === null || m % 2 !== player) continue
+
+      const board = Board.clone(line.boards[m])
+      board.createdBy = null
+      board.createdByPlayer = null
+      board.createdByRole = null
+      board.createdByOrder = null
+      line.boards[m + 1] = board
+    }
+  })
+
   export const getMoveArrivalBoardIndex = (
     { from, to }: Move,
     player: Player,
@@ -1333,6 +1354,11 @@ export interface CheckmateResult {
   checks: Move[]
 }
 
+export interface CheckWarningBoard {
+  l: number
+  m: number
+}
+
 type Semimove =
   | { kind: 'physical', move: Move, board: Board }
   | { kind: 'arriving', move: Move, board: Board, departingIndex: number }
@@ -1373,6 +1399,7 @@ const findLegalActionHypercuboid = (
   if (built === null) return null
 
   const { info, searchSpace } = built
+
   while (searchSpace.hcs.length > 0) {
     const hc = searchSpace.hcs.pop()!
     const point = takeHypercuboidPoint(info, hc)
@@ -2290,6 +2317,65 @@ export namespace GameState {
     const initialLineLimit = player === Player.B ? lMax + 1 : lMin - 1
     return findLegalActionImpl(multiverse, player, present.m, [], initialLineLimit, false)
   }
+
+  export const findPassCheckWarnings = ({
+    multiverse,
+    player,
+    includePhantom = false,
+  }: Pick<GameState, 'multiverse' | 'player'> & { includePhantom?: boolean }): CheckWarningBoard[] => {
+    const attackingPlayer = Players.opponent(player)
+    const warnings: CheckWarningBoard[] = []
+    const warningKeys = new Set<string>()
+    const { mandatory } = Multiverse.getTimelineStatus(multiverse, player)
+    const mandatoryLines = new Set(mandatory)
+    const currentChecks = new Set(
+      Multiverse.findChecks(multiverse, attackingPlayer).map(getMoveKey),
+    )
+    const addWarning = (l: number, m: number) => {
+      const key = `${l}:${m}`
+      if (warningKeys.has(key)) return
+      warningKeys.add(key)
+      warnings.push({ l, m })
+    }
+
+    for (const l of mandatory) {
+      const line = Multiverse.getLine(multiverse, l)
+      if (! line) continue
+
+      const m = Line.getLatestBoardIndex(line)
+      if (m === null || m % 2 !== player) continue
+
+      const passedMultiverse = Multiverse.createPass(multiverse, player, [l])
+      if (! Multiverse.hasSubmittedPresentMoves(passedMultiverse, player)) continue
+      if (Multiverse.findChecks(passedMultiverse, attackingPlayer).some((check) => (
+        ! currentChecks.has(getMoveKey(check))
+      ))) {
+        addWarning(l, m)
+      }
+    }
+
+    if (includePhantom) {
+      const phantom = Multiverse.createPhantom(multiverse, player)
+      for (const check of Multiverse.findChecks(phantom, attackingPlayer)) {
+        if (currentChecks.has(getMoveKey(check))) continue
+
+        const l = check.to.l
+        if (! mandatoryLines.has(l)) continue
+
+        const m = Coord.boardIndex(check.to, attackingPlayer) - 1
+        const line = Multiverse.getLine(multiverse, l)
+        if (m % 2 === player && Line.getLatestBoardIndex(line) === m) {
+          addWarning(l, m)
+        }
+      }
+    }
+
+    return warnings
+  }
+
+  const getMoveKey = ({ from, to }: Move): string => (
+    `${from.l}:${from.t}:${from.x}:${from.y}->${to.l}:${to.t}:${to.x}:${to.y}`
+  )
 
   export const getCheckmateResult = (
     state: Pick<GameState, 'multiverse' | 'player'>,

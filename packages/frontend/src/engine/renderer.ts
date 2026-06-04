@@ -228,7 +228,7 @@ export interface TextRenderItem extends RenderItemBase {
   angle: number
   text: string
   fontSize: number
-  fontFamily: string
+  fontFamily?: string
   fontStyle?: string
   color: Color4
   align: CanvasTextAlign

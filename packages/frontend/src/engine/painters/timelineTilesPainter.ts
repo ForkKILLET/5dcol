@@ -4,13 +4,17 @@ import { Colors, RenderLayer, Sizes } from '@engine/constant'
 import { type GameLayout } from '@engine/layout'
 import { type Renderer, RenderItemType } from '@engine/renderer'
 
+interface TimelineTilesRenderOptions {
+  ended?: boolean
+}
+
 export class TimelineTilesPainter {
   constructor(
     private readonly renderer: Renderer,
     private readonly layout: GameLayout,
   ) {}
 
-  render(multiverse: Multiverse): void {
+  render(multiverse: Multiverse, options: TimelineTilesRenderOptions = {}): void {
     const tileViewport = this.layout.getTimeTileViewportRect(multiverse)
     if (! tileViewport) return
 
@@ -34,7 +38,9 @@ export class TimelineTilesPainter {
             Vec2.sub(turnPos, [tileOverdraw / 2, tileOverdraw / 2]),
             Vec2.add(turnSize, [tileOverdraw, tileOverdraw]),
           ),
-          color: (t + l) % 2 === 0 ? Colors.BoardTimeWhite : Colors.BoardTimeBlack,
+          color: (t + l) % 2 === 0
+            ? (options.ended ? Colors.BoardTimeEndedWhite : Colors.BoardTimeWhite)
+            : (options.ended ? Colors.BoardTimeEndedBlack : Colors.BoardTimeBlack),
         })
       }
     }

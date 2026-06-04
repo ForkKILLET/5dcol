@@ -41,6 +41,30 @@ export const getMoveArrowPolygon = (
   ]
 }
 
+export const getStraightMoveArrowPolygon = (
+  from: Vec2Type,
+  tip: Vec2Type,
+): Vec2Type[] => {
+  const direction = Vec2.sub(tip, from)
+  const length = Vec2.length(direction)
+  if (length === 0) return []
+
+  const unit = Vec2.scale(direction, 1 / length)
+  const normal: Vec2Type = [-unit[1], unit[0]]
+  const headBaseCenter = Vec2.sub(tip, Vec2.scale(unit, Sizes.MoveArrowHeadLength))
+  const halfShaft = Sizes.MoveArrowShaftWidth / 2
+
+  return [
+    Vec2.add(from, Vec2.scale(normal, halfShaft)),
+    Vec2.add(headBaseCenter, Vec2.scale(normal, halfShaft)),
+    Vec2.add(headBaseCenter, Vec2.scale(normal, Sizes.MoveArrowHeadWidth)),
+    tip,
+    Vec2.sub(headBaseCenter, Vec2.scale(normal, Sizes.MoveArrowHeadWidth)),
+    Vec2.sub(headBaseCenter, Vec2.scale(normal, halfShaft)),
+    Vec2.sub(from, Vec2.scale(normal, halfShaft)),
+  ]
+}
+
 export const getMoveArrowMaskFill = (
   color: Color4,
   from: Vec2Type,

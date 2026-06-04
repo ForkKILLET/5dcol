@@ -1,4 +1,4 @@
-import { Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Multiverse, Piece, Pieces, type Action, type CoordSpacelike, type Move } from '@5dcol/core'
+import { Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Multiverse, Piece, Pieces, type Action, type CheckmateStatus, type CoordSpacelike, type Move } from '@5dcol/core'
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
@@ -9,7 +9,7 @@ import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove,
 import { GameLayout, type ViewportInsets } from '@engine/layout'
 import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
-import { getMoveArrowMaskFill, getMoveArrowPolygon } from '@engine/moveArrow'
+import { getMoveArrowMaskFill, getMoveArrowPolygon, getStraightMoveArrowPolygon } from '@engine/moveArrow'
 import { PresentPainter } from '@engine/painters/presentPainter'
 import { buildGameRecordActions, type GameRecordAction } from '@engine/record'
 import { type Renderer, RenderItemType } from '@engine/renderer'
@@ -34,6 +34,7 @@ export interface GameConfig {
   renderer: Renderer
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
   onRecordChange?: (request: GameExportRequest) => void
+  onStatusChange?: (status: GameStatusView) => void
   onImportRequest?: () => void
   onExportRequest?: (request: GameExportRequest) => void
 }
@@ -43,6 +44,13 @@ export interface GameExportRequest {
   hasPendingMoves: boolean
   currentActionIndex: number
   actions: GameRecordAction[]
+}
+
+export interface GameStatusView {
+  text: string
+  color: string
+  shadowColor: string
+  ended: boolean
 }
 
 interface PointerState {
@@ -119,6 +127,13 @@ interface MoveArrowGeometry {
   control1: Vec2
   control2: Vec2
   to: Vec2
+  straight?: boolean
+}
+interface PendingCheck {
+  move: Move
+  attackingPlayer: Player
+  fromBoard: { l: number, m: number }
+  toBoard: { l: number, m: number }
 }
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
@@ -156,13 +171,21 @@ export class Game extends Disposable(Empty) {
   private selectedPiece: PieceSelection | null = null
   private hoverSquare: SquareHover | null = null
   private hoverPiece: PieceSelection | null = null
+  private hoverCheckWarning: { l: number, m: number } | null = null
   private pendingMove: PendingMove | null = null
   private pendingMoves: PendingMove[] = []
+  private checkWarningBoards: Array<{ l: number, m: number }> = []
+  private checkWarningBoardKeys = new Set<string>()
+  private pendingChecks: PendingCheck[] = []
+  private pendingCheckBoardKeys = new Set<string>()
   private moveAnimation: MoveAnimation | null = null
   private boardFocusPulse: BoardFocusPulse | null = null
+  private gameEndStatus: Exclude<CheckmateStatus, 'not-checkmate'> | null = null
+  private gameEndTrial = false
   private submitRequestedDuringMoveAnimation = false
   private toolbarSignature = ''
   private recordSignature = ''
+  private statusSignature = ''
   private gameInputDisabled = false
   private cameraMotionId = 0
 
@@ -175,8 +198,11 @@ export class Game extends Disposable(Empty) {
     if (restored) this.focusCurrentPresent({ smooth: false })
     else this.focusInitialTurn({ smooth: false })
     this.bindEvents()
+    this.updateGameEndState()
+    this.syncCheckState()
     this.syncToolbarButtons()
     this.syncRecord()
+    this.syncStatus()
     this.animationFrame = requestAnimationFrame(this.loop)
     this.collect(() => {
       if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame)
@@ -193,6 +219,7 @@ export class Game extends Disposable(Empty) {
 
     this.hoverSquare = null
     this.hoverPiece = null
+    this.hoverCheckWarning = null
     this.clearPointerDrag()
   }
 
@@ -223,7 +250,9 @@ export class Game extends Disposable(Empty) {
 
       const actions = state.actions ?? CoreGameState.extractActions(state.multiverseCommitted)
       const actionIndex = Scalar.clamp(Math.floor(state.actionIndex), 0, actions.length)
-      const pendingMoveMoves = state.pendingMoves.map(pendingMove => pendingMove.move)
+      const pendingMoveMoves = state.pendingMoves
+        .filter(pendingMove => ! pendingMove.isPass)
+        .map(pendingMove => pendingMove.move)
       const coreState = CoreGameState.create(actions.slice(0, actionIndex), pendingMoveMoves)
 
       this.multiverseCommitted = coreState.multiverseCommitted
@@ -238,6 +267,7 @@ export class Game extends Disposable(Empty) {
       this.moveAnimation = null
       this.submitRequestedDuringMoveAnimation = false
       this.deselectPiece()
+      this.syncCheckState()
       return true
     }
     catch {
@@ -256,7 +286,7 @@ export class Game extends Disposable(Empty) {
       multiverse: this.multiverse,
       player: this.player,
       actionIndex: this.actionIndex,
-      pendingMoves: this.pendingMoves,
+      pendingMoves: this.pendingMoves.filter(pendingMove => ! pendingMove.isPass),
     }
 
     if (storage) {
@@ -268,6 +298,7 @@ export class Game extends Disposable(Empty) {
       }
     }
     this.syncRecord()
+    this.syncStatus()
   }
 
   private clearStoredGameState() {
@@ -293,10 +324,17 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.pendingMove = null
     this.pendingMoves = []
+    this.checkWarningBoards = []
+    this.checkWarningBoardKeys.clear()
+    this.pendingChecks = []
+    this.pendingCheckBoardKeys.clear()
     this.moveAnimation = null
+    this.gameEndStatus = null
+    this.gameEndTrial = false
     this.submitRequestedDuringMoveAnimation = false
     this.cameraMotion = null
     this.clearPointerDrag()
+    this.syncCheckState()
     this.clearStoredGameState()
     this.persistGameState()
     this.focusInitialTurn()
@@ -610,10 +648,14 @@ export class Game extends Disposable(Empty) {
     if (this.isMoveAnimating()) {
       this.hoverSquare = null
       this.hoverPiece = null
+      this.hoverCheckWarning = null
       this.syncToolbarButtons()
       return
     }
 
+    this.hoverCheckWarning = this.gameInputDisabled
+      ? null
+      : this.getCheckWarningBadgeAtScreen(this.pointer.screen)
     const hit = this.getBoardSquareAtScreen(this.pointer.screen)
     this.hoverSquare = hit ? { l: hit.l, m: hit.m, coord: hit.coord } : null
     const playableHit = this.getPlayableBoardSquareAtScreen(this.pointer.screen)
@@ -622,6 +664,17 @@ export class Game extends Disposable(Empty) {
   }
 
   private getToolbarButtons(): ButtonConfig[] {
+    const finishGameButton = this.isGameEnded()
+      ? {
+          id: 'submit-moves',
+          disabled: false,
+          colorPreset: this.getGameStatusButtonColor(),
+          turnPlayer: this.getGameStatusPlayer(),
+          text: 'Finish Game',
+          piece: null,
+          onClick: () => {},
+        } satisfies ButtonConfig
+      : null
     const leftButton: ButtonConfig = this.selectedPiece
       ? {
           id: 'deselect-piece',
@@ -637,7 +690,9 @@ export class Game extends Disposable(Empty) {
       : {
           id: 'undo-move',
           disabled: this.pendingMoves.length === 0 || this.submitRequestedDuringMoveAnimation,
-          colorPreset: getUndoMoveButtonColor(this.pendingMoves.at(-1)?.is5D ?? false),
+          colorPreset: this.hasPendingChecks()
+            ? ButtonColors.Red
+            : getUndoMoveButtonColor(this.pendingMoves.at(-1)?.is5D ?? false),
           turnPlayer: this.player,
           text: 'Undo Move',
           piece: null,
@@ -648,7 +703,7 @@ export class Game extends Disposable(Empty) {
 
     return [
       leftButton,
-      {
+      finishGameButton ?? {
         id: 'submit-moves',
         disabled: ! this.canSubmitMoves() || this.submitRequestedDuringMoveAnimation,
         colorPreset: getPlayerButtonColor(this.player),
@@ -732,8 +787,89 @@ export class Game extends Disposable(Empty) {
     this.config.onRecordChange(request)
   }
 
+  private syncStatus() {
+    if (! this.config.onStatusChange) return
+
+    const status = this.getStatusView()
+    const signature = JSON.stringify(status)
+    if (signature === this.statusSignature) return
+
+    this.statusSignature = signature
+    this.config.onStatusChange(status)
+  }
+
+  private updateGameEndState() {
+    this.gameEndTrial = false
+    if (this.pendingMoves.length > 0) {
+      this.gameEndStatus = null
+      return
+    }
+
+    const status = CoreGameState.getCheckmateResult({
+      multiverse: this.multiverse,
+      player: this.player,
+    }).status
+    this.gameEndStatus = status === 'not-checkmate' ? null : status
+  }
+
+  private getStatusView(): GameStatusView {
+    if (this.gameEndStatus === 'checkmate') {
+      const winner = CorePlayers.opponent(this.player)
+      const colors = this.getStatusTextColors(winner)
+      return {
+        text: `Game ended - ${this.getPlayerName(winner)} wins`,
+        ...colors,
+        ended: true,
+      }
+    }
+
+    if (this.gameEndStatus === 'stalemate') {
+      const colors = this.getStatusTextColors(Player.W)
+      return {
+        text: 'Game ended - Draw',
+        ...colors,
+        ended: true,
+      }
+    }
+
+    const colors = this.getStatusTextColors(this.player)
+    return {
+      text: `${this.getPlayerName(this.player)}'s turn`,
+      ...colors,
+      ended: this.gameEndTrial,
+    }
+  }
+
+  private getStatusTextColors(player: Player): Pick<GameStatusView, 'color' | 'shadowColor'> {
+    const color = player === Player.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack
+    const shadowColor = player === Player.W ? Colors.BoardBorderBlack : Colors.BoardBorderWhite
+    return {
+      color: Color4.toRgbaString(color),
+      shadowColor: Color4.toRgbaString(shadowColor),
+    }
+  }
+
+  private getGameStatusButtonColor(): ButtonColorPreset {
+    if (this.gameEndStatus === 'stalemate') return ButtonColors.White
+    return getPlayerButtonColor(this.getGameStatusPlayer())
+  }
+
+  private getGameStatusPlayer(): Player {
+    if (this.gameEndStatus === 'stalemate') return Player.W
+    return this.gameEndStatus === 'checkmate' ? CorePlayers.opponent(this.player) : this.player
+  }
+
+  private getPlayerName(player: Player): string {
+    return player === Player.W ? 'White' : 'Black'
+  }
+
+  private isGameEnded(): boolean {
+    return this.gameEndStatus !== null
+  }
+
   private handleBoardClick(screen: Vec2) {
     if (this.isMoveAnimating()) return
+    if (this.tryCreatePassAt(screen)) return
     if (this.tryCreateMoveAt(screen)) return
     this.selectPieceAt(screen)
   }
@@ -744,8 +880,51 @@ export class Game extends Disposable(Empty) {
     this.selectedPiece = selection
   }
 
+  private tryCreatePassAt(screen: Vec2): boolean {
+    const warning = this.getCheckWarningBadgeAtScreen(screen)
+    if (! warning) return false
+    const wasGameEnded = this.isGameEnded()
+
+    const t = Coord.turn(warning.m, this.player)
+    const move: Move = {
+      from: { x: 0, y: 0, l: warning.l, t },
+      to: { x: 0, y: 0, l: warning.l, t },
+    }
+    const multiverseBefore = this.multiverse
+    const order = this.getMoveOrder(this.pendingMoves.length)
+    const pendingMove: PendingMove = {
+      move,
+      isPass: true,
+      order,
+      multiverseBefore,
+      is5D: false,
+      from: warning,
+      created: {
+        l: warning.l,
+        m: warning.m + 1,
+      },
+    }
+
+    this.multiverse = Multiverse.createPass(multiverseBefore, this.player, [warning.l])
+    this.pendingMoves.push(pendingMove)
+    this.pendingMove = pendingMove
+    this.gameEndTrial ||= wasGameEnded
+    this.gameEndStatus = null
+    this.syncCheckState()
+    this.moveAnimation = {
+      startedAt: performance.now(),
+      cameraCenter: [...this.renderer.getCamera().center],
+      cameraScale: this.renderer.getCamera().scale,
+    }
+    this.submitRequestedDuringMoveAnimation = false
+    this.deselectPiece()
+    this.persistGameState()
+    return true
+  }
+
   private tryCreateMoveAt(screen: Vec2): boolean {
     if (! this.selectedPiece) return false
+    const wasGameEnded = this.isGameEnded()
 
     const hit = this.getBoardSquareAtScreen(screen)
     if (! hit) return false
@@ -777,6 +956,9 @@ export class Game extends Disposable(Empty) {
     this.multiverse = Multiverse.applyMove(move, this.player, multiverseBefore, order)
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
+    this.gameEndTrial ||= wasGameEnded
+    this.gameEndStatus = null
+    this.syncCheckState()
     this.moveAnimation = {
       startedAt: performance.now(),
       cameraCenter: [...this.renderer.getCamera().center],
@@ -794,6 +976,14 @@ export class Game extends Disposable(Empty) {
     this.pendingMoves.pop()
     this.multiverse = this.replayPendingMoves()
     this.pendingMove = this.pendingMoves.at(-1) ?? null
+    if (this.pendingMoves.length === 0) {
+      this.gameEndTrial = false
+      this.updateGameEndState()
+    }
+    else {
+      this.gameEndStatus = null
+    }
+    this.syncCheckState()
     this.moveAnimation = null
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
@@ -819,10 +1009,20 @@ export class Game extends Disposable(Empty) {
   }
 
   private finalizeSubmitMoves() {
+    if (! this.canSubmitMoves()) {
+      this.submitRequestedDuringMoveAnimation = false
+      this.syncToolbarButtons()
+      return
+    }
+
     if (this.actionIndex < this.actions.length) {
       this.actions = this.actions.slice(0, this.actionIndex)
     }
-    this.actions.push({ moves: this.pendingMoves.map(pendingMove => pendingMove.move) })
+    this.actions.push({
+      moves: this.pendingMoves
+        .filter(pendingMove => ! pendingMove.isPass)
+        .map(pendingMove => pendingMove.move),
+    })
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
@@ -831,6 +1031,9 @@ export class Game extends Disposable(Empty) {
     this.deselectPiece()
     this.player = CorePlayers.opponent(this.player)
     this.actionIndex += 1
+    this.gameEndTrial = false
+    this.updateGameEndState()
+    this.syncCheckState()
     this.persistGameState()
   }
 
@@ -870,8 +1073,11 @@ export class Game extends Disposable(Empty) {
     this.pendingMoves = []
     this.moveAnimation = null
     this.submitRequestedDuringMoveAnimation = false
+    this.gameEndTrial = false
     this.cameraMotion = null
     this.clearPointerDrag()
+    this.updateGameEndState()
+    this.syncCheckState()
     this.persistGameState()
     this.focusCurrentPresent()
     this.syncToolbarButtons()
@@ -898,8 +1104,11 @@ export class Game extends Disposable(Empty) {
     this.pendingMoves = []
     this.moveAnimation = null
     this.submitRequestedDuringMoveAnimation = false
+    this.gameEndTrial = false
     this.cameraMotion = null
     this.clearPointerDrag()
+    this.updateGameEndState()
+    this.syncCheckState()
     this.persistGameState()
     this.focusCurrentPresent()
   }
@@ -909,7 +1118,146 @@ export class Game extends Disposable(Empty) {
   }
 
   private canSubmitMoves(): boolean {
-    return this.pendingMoves.length > 0 && this.hasSubmittedPresentMoves()
+    return ! this.isGameEnded()
+      && ! this.gameEndTrial
+      && this.pendingMoves.length > 0
+      && ! this.pendingMoves.some(pendingMove => pendingMove.isPass)
+      && this.hasSubmittedPresentMoves()
+      && ! this.hasPendingChecks()
+      && ! this.hasCheckWarning()
+  }
+
+  private syncCheckState() {
+    this.syncCheckWarnings()
+    this.syncPendingChecks()
+  }
+
+  private syncCheckWarnings() {
+    const checkWarningBoardKeys = new Set<string>()
+    const checkWarningBoards = CoreGameState.findPassCheckWarnings({
+      multiverse: this.multiverse,
+      player: this.player,
+      includePhantom: this.isGameEnded(),
+    })
+    for (const { l, m } of checkWarningBoards) {
+      checkWarningBoardKeys.add(this.getBoardKey(l, m))
+    }
+
+    this.checkWarningBoards = checkWarningBoards
+    this.checkWarningBoardKeys = checkWarningBoardKeys
+  }
+
+  private syncPendingChecks() {
+    const pendingCheckBoardKeys = new Set<string>()
+    const redCandidateBoardKeys = this.getPendingCheckRedCandidateBoardKeys()
+    const attackingPlayer = CorePlayers.opponent(this.player)
+    const checks = this.pendingMoves.length === 0
+      ? []
+      : Multiverse.findChecks(this.multiverse, attackingPlayer)
+
+    this.pendingChecks = checks.map((move) => {
+      const fromBoard = {
+        l: move.from.l,
+        m: Coord.boardIndex(move.from, attackingPlayer),
+      }
+      const toBoard = {
+        l: move.to.l,
+        m: Coord.boardIndex(move.to, attackingPlayer),
+      }
+      this.addPendingCheckRedBoardKey(pendingCheckBoardKeys, redCandidateBoardKeys, fromBoard)
+      this.addPendingCheckRedBoardKey(pendingCheckBoardKeys, redCandidateBoardKeys, toBoard)
+      return {
+        move,
+        attackingPlayer,
+        fromBoard,
+        toBoard,
+      }
+    })
+    this.pendingCheckBoardKeys = pendingCheckBoardKeys
+  }
+
+  private getPendingCheckRedCandidateBoardKeys(): ReadonlySet<string> {
+    const boardKeys = new Set<string>()
+    for (const pendingMove of this.pendingMoves) {
+      const mandatoryLines = new Set(
+        Multiverse.getTimelineStatus(pendingMove.multiverseBefore, this.player).mandatory,
+      )
+
+      this.addNewBoardOfMandatoryBoardKey(
+        boardKeys,
+        pendingMove.multiverseBefore,
+        pendingMove.from,
+        this.getPendingMoveSourceCreatedBoard(pendingMove),
+        mandatoryLines,
+      )
+
+      if (pendingMove.is5D) {
+        this.addNewBoardOfMandatoryBoardKey(
+          boardKeys,
+          pendingMove.multiverseBefore,
+          {
+            l: pendingMove.move.to.l,
+            m: Coord.boardIndex(pendingMove.move.to, this.player),
+          },
+          pendingMove.created,
+          mandatoryLines,
+        )
+      }
+    }
+    return boardKeys
+  }
+
+  private addNewBoardOfMandatoryBoardKey(
+    boardKeys: Set<string>,
+    multiverse: Multiverse,
+    board: { l: number, m: number },
+    newBoard: { l: number, m: number },
+    mandatoryLines: ReadonlySet<number>,
+  ) {
+    if (this.isMandatoryActiveBoard(multiverse, board.l, board.m, mandatoryLines)) {
+      boardKeys.add(this.getBoardKey(newBoard.l, newBoard.m))
+    }
+  }
+
+  private addPendingCheckRedBoardKey(
+    pendingCheckBoardKeys: Set<string>,
+    redCandidateBoardKeys: ReadonlySet<string>,
+    board: { l: number, m: number },
+  ) {
+    const boardKey = this.getBoardKey(board.l, board.m)
+    if (redCandidateBoardKeys.has(boardKey)) pendingCheckBoardKeys.add(boardKey)
+  }
+
+  private hasPendingChecks(): boolean {
+    return this.pendingChecks.length > 0
+  }
+
+  private hasCheckWarning(): boolean {
+    return this.checkWarningBoardKeys.size > 0
+  }
+
+  private isCheckWarningBoard(l: number, m: number): boolean {
+    return this.checkWarningBoardKeys.has(this.getBoardKey(l, m))
+  }
+
+  private isPendingCheckBoard(l: number, m: number): boolean {
+    return this.pendingCheckBoardKeys.has(this.getBoardKey(l, m))
+  }
+
+  private isMandatoryActiveBoard(
+    multiverse: Multiverse,
+    l: number,
+    m: number,
+    mandatoryLines: ReadonlySet<number> = new Set(Multiverse.getTimelineStatus(multiverse, this.player).mandatory),
+  ): boolean {
+    if (! mandatoryLines.has(l)) return false
+
+    const line = Multiverse.getLine(multiverse, l)
+    return Line.getLatestBoardIndex(line) === m
+  }
+
+  private getBoardKey(l: number, m: number): string {
+    return `${l}:${m}`
   }
 
   private getMoveOrder(pendingMoveIndex: number): number {
@@ -922,12 +1270,14 @@ export class Game extends Disposable(Empty) {
 
   private replayPendingMoves(): Multiverse {
     return this.pendingMoves.reduce(
-      (multiverse, pendingMove) => Multiverse.applyMove(
-        pendingMove.move,
-        this.player,
-        multiverse,
-        pendingMove.order,
-      ),
+      (multiverse, pendingMove) => pendingMove.isPass
+        ? Multiverse.createPass(multiverse, this.player, [pendingMove.from.l])
+        : Multiverse.applyMove(
+          pendingMove.move,
+          this.player,
+          multiverse,
+          pendingMove.order,
+        ),
       this.multiverseCommitted,
     )
   }
@@ -1110,6 +1460,15 @@ export class Game extends Disposable(Empty) {
     return null
   }
 
+  private getCheckWarningBadgeAtScreen(screen: Vec2): { l: number, m: number } | null {
+    const world = this.renderer.screenToWorld(screen)
+    for (const warning of this.checkWarningBoards) {
+      const center = this.getCheckBadgeCenter(warning.l, warning.m)
+      if (Vec2.length(Vec2.sub(world, center)) <= Sizes.CheckBadgeRadius) return warning
+    }
+    return null
+  }
+
   private updateCameraMotion() {
     if (! this.cameraMotion) return
 
@@ -1250,7 +1609,9 @@ export class Game extends Disposable(Empty) {
   }
 
   private renderMultiverse() {
-    this.timelineTilesPainter.render(this.multiverse)
+    this.timelineTilesPainter.render(this.multiverse, {
+      ended: this.isGameEnded() || this.gameEndTrial,
+    })
     if (this.pendingMove && this.isMoveAnimating()) {
       if (this.pendingMove.is5D && this.getMoveBoardAnimationProgress() === 0) {
         this.renderMultiverseTravelAnimation(this.pendingMove)
@@ -1266,6 +1627,7 @@ export class Game extends Disposable(Empty) {
       player: this.player,
     })
     this.renderMultiverseStatic(this.multiverse)
+    this.renderPendingCheckArrows()
   }
 
   private renderMultiverseStatic(multiverse: Multiverse) {
@@ -1286,6 +1648,7 @@ export class Game extends Disposable(Empty) {
   private renderMultiverseTravelAnimation(pendingMove: PendingMove) {
     const viewportProgress = this.getMoveTravelViewportProgress()
     const sourceProgress = this.getMoveSourceBoardAnimationProgress()
+    const sourceEase = Easing.easeInOut(sourceProgress)
     const travelProgress = this.getMoveTravelAnimationProgress()
     const pieceProgress = this.getMoveTravelPathProgress(pendingMove, travelProgress)
 
@@ -1295,11 +1658,12 @@ export class Game extends Disposable(Empty) {
       multiverseCommitted: this.multiverseCommitted,
       player: this.player,
     })
-    this.renderMultiverseSourceAnimation(pendingMove, Easing.easeInOut(sourceProgress))
+    this.renderMultiverseSourceAnimation(pendingMove, sourceEase)
     this.renderMoveArrow(pendingMove.move, this.player, 1, pendingMove.order)
     if (sourceProgress >= 1) {
       this.renderTravelPiece(pendingMove, pieceProgress, 1)
     }
+    this.renderPendingCheckArrows(this.getMoveAnimationBoardPositions(pendingMove, sourceEase, 0))
   }
 
   private renderMultiversePendingAnimation(pendingMove: PendingMove, progress: number) {
@@ -1361,6 +1725,7 @@ export class Game extends Disposable(Empty) {
       if (createdLine) this.linePainter.render(createdLine, pendingMove.created.l, progress, this.multiverse)
       this.renderPendingCreatedBoard(pendingMove, progress)
     }
+    this.renderPendingCheckArrows(this.getMoveAnimationBoardPositions(pendingMove, progress, progress))
   }
 
   private renderMultiverseSourceAnimation(pendingMove: PendingMove, progress: number) {
@@ -1449,6 +1814,39 @@ export class Game extends Disposable(Empty) {
       if (createdLine) this.linePainter.render(createdLine, pendingMove.created.l, progress, this.multiverse)
       this.renderPendingCreatedBoard(pendingMove, progress)
     }
+    this.renderPendingCheckArrows(this.getMoveAnimationBoardPositions(pendingMove, 1, progress))
+  }
+
+  private getMoveAnimationBoardPositions(
+    pendingMove: PendingMove,
+    sourceProgress: number,
+    targetProgress: number,
+  ): ReadonlyMap<string, Vec2> {
+    const positions = new Map<string, Vec2>()
+    const [fromPos] = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
+    const [targetPos] = this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m)
+
+    if (! pendingMove.is5D) {
+      positions.set(
+        this.getBoardKey(pendingMove.created.l, pendingMove.created.m),
+        Vec2.mix(fromPos, targetPos, targetProgress),
+      )
+      return positions
+    }
+
+    const sourceCreatedM = this.getSourceCreatedBoardIndex(pendingMove)
+    const [sourceCreatedPos] = this.layout.getBoardRect(pendingMove.from.l, sourceCreatedM)
+    const [targetStartPos] = this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m - 1)
+    positions.set(
+      this.getBoardKey(pendingMove.from.l, sourceCreatedM),
+      Vec2.mix(fromPos, sourceCreatedPos, sourceProgress),
+    )
+    positions.set(
+      this.getBoardKey(pendingMove.created.l, pendingMove.created.m),
+      Vec2.mix(targetStartPos, targetPos, targetProgress),
+    )
+
+    return positions
   }
 
   private renderSourceCreatedBoard(pendingMove: PendingMove, progress: number): boolean {
@@ -1496,8 +1894,18 @@ export class Game extends Disposable(Empty) {
     return pendingMove.from.m + 1
   }
 
+  private getPendingMoveSourceCreatedBoard(pendingMove: PendingMove): { l: number, m: number } {
+    return pendingMove.is5D
+      ? {
+          l: pendingMove.from.l,
+          m: this.getSourceCreatedBoardIndex(pendingMove),
+        }
+      : pendingMove.created
+  }
+
   private followPendingBoardAnimation(pendingMove: PendingMove, progress: number) {
     if (! this.moveAnimation) return
+    if (pendingMove.isPass) return
 
     const [fromPos, fromSize] = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
     const [toPos] = this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m)
@@ -1686,9 +2094,16 @@ export class Game extends Disposable(Empty) {
     const temporaryProgress = options.temporaryProgress ?? (isTemporary ? 1 : 0)
     const temporaryPreset = options.temporaryPreset ?? ButtonColors.Yellow
     const alpha = options.alpha ?? 1
-    const borderColor = Color4.withAlpha(Color4.mix(baseBorderColor, temporaryPreset.border, temporaryProgress), alpha)
-    const activeBorderFill = Color4.withAlpha(Color4.mix(baseActiveBorderFill, temporaryPreset.fill, temporaryProgress), alpha)
-    const activeProgress = options.activeProgress ?? (isActive ? 1 : 0)
+    const pendingCheckPreset = this.isPendingCheckBoard(l, m) ? ButtonColors.Red : null
+    const borderColorBase = pendingCheckPreset?.border
+      ?? Color4.mix(baseBorderColor, temporaryPreset.border, temporaryProgress)
+    const activeBorderFillBase = pendingCheckPreset?.fill
+      ?? Color4.mix(baseActiveBorderFill, temporaryPreset.fill, temporaryProgress)
+    const borderColor = Color4.withAlpha(borderColorBase, alpha)
+    const activeBorderFill = Color4.withAlpha(activeBorderFillBase, alpha)
+    const activeProgress = pendingCheckPreset
+      ? 1
+      : (options.activeProgress ?? (isActive ? 1 : 0))
     const outerBorder = Sizes.BoardBorder + Sizes.ActiveBoardBorder * activeProgress
     const outerBorderPos: Vec2 = [x0 - outerBorder, y0 - outerBorder]
     const outerBorderSize: Vec2 = [
@@ -1764,6 +2179,7 @@ export class Game extends Disposable(Empty) {
 
     this.renderBoardFocusMask(l, m, boardPlayer, [x0, y0], alpha)
     this.renderMoveFormationArrow(board, alpha)
+    this.renderCheckBadge(l, m, [x0, y0], alpha)
   }
 
   private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number) {
@@ -1781,6 +2197,47 @@ export class Game extends Disposable(Empty) {
         alpha * focusPulse * Animations.BoardFocusMaskAlpha,
       ),
     })
+  }
+
+  private renderCheckBadge(l: number, m: number, boardPos: Vec2, alpha: number) {
+    if (! this.isCheckWarningBoard(l, m)) return
+
+    const center = this.getCheckBadgeCenter(l, m, boardPos)
+    const hovered = this.hoverCheckWarning?.l === l && this.hoverCheckWarning.m === m
+    const fill = hovered ? Colors.CheckBadgeHover : Colors.CheckBadgeFill
+    const stroke = hovered ? Colors.CheckBadgeHover : Colors.CheckBadgeBorder
+
+    this.renderer.submit({
+      type: RenderItemType.Circle,
+      layer: RenderLayer.UI,
+      center,
+      radius: Sizes.CheckBadgeRadius,
+      fill: Color4.withAlpha(fill, alpha),
+      stroke: Color4.withAlpha(stroke, alpha),
+      strokeWidth: 2,
+    })
+    this.renderer.submit({
+      type: RenderItemType.Text,
+      layer: RenderLayer.UI,
+      pos: [center[0], center[1] + 0.5],
+      angle: 0,
+      text: '!',
+      fontSize: Sizes.CheckBadgeFontSize,
+      color: Color4.withAlpha(Colors.CheckBadgeText, alpha),
+      align: 'center',
+      baseline: 'middle',
+    })
+  }
+
+  private getCheckBadgeCenter(l: number, m: number, boardContentPos?: Vec2): Vec2 {
+    const contentPos = boardContentPos ?? Vec2.add(this.layout.getBoardRect(l, m)[0], [
+      Sizes.BoardBorder,
+      Sizes.BoardBorder,
+    ])
+    return [
+      contentPos[0] + Sizes.BoardWidth + Sizes.CheckBadgeOffset,
+      contentPos[1] - Sizes.CheckBadgeOffset,
+    ]
   }
 
   private getMoveFormationHighlightColor(
@@ -1819,22 +2276,63 @@ export class Game extends Disposable(Empty) {
     const geometry = this.getMoveArrowGeometry(move, player)
     if (! geometry) return
 
-    const points = getMoveArrowPolygon(
-      geometry.from,
-      geometry.control1,
-      geometry.control2,
-      geometry.to,
+    const stroke = player === Player.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack
+    this.renderArrowPolygon(
+      geometry,
+      Colors.MoveArrowFill,
+      stroke,
+      alpha,
+      order,
     )
+  }
+
+  private renderPendingCheckArrows(boardPositions?: ReadonlyMap<string, Vec2>) {
+    for (let i = 0; i < this.pendingChecks.length; i += 1) {
+      const check = this.pendingChecks[i]
+      const geometry = this.getCheckArrowGeometry(check, boardPositions)
+      if (! geometry) continue
+
+      const stroke = check.attackingPlayer === Player.W
+        ? Colors.BoardBorderWhite
+        : Colors.BoardBorderBlack
+      const isInsideBoard = check.fromBoard.l === check.toBoard.l
+        && check.fromBoard.m === check.toBoard.m
+      this.renderArrowPolygon(
+        geometry,
+        Colors.CheckArrowFill,
+        stroke,
+        1,
+        (isInsideBoard ? 11000 : 10000) + i,
+        RenderLayer.CheckArrow,
+      )
+    }
+  }
+
+  private renderArrowPolygon(
+    geometry: MoveArrowGeometry,
+    fill: Color4,
+    stroke: Color4,
+    alpha: number,
+    order: number,
+    layer = RenderLayer.MoveHighlight,
+  ) {
+    const points = geometry.straight === true
+      ? getStraightMoveArrowPolygon(geometry.from, geometry.to)
+      : getMoveArrowPolygon(
+        geometry.from,
+        geometry.control1,
+        geometry.control2,
+        geometry.to,
+      )
     if (points.length === 0) return
 
-    const stroke = player === Player.W ? Colors.BoardBorderWhite : Colors.BoardBorderBlack
     this.renderer.submit({
       type: RenderItemType.Polygon,
-      layer: RenderLayer.MoveHighlight,
+      layer,
       order,
       points,
       fill: getMoveArrowMaskFill(
-        Color4.withAlpha(Colors.MoveArrowFill, alpha),
+        Color4.withAlpha(fill, alpha),
         geometry.from,
         geometry.control1,
       ),
@@ -1854,8 +2352,60 @@ export class Game extends Disposable(Empty) {
     const toM = Coord.boardIndex(move.to, player)
     const from = this.layout.getSquareCenter(move.from.l, fromM, move.from)
     const to = this.layout.getSquareCenter(move.to.l, toM, move.to)
+    return this.getCurvedArrowGeometry(from, to, player)
+  }
+
+  private getCheckArrowGeometry(
+    check: PendingCheck,
+    boardPositions?: ReadonlyMap<string, Vec2>,
+  ): MoveArrowGeometry | null {
+    const from = this.getCheckArrowSquareCenter(
+      check.fromBoard.l,
+      check.fromBoard.m,
+      check.move.from,
+      boardPositions,
+    )
+    const to = this.getCheckArrowSquareCenter(
+      check.toBoard.l,
+      check.toBoard.m,
+      check.move.to,
+      boardPositions,
+    )
+
+    if (check.fromBoard.l === check.toBoard.l && check.fromBoard.m === check.toBoard.m) {
+      const direction = Vec2.sub(to, from)
+      return {
+        from,
+        control1: Vec2.add(from, Vec2.scale(direction, 0.35)),
+        control2: Vec2.add(from, Vec2.scale(direction, 0.65)),
+        to,
+        straight: true,
+      }
+    }
+
+    return this.getCurvedArrowGeometry(from, to, check.attackingPlayer)
+  }
+
+  private getCheckArrowSquareCenter(
+    l: number,
+    m: number,
+    coord: CoordSpacelike,
+    boardPositions?: ReadonlyMap<string, Vec2>,
+  ): Vec2 {
+    const boardPos = boardPositions?.get(this.getBoardKey(l, m))
+    if (! boardPos) return this.layout.getSquareCenter(l, m, coord)
+
+    return Vec2.add(boardPos, [
+      Sizes.BoardBorder + (coord.x + 0.5) * Sizes.PieceWidth,
+      Sizes.BoardBorder + (coord.y + 0.5) * Sizes.PieceWidth,
+    ])
+  }
+
+  private getCurvedArrowGeometry(from: Vec2, to: Vec2, player: Player): MoveArrowGeometry | null {
     const horizontal = Math.abs(to[0] - from[0]) >= Math.abs(to[1] - from[1])
     const direction = Vec2.sub(to, from)
+    if (Vec2.length(direction) === 0) return null
+
     const playerBendDirection = player === Player.W ? 1 : -1
     const bend = Vec2.scale(
       horizontal

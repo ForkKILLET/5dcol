@@ -16,6 +16,7 @@ export const enum RenderLayer {
   AnimatedBoardBorder,
   AnimatedBoard,
   AnimatedPiece,
+  CheckArrow,
   Debug,
   UIShadow,
   UI,
@@ -39,13 +40,16 @@ export namespace Sizes {
   export const ActiveBoardBorder = 7
   export const BoardBorderRadius = 2
   export const ActiveBoardBorderRadius = 8
+  export const CheckBadgeRadius = 8
+  export const CheckBadgeOffset = 8
+  export const CheckBadgeFontSize = 14
   export const MoveArrowStrokeWidth = 1
   export const MoveArrowShaftWidth = 5
   export const MoveArrowHeadLength = 8
   export const MoveArrowHeadWidth = 6
   export const MoveArrowCurveOffset = 30
   export const MoveArrowCurveSamples = 32
-  export const MoveArrowFadeLength = 28
+  export const MoveArrowFadeLength = 2
 
   export const TurnHeight = BoardMarginWidth
   export const TurnWidth = BoardMarginWidth * 2
@@ -123,9 +127,16 @@ export namespace Colors {
   export const MoveHighlight5DBlack = Color4.fromRgba(140, 136, 219, 1)
   export const MoveHighlight5DWhite = Color4.fromRgba(158, 153, 226, 1)
   export const MoveArrowFill = Color4.fromRgba(150, 144, 223, 1)
+  export const CheckArrowFill = Color4.fromRgba(212, 107, 84, 1)
+  export const CheckBadgeBorder = Color4.fromRgba(184, 84, 61, 1)
+  export const CheckBadgeFill = Color4.fromRgba(212, 105, 80, 1)
+  export const CheckBadgeHover = Color4.fromRgba(92, 135, 95, 1)
+  export const CheckBadgeText = Color4.fromRgba(244, 245, 237, 1)
 
   export const BoardTimeBlack = Color4.fromRgba(191, 191, 187, 1)
   export const BoardTimeWhite = Color4.fromRgba(200, 200, 195, 1)
+  export const BoardTimeEndedBlack = Color4.fromRgba(155, 161, 171, 1)
+  export const BoardTimeEndedWhite = Color4.fromRgba(162, 167, 176, 1)
 
   export const BoardBorderWhite = Color4.fromRgba(249, 250, 246, 1)
   export const BoardBorderBlack = Color4.fromRgba(39, 39, 39, 1)
@@ -182,6 +193,12 @@ export namespace ButtonColors {
     border: Color4.fromRgba(117, 106, 222, 1),
     fill: Color4.fromRgba(140, 136, 219, 1),
     text: Colors.ButtonText,
+  }
+
+  export const Red: ButtonColorPreset = {
+    border: Colors.CheckBadgeBorder,
+    fill: Colors.CheckBadgeFill,
+    text: Colors.ButtonTextInverted,
   }
 
   export const GreenWhite: ButtonColorPreset = {

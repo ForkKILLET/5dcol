@@ -235,7 +235,18 @@ export class CanvasRenderer extends Renderer {
   }
 
   drawText(item: TextRenderItem): void {
-    const { pos, angle, text, fontSize, fontFamily, fontStyle, color, align, baseline, space } = item
+    const {
+      pos,
+      angle,
+      text,
+      fontSize,
+      fontFamily = '"Times New Roman", serif',
+      fontStyle,
+      color,
+      align,
+      baseline,
+      space
+    } = item
 
     this.ctx.save()
     const mat = space === 'screen' ? this.screenToDeviceMat : this.worldToDeviceMat
