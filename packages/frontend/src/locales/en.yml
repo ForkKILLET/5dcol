@@ -10,8 +10,35 @@ button.cancel: "Cancel"
 button.copy: "Copy"
 button.close: "Close"
 button.menu: "Menu"
+button.returnToMainMenu: "Main menu"
+
+main.start: "Start"
+main.resume: "Resume"
+main.help: "Help"
+main.settings: "Settings"
+main.github: "GitHub"
 
 dialog.languageTitle: "Language"
+dialog.helpTitle: "Help"
+dialog.helpPlaceholder: ""
+dialog.helpText: |
+  Shortcuts
+
+  Z / Backspace: Undo Move
+  Enter / F: Submit Moves or Finish Game
+  Right click: Deselect
+  WASD: Pan viewport
+  Q / E: Zoom out / in
+  R: Toggle Record panel
+  Esc: Open or close the in-game menu
+
+  Record and files
+
+  The Record panel shows live 5dpgn notation. Use Import and Export in that panel to load or copy a game. Record entries can be clicked to focus the related board. Clicking a record marker rolls back to that action; submitting from a rollback state overwrites later history.
+
+  Ending a game
+
+  Forfeit game returns to the main menu and clears the local saved game. Finish Game does the same after checkmate or draw.
 dialog.importTitle: "Import 5dpgn"
 dialog.exportTitle: "Export 5dpgn"
 dialog.loadingTitle: "Loading"

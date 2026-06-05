@@ -45,19 +45,20 @@ export interface LoopingSound {
 
 export class SoundManager {
   private constructor(
-    private readonly context: AudioContext,
     private readonly buffers: Map<SoundName, AudioBuffer>,
   ) {}
 
+  private context: AudioContext | null = null
+
   static async create(logger: Logger): Promise<SoundManager> {
     logger.info('Loading sounds...')
-    const context = new AudioContext()
+    const decodeContext = new OfflineAudioContext(1, 1, 44100)
     const entries = await Promise.all(SOUND_NAME_LIST.map(async name => [
       name,
-      await fetchSound(context, name),
+      await fetchSound(decodeContext, name),
     ] as const))
 
-    return new SoundManager(context, new Map(entries))
+    return new SoundManager(new Map(entries))
   }
 
   get(name: SoundName): AudioBuffer {
@@ -100,18 +101,20 @@ export class SoundManager {
   }
 
   dispose() {
-    void this.context.close()
+    void this.context?.close()
+    this.context = null
   }
 
   private createSource(name: SoundName): AudioBufferSourceNode {
-    const source = this.context.createBufferSource()
+    const context = this.getContext()
+    const source = context.createBufferSource()
     source.buffer = this.get(name)
-    source.connect(this.context.destination)
+    source.connect(context.destination)
     return source
   }
 
   private getStartTime(offsetSeconds: number): number {
-    return this.context.currentTime + Math.max(0, offsetSeconds)
+    return this.getContext().currentTime + Math.max(0, offsetSeconds)
   }
 
   private getNextOffset(name: SoundName, nextAfter: number | undefined): number {
@@ -122,11 +125,17 @@ export class SoundManager {
   }
 
   private async resume() {
-    if (this.context.state !== 'running') await this.context.resume()
+    const context = this.getContext()
+    if (context.state !== 'running') await context.resume()
+  }
+
+  private getContext(): AudioContext {
+    this.context ??= new AudioContext()
+    return this.context
   }
 }
 
-const fetchSound = async (context: AudioContext, name: SoundName): Promise<AudioBuffer> => {
+const fetchSound = async (context: BaseAudioContext, name: SoundName): Promise<AudioBuffer> => {
   try {
     const res = await fetch(`${SOUND_PATH}/${name}`)
     if (! res.ok) throw Error(`${res.status} ${res.statusText}`)

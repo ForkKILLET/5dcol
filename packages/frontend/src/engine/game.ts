@@ -39,6 +39,7 @@ export interface GameConfig {
   onStatusChange?: (status: GameStatusView) => void
   onImportRequest?: () => void
   onExportRequest?: (request: GameExportRequest) => void
+  onReturnToMainMenuRequest?: () => void
 }
 
 export interface GameExportRequest {
@@ -207,6 +208,7 @@ export class Game extends Disposable(Empty) {
 
   private animationFrame: number | null = null
   private resizeDirty = false
+  private gameDisposed = false
 
   public start() {
     const restored = this.restoreGameState()
@@ -222,9 +224,14 @@ export class Game extends Disposable(Empty) {
     this.animationFrame = requestAnimationFrame(this.loop)
     this.collect(() => {
       if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame)
-      this.renderer.dispose()
     })
     this.logger.info('Game started')
+  }
+
+  public dispose() {
+    this.gameDisposed = true
+    this.clearMoveAnimation()
+    super.dispose()
   }
 
   public setGameInputDisabled(disabled: boolean) {
@@ -327,35 +334,6 @@ export class Game extends Disposable(Empty) {
     catch {
       // Ignore storage cleanup failures; gameplay state should still reset in memory.
     }
-  }
-
-  private restartGame() {
-    this.playRestartSound()
-    this.multiverseCommitted = Multiverse.createInitial()
-    this.multiverse = this.multiverseCommitted
-    this.player = Player.W
-    this.actionIndex = 0
-    this.actions = []
-    this.selectedPiece = null
-    this.hoverSquare = null
-    this.hoverPiece = null
-    this.pendingMove = null
-    this.pendingMoves = []
-    this.checkWarningBoards = []
-    this.checkWarningBoardKeys.clear()
-    this.pendingChecks = []
-    this.pendingCheckBoardKeys.clear()
-    this.clearMoveAnimation()
-    this.gameEndStatus = null
-    this.gameEndTrial = false
-    this.gameEndTrialStatus = null
-    this.submitRequestedDuringMoveAnimation = false
-    this.cameraMotion = null
-    this.clearPointerDrag()
-    this.syncCheckState()
-    this.clearStoredGameState()
-    this.persistGameState()
-    this.focusInitialTurn()
   }
 
   private bindEvents() {
@@ -700,6 +678,7 @@ export class Game extends Disposable(Empty) {
           piece: null,
           onClick: () => {
             this.playUISound()
+            this.config.onReturnToMainMenuRequest?.()
           },
         } satisfies ButtonConfig
       : null
@@ -751,7 +730,8 @@ export class Game extends Disposable(Empty) {
         labelKey: 'button.restart',
         piece: null,
         onClick: () => {
-          this.restartGame()
+          this.playRestartSound()
+          this.config.onReturnToMainMenuRequest?.()
         },
       },
       {
@@ -785,6 +765,7 @@ export class Game extends Disposable(Empty) {
     if (this.gameInputDisabled && isPrimaryGameToolbarButton(id)) return true
     if (button.disabled) return true
     button.onClick()
+    if (this.gameDisposed) return true
     this.syncToolbarButtons()
     return true
   }

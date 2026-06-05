@@ -73,12 +73,12 @@ export namespace Sizes {
   export const PointerDebugWidth = 10
 
   export const ButtonWidth = 230
-  export const SecondaryButtonWidth = 180
-  export const ButtonHeight = 52
+  export const SecondaryButtonWidth = 230
+  export const ButtonHeight = 56
   export const ButtonTop = 18
   export const ButtonShadowOffset = 5
   export const ButtonBorder = 3
-  export const ButtonFontSize = 26
+  export const ButtonFontSize = 32
   export const ButtonIconSize = 28
   export const ButtonContentGap = 8
   export const RecordPanelWidth = 300

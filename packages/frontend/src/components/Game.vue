@@ -6,9 +6,10 @@ import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
 import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMoveSegment, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
+import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
 import { CanvasRenderer } from '@engine/canvas/renderer'
-import { SoundManager } from '@engine/sound'
+import { type LoopingSound, SoundManager } from '@engine/sound'
 import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
 
 const canvas = useTemplateRef('canvas')
@@ -30,7 +31,7 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordHoveredActionIndex = ref<number | null>(null)
 const secondaryMenuOpen = ref(false)
-const dialogMode = ref<'none' | 'language' | 'import' | 'export'>('none')
+const dialogMode = ref<'none' | 'language' | 'help' | 'import' | 'export'>('none')
 const importText = ref('')
 const importError = ref('')
 const exportText = ref('')
@@ -38,9 +39,15 @@ const exportHasPendingMoves = ref(false)
 const exportCopyStatus = ref('')
 const loading = ref(true)
 const loadingError = ref('')
+const gameStarted = ref(false)
+const hasSavedGame = ref(false)
+const viewportWidth = ref(window.innerWidth)
+const viewportHeight = ref(window.innerHeight)
 const logger = new Logger(messages)
 let game: Game | null = null
+let canvasRenderer: CanvasRenderer | null = null
 let soundManager: SoundManager | null = null
+let ambienceLoop: LoopingSound | null = null
 
 const query = new URLSearchParams(window.location.search)
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
@@ -75,7 +82,7 @@ const menuButtons = computed(() => (
   secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
 const uiOverlayOpen = computed(() => (
-  secondaryMenuOpen.value || dialogMode.value !== 'none'
+  secondaryMenuOpen.value || dialogMode.value !== 'none' || ! gameStarted.value
 ))
 const recordHeaders = computed(() => (
   recordText.value
@@ -85,6 +92,21 @@ const recordHeaders = computed(() => (
 ))
 const recordRows = computed(() => recordActions.value)
 const menuButtonStyle = computed(() => getPresetButtonStyle(ButtonColors.White))
+const mainMenuStartText = computed(() => (
+  hasSavedGame.value ? t.value('main.resume') : t.value('main.start')
+))
+const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
+const mainArrowGeometry = computed(() => getMainArrowGeometry(
+  mainMenuLayout.value.arrowWidth,
+  mainMenuLayout.value.arrowHeight,
+  mainMenuLayout.value.arrowBorderWidth,
+))
+const mainArrowStyle = computed(() => ({
+  left: `${mainMenuLayout.value.centerX - mainMenuLayout.value.arrowWidth / 2}px`,
+  top: `${mainMenuLayout.value.areaTop}px`,
+  width: `${mainMenuLayout.value.arrowWidth}px`,
+  height: `${mainMenuLayout.value.arrowHeight}px`,
+}))
 const uiStyle = computed(() => ({
   '--button-width': `${Sizes.ButtonWidth}px`,
   '--secondary-button-width': `${Sizes.SecondaryButtonWidth}px`,
@@ -108,7 +130,143 @@ const uiStyle = computed(() => ({
   '--record-black-text': Color4.toRgbaString(ButtonColors.Black.text),
   '--game-status-color': gameStatus.value.color,
   '--game-status-shadow-color': gameStatus.value.shadowColor,
+  '--main-title-color': Color4.toRgbaString(Colors.BoardBorderWhite),
+  '--main-title-shadow-color': Color4.toRgbaString(Colors.Shadow),
+  '--main-arrow-fill-color': Color4.toRgbaString(Colors.Purple),
+  '--main-arrow-border-color': Color4.toRgbaString(Colors.PurpleDark),
+  '--main-arrow-border-width': `${mainMenuLayout.value.arrowBorderWidth}px`,
+  '--main-menu-center-x': `${mainMenuLayout.value.centerX}px`,
+  '--main-menu-title-left': `${mainMenuLayout.value.titleLeft}px`,
+  '--main-menu-title-top': `${mainMenuLayout.value.titleTop}px`,
+  '--main-title-primary-size': `${mainMenuLayout.value.titlePrimarySize}px`,
+  '--main-title-secondary-size': `${mainMenuLayout.value.titleSecondarySize}px`,
+  '--main-title-primary-shadow-x': `${mainMenuLayout.value.titlePrimaryShadowX}px`,
+  '--main-title-primary-shadow-y': `${mainMenuLayout.value.titlePrimaryShadowY}px`,
+  '--main-title-secondary-shadow-x': `${mainMenuLayout.value.titleSecondaryShadowX}px`,
+  '--main-title-secondary-shadow-y': `${mainMenuLayout.value.titleSecondaryShadowY}px`,
+  '--main-menu-button-width': `${mainMenuLayout.value.buttonWidth}px`,
+  '--main-menu-button-height': `${mainMenuLayout.value.buttonHeight}px`,
+  '--main-menu-button-font-size': `${mainMenuLayout.value.buttonFontSize}px`,
+  '--main-menu-button-gap': `${mainMenuLayout.value.buttonGap}px`,
+  '--main-menu-buttons-top': `${mainMenuLayout.value.buttonsTop}px`,
 }))
+
+interface MainMenuLayout {
+  areaLeft: number
+  areaTop: number
+  areaWidth: number
+  areaHeight: number
+  scale: number
+  centerX: number
+  titleLeft: number
+  titleTop: number
+  titlePrimarySize: number
+  titleSecondarySize: number
+  titlePrimaryShadowX: number
+  titlePrimaryShadowY: number
+  titleSecondaryShadowX: number
+  titleSecondaryShadowY: number
+  buttonWidth: number
+  buttonHeight: number
+  buttonFontSize: number
+  buttonGap: number
+  buttonsTop: number
+  arrowWidth: number
+  arrowHeight: number
+  arrowBorderWidth: number
+}
+
+const MAIN_MENU_BASE_WIDTH = 1536
+const MAIN_MENU_BASE_HEIGHT = 960
+const MAIN_MENU_BASE_LAYOUT: MainMenuLayout = {
+  areaLeft: 0,
+  areaTop: 0,
+  areaWidth: MAIN_MENU_BASE_WIDTH,
+  areaHeight: MAIN_MENU_BASE_HEIGHT,
+  scale: 1,
+  centerX: 210,
+  titleLeft: 42,
+  titleTop: 34,
+  titlePrimarySize: 200,
+  titleSecondarySize: 80,
+  titlePrimaryShadowX: 4,
+  titlePrimaryShadowY: 4,
+  titleSecondaryShadowX: 2,
+  titleSecondaryShadowY: 2,
+  buttonWidth: 220,
+  buttonHeight: Sizes.ButtonHeight,
+  buttonFontSize: Sizes.ButtonFontSize,
+  buttonGap: Sizes.ButtonContentGap * 1.5,
+  buttonsTop: 350,
+  arrowWidth: 300,
+  arrowHeight: 900,
+  arrowBorderWidth: 4,
+}
+
+function getMainMenuLayout(width: number, height: number): MainMenuLayout {
+  const scale = Math.min(
+    1,
+    width / MAIN_MENU_BASE_WIDTH,
+    height / MAIN_MENU_BASE_HEIGHT,
+  )
+  return scaleMainMenuLayout(MAIN_MENU_BASE_LAYOUT, scale)
+}
+
+function scaleMainMenuLayout(
+  layout: MainMenuLayout,
+  scale: number,
+): MainMenuLayout {
+  return {
+    areaLeft: 0,
+    areaTop: 0,
+    areaWidth: layout.areaWidth * scale,
+    areaHeight: layout.areaHeight * scale,
+    scale,
+    centerX: layout.centerX * scale,
+    titleLeft: layout.titleLeft * scale,
+    titleTop: layout.titleTop * scale,
+    titlePrimarySize: layout.titlePrimarySize * scale,
+    titleSecondarySize: layout.titleSecondarySize * scale,
+    titlePrimaryShadowX: layout.titlePrimaryShadowX * scale,
+    titlePrimaryShadowY: layout.titlePrimaryShadowY * scale,
+    titleSecondaryShadowX: layout.titleSecondaryShadowX * scale,
+    titleSecondaryShadowY: layout.titleSecondaryShadowY * scale,
+    buttonWidth: layout.buttonWidth * scale,
+    buttonHeight: layout.buttonHeight * scale,
+    buttonFontSize: layout.buttonFontSize * scale,
+    buttonGap: layout.buttonGap * scale,
+    buttonsTop: layout.buttonsTop * scale,
+    arrowWidth: layout.arrowWidth * scale,
+    arrowHeight: layout.arrowHeight * scale,
+    arrowBorderWidth: layout.arrowBorderWidth * scale,
+  }
+}
+
+function getMainArrowGeometry(outerWidth: number, outerHeight: number, borderWidth: number) {
+  const inset = borderWidth / 2
+  const width = Math.max(0, outerWidth - inset * 2)
+  const height = Math.max(0, outerHeight - inset * 2)
+  const center = inset + width / 2
+  const top = inset
+  const bottom = inset + height
+  const headHeight = Math.min(width * 0.45, height)
+  const headTop = bottom - headHeight
+  const shaftHalfWidth = width * 0.22
+  const headHalfWidth = headHeight
+  const points = [
+    [center - shaftHalfWidth, top],
+    [center + shaftHalfWidth, top],
+    [center + shaftHalfWidth, headTop],
+    [center + headHalfWidth, headTop],
+    [center, bottom],
+    [center - headHalfWidth, headTop],
+    [center - shaftHalfWidth, headTop],
+  ]
+  return {
+    viewBox: `0 0 ${outerWidth} ${outerHeight}`,
+    points: points.map(point => point.join(',')).join(' '),
+  }
+}
 
 function getPresetButtonStyle(
   preset: ButtonColorPreset,
@@ -180,6 +338,7 @@ function updateGameStatus(status: GameStatusView) {
 }
 
 function toggleRecordPanel() {
+  if (! gameStarted.value) return
   playUISound()
   if (! recordPanelOpen.value) {
     const request = game?.getFiveDPGNExport()
@@ -194,6 +353,7 @@ function clickRecordMenuButton() {
 }
 
 function focusRecordSegment(segment: GameRecordMoveSegment) {
+  if (! gameStarted.value) return
   playUISound()
   game?.focusBoard(segment.l, segment.m)
 }
@@ -204,11 +364,13 @@ function getRecordMarker(action: GameRecordAction) {
 }
 
 function rollbackToRecordAction(action: GameRecordAction) {
+  if (! gameStarted.value) return
   playUISound()
   game?.rollbackToActionEnd(action.index + 1)
 }
 
 function toggleSecondaryMenu() {
+  if (! gameStarted.value) return
   playUISound()
   secondaryMenuOpen.value = ! secondaryMenuOpen.value
 }
@@ -222,6 +384,16 @@ function openLanguageDialog() {
   playUISound()
   secondaryMenuOpen.value = false
   dialogMode.value = 'language'
+}
+
+function openHelpDialog() {
+  playUISound()
+  dialogMode.value = 'help'
+}
+
+function openGitHub() {
+  playUISound()
+  window.open('https://github.com/ForkKILLET/5dcol', '_blank', 'noopener,noreferrer')
 }
 
 function selectLanguage(nextLanguage: Language) {
@@ -275,6 +447,12 @@ function syncGameViewportInsets() {
   })
 }
 
+function handleWindowResize() {
+  viewportWidth.value = window.innerWidth
+  viewportHeight.value = window.innerHeight
+  syncGameViewportInsets()
+}
+
 function submitImportDialog() {
   const text = importText.value.trim()
   if (! text) return
@@ -302,14 +480,22 @@ async function copyExportText() {
 }
 
 function handleWindowKeyDown(e: KeyboardEvent) {
+  if (! loading.value && ! gameStarted.value) startAmbience()
+
   if (e.key === 'Escape') {
     e.preventDefault()
     if (dialogMode.value !== 'none') closeDialog()
-    else toggleSecondaryMenu()
+    else if (gameStarted.value) toggleSecondaryMenu()
     return
   }
 
-  if (e.repeat || isModifierKeyEvent(e) || isTextInputEvent(e) || dialogMode.value !== 'none') return
+  if (
+    e.repeat
+    || ! gameStarted.value
+    || isModifierKeyEvent(e)
+    || isTextInputEvent(e)
+    || dialogMode.value !== 'none'
+  ) return
 
   switch (e.key) {
     case 'r':
@@ -321,6 +507,96 @@ function handleWindowKeyDown(e: KeyboardEvent) {
 
 function playUISound() {
   soundManager?.play('lightswitch.ogg')
+  if (! loading.value && ! gameStarted.value) startAmbience()
+}
+
+function startLocalGame() {
+  if (! canvasRenderer || ! soundManager || gameStarted.value) return
+
+  playUISound()
+  stopAmbience()
+  game = new Game({
+    renderer: canvasRenderer,
+    soundManager,
+    logger,
+    debug: query.get('debug') === '1',
+    onToolbarChange: buttons => {
+      toolbarButtons.value = buttons
+    },
+    onRecordChange: updateRecord,
+    onStatusChange: updateGameStatus,
+    onImportRequest: openImportDialog,
+    onExportRequest: openExportDialog,
+    onReturnToMainMenuRequest: returnToMainMenu,
+  })
+  gameStarted.value = true
+  syncGameInputState()
+  game.start()
+  syncGameViewportInsets()
+}
+
+function refreshSavedGameState() {
+  hasSavedGame.value = getHasSavedGame()
+}
+
+function getHasSavedGame() {
+  const storage = getLocalStorage()
+  if (! storage) return false
+
+  try {
+    const raw = storage.getItem(GAME_STORAGE_KEY)
+    if (! raw) return false
+    return isStoredGameState(JSON.parse(raw))
+  }
+  catch {
+    return false
+  }
+}
+
+function clearSavedGameState() {
+  const storage = getLocalStorage()
+  if (! storage) return
+
+  try {
+    storage.removeItem(GAME_STORAGE_KEY)
+  }
+  catch {
+    // Ignore storage cleanup failures; returning to the main menu should still work.
+  }
+}
+
+function returnToMainMenu({ clearSave = true }: { clearSave?: boolean } = {}) {
+  if (clearSave) clearSavedGameState()
+  game?.dispose()
+  game = null
+  toolbarButtons.value = []
+  recordText.value = ''
+  recordActions.value = []
+  recordHasPendingMoves.value = false
+  recordCurrentActionIndex.value = 0
+  recordHoveredActionIndex.value = null
+  recordPanelOpen.value = false
+  secondaryMenuOpen.value = false
+  dialogMode.value = 'none'
+  gameStarted.value = false
+  refreshSavedGameState()
+  syncGameInputState()
+  startAmbience()
+}
+
+function clickReturnToMainMenuButton() {
+  playUISound()
+  returnToMainMenu({ clearSave: false })
+}
+
+function startAmbience() {
+  if (loading.value || gameStarted.value || ambienceLoop || ! soundManager) return
+  ambienceLoop = soundManager?.playLoop('ambience.ogg') ?? null
+}
+
+function stopAmbience() {
+  ambienceLoop?.stop()
+  ambienceLoop = null
 }
 
 async function init() {
@@ -332,22 +608,8 @@ async function init() {
       SoundManager.create(logger),
     ])
     soundManager = loadedSoundManager
-    game = new Game({
-      renderer,
-      soundManager: loadedSoundManager,
-      logger,
-      debug: query.get('debug') === '1',
-      onToolbarChange: buttons => {
-        toolbarButtons.value = buttons
-      },
-      onRecordChange: updateRecord,
-      onStatusChange: updateGameStatus,
-      onImportRequest: openImportDialog,
-      onExportRequest: openExportDialog,
-    })
-    syncGameInputState()
-    game.start()
-    syncGameViewportInsets()
+    canvasRenderer = renderer
+    refreshSavedGameState()
     loading.value = false
   }
   catch (err) {
@@ -359,13 +621,15 @@ async function init() {
 
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeyDown)
-  window.addEventListener('resize', syncGameViewportInsets)
+  window.addEventListener('resize', handleWindowResize)
   void init()
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', handleWindowKeyDown)
-  window.removeEventListener('resize', syncGameViewportInsets)
+  window.removeEventListener('resize', handleWindowResize)
+  stopAmbience()
   game?.dispose()
+  canvasRenderer?.dispose()
   soundManager?.dispose()
 })
 
@@ -388,7 +652,59 @@ watch(recordPanelOpen, syncGameViewportInsets)
       @click.stop
       @contextmenu.prevent.stop
     >
-      <div class="toolbar toolbar-primary">
+      <section
+        v-if="!loading && !gameStarted"
+        class="main-menu"
+        @pointerdown="startAmbience"
+      >
+        <svg
+          class="main-menu-arrow"
+          :viewBox="mainArrowGeometry.viewBox"
+          :style="mainArrowStyle"
+          preserveAspectRatio="xMidYMid meet"
+          aria-hidden="true"
+        >
+          <polygon :points="mainArrowGeometry.points" />
+        </svg>
+        <h1 class="main-title">
+          <span class="main-title-primary">5D Chess</span>
+          <span class="main-title-secondary">
+            With Multiverse Time Travel
+            <span class="main-title-online">Online</span>
+          </span>
+        </h1>
+        <div class="main-menu-buttons">
+          <button
+            class="game-button main-menu-button"
+            :style="menuButtonStyle"
+            type="button"
+            @click="startLocalGame"
+          >
+            <span>{{ mainMenuStartText }}</span>
+          </button>
+          <button
+            class="game-button main-menu-button"
+            :style="menuButtonStyle"
+            type="button"
+            @click="openHelpDialog"
+          >
+            <span>{{ t('main.help') }}</span>
+          </button>
+          <button
+            class="game-button main-menu-button"
+            :style="menuButtonStyle"
+            type="button"
+            @click="openGitHub"
+          >
+            <span>{{ t('main.github') }}</span>
+          </button>
+        </div>
+      </section>
+
+      <div
+        v-if="gameStarted"
+        class="toolbar toolbar-primary"
+      >
         <button
           v-for="button in primaryButtons"
           :key="button.id"
@@ -436,6 +752,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
           </svg>
         </button>
         <button
+          v-if="gameStarted"
           class="game-button game-button--circle"
           :style="menuButtonStyle"
           type="button"
@@ -448,6 +765,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
       </div>
 
       <div
+        v-if="gameStarted"
         class="game-status"
         :class="{ 'game-status--ended': gameStatus.ended }"
       >
@@ -455,7 +773,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
       </div>
 
       <aside
-        v-if="recordPanelOpen"
+        v-if="gameStarted && recordPanelOpen"
         class="record-panel"
         :style="menuButtonStyle"
         @wheel.stop
@@ -545,7 +863,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
       </aside>
 
       <div
-        v-if="secondaryMenuOpen"
+        v-if="gameStarted && secondaryMenuOpen"
         class="menu-backdrop"
         @click="closeSecondaryMenu"
       >
@@ -562,6 +880,14 @@ watch(recordPanelOpen, syncGameViewportInsets)
             @click="clickRecordMenuButton"
           >
             <span>{{ t('button.record') }}</span>
+          </button>
+          <button
+            class="game-button"
+            :style="menuButtonStyle"
+            type="button"
+            @click="clickReturnToMainMenuButton"
+          >
+            <span>{{ t('button.returnToMainMenu') }}</span>
           </button>
           <button
             v-for="button in menuButtons"
@@ -654,7 +980,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
         </div>
 
         <div
-          v-else
+          v-else-if="dialogMode === 'export'"
           class="dialog-card"
           :style="menuButtonStyle"
           @click.stop
@@ -688,6 +1014,26 @@ watch(recordPanelOpen, syncGameViewportInsets)
             >
               <span>{{ t('button.copy') }}</span>
             </button>
+            <button
+              class="game-button dialog-button"
+              :style="menuButtonStyle"
+              type="button"
+              @click="closeDialog()"
+            >
+              <span>{{ t('button.close') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else
+          class="dialog-card dialog-card--narrow"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">{{ t('dialog.helpTitle') }}</h2>
+          <div class="help-content">{{ t('dialog.helpText') }}</div>
+          <div class="dialog-actions">
             <button
               class="game-button dialog-button"
               :style="menuButtonStyle"
@@ -758,6 +1104,91 @@ canvas {
   display: flex;
   gap: calc(var(--button-content-gap) * 2);
   pointer-events: auto;
+}
+
+.main-menu {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background-color: #8293b3;
+  pointer-events: auto;
+}
+
+.main-menu-arrow {
+  position: absolute;
+  top: 0;
+  display: block;
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.main-menu-arrow polygon {
+  fill: var(--main-arrow-fill-color);
+  stroke: var(--main-arrow-border-color);
+  stroke-linejoin: miter;
+  stroke-width: var(--main-arrow-border-width);
+  vector-effect: non-scaling-stroke;
+}
+
+.main-title {
+  position: absolute;
+  left: var(--main-menu-title-left);
+  top: var(--main-menu-title-top);
+  z-index: 1;
+  display: grid;
+  gap: clamp(8px, 1.5vh, 18px);
+  margin: 0;
+  color: var(--main-title-color);
+  line-height: 0.9;
+  pointer-events: none;
+  user-select: none;
+}
+
+.main-title-primary {
+  display: block;
+  color: var(--main-title-color);
+  font-size: var(--main-title-primary-size);
+  font-weight: 700;
+  text-shadow:
+    var(--main-title-primary-shadow-x)
+    var(--main-title-primary-shadow-y)
+    0
+    var(--main-title-shadow-color);
+}
+
+.main-title-secondary {
+  display: block;
+  color: var(--main-title-color);
+  font-size: var(--main-title-secondary-size);
+  font-weight: 400;
+  line-height: 1;
+  text-shadow:
+    var(--main-title-secondary-shadow-x)
+    var(--main-title-secondary-shadow-y)
+    0
+    var(--main-title-shadow-color);
+}
+
+.main-title-online {
+  color: var(--main-arrow-fill-color);
+}
+
+.main-menu-buttons {
+  position: absolute;
+  left: var(--main-menu-center-x);
+  top: var(--main-menu-buttons-top);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--main-menu-button-gap);
+  transform: translateX(-50%);
+}
+
+.game-button.main-menu-button {
+  width: var(--main-menu-button-width);
+  height: var(--main-menu-button-height);
+  border-radius: calc(var(--main-menu-button-height) / 2);
+  font-size: var(--main-menu-button-font-size);
 }
 
 .toolbar-primary {
@@ -944,6 +1375,7 @@ canvas {
 .menu-backdrop {
   position: absolute;
   inset: 0;
+  z-index: 10;
   background: var(--overlay-mask-color);
   pointer-events: auto;
 }
@@ -951,6 +1383,7 @@ canvas {
 .dialog-backdrop {
   position: absolute;
   inset: 0;
+  z-index: 10;
   display: grid;
   place-items: center;
   background: var(--overlay-mask-color);
@@ -1034,6 +1467,16 @@ canvas {
 
 .dialog-message-error {
   color: #9b3a32;
+}
+
+.help-content {
+  max-width: min(620px, calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10));
+  max-height: min(58vh, 560px);
+  overflow: auto;
+  color: var(--button-text-color);
+  font-size: 18px;
+  line-height: 1.35;
+  white-space: pre-line;
 }
 
 .dialog-actions {

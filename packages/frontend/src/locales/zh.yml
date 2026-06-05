@@ -10,8 +10,35 @@ button.cancel: "取消"
 button.copy: "复制"
 button.close: "关闭"
 button.menu: "菜单"
+button.returnToMainMenu: "主菜单"
+
+main.start: "开始"
+main.resume: "继续"
+main.help: "帮助"
+main.settings: "设置"
+main.github: "GitHub"
 
 dialog.languageTitle: "语言"
+dialog.helpTitle: "帮助"
+dialog.helpPlaceholder: ""
+dialog.helpText: |
+  快捷键
+
+  Z / Backspace：撤销小步
+  Enter / F：提交回合或结束对局
+  右键：取消选择
+  WASD：平移视口
+  Q / E：缩小 / 放大
+  R：显示或隐藏记谱面板
+  Esc：打开或关闭局内菜单
+
+  记谱和文件
+
+  记谱面板会实时显示 5dpgn。可以在该面板中导入或导出对局。记谱中的位置可以点击，用于聚焦对应棋盘。点击记谱标记可以回溯到对应大步；在回溯状态提交会覆盖之后的历史。
+
+  结束对局
+
+  放弃对局会返回主菜单，并清除本地缓存的对局。将死或和棋后，结束对局也会执行相同操作。
 dialog.importTitle: "导入 5dpgn"
 dialog.exportTitle: "导出 5dpgn"
 dialog.loadingTitle: "加载中"
