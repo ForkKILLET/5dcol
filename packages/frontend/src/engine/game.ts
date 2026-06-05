@@ -1521,6 +1521,7 @@ export class Game extends Disposable(Empty) {
   private getPlayableBoardSquareAtScreen(screen: Vec2): BoardSquareHit | null {
     const hit = this.getBoardSquareAtScreen(screen)
     if (! hit) return null
+    if (this.isTemporaryBoard(hit.l, hit.m)) return null
     if (! Multiverse.isPlayableBoard(this.multiverse, this.player, {
       l: hit.l,
       t: Coord.turn(hit.m, this.player),

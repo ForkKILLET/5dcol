@@ -2482,8 +2482,9 @@ export namespace GameState {
     orderBase: number,
   ): Multiverse => (
     moves.reduce((multiverse, move, index) => {
-      assertLegalMove(multiverse, move, player, `${label}, move ${index + 1}`)
-      return Multiverse.applyMove(move, player, multiverse, orderBase + index)
+      const order = orderBase + index
+      assertLegalMove(multiverse, move, player, `${label}, move ${index + 1}`, order)
+      return Multiverse.applyMove(move, player, multiverse, order)
     }, multiverseOld)
   )
 
@@ -2492,10 +2493,27 @@ export namespace GameState {
     move: Move,
     player: Player,
     label: string,
+    order: number,
   ): void => {
+    const board = Multiverse.getBoard(multiverse, move.from, player)
+    if (isBoardCreatedInSameAction(board, player, order)) {
+      throw new Error(`Illegal 5dpgn move in ${label}: ${formatCoord(move.from)} was already submitted this turn`)
+    }
+
     const targets = Multiverse.getMoveTargets(multiverse, move.from, player)
     if (targets.some(target => Coord.isSameBoard(target, move.to) && Coord.isSameSpace(target, move.to))) return
     throw new Error(`Illegal 5dpgn move in ${label}: ${formatCoord(move.from)} to ${formatCoord(move.to)}`)
+  }
+
+  const isBoardCreatedInSameAction = (
+    board: Board | null,
+    player: Player,
+    order: number,
+  ): boolean => {
+    if (! board) return false
+    if (board.createdByPlayer !== player) return false
+    if (board.createdByOrder === null) return false
+    return Math.floor(board.createdByOrder / MOVE_ORDER_STRIDE) === Math.floor(order / MOVE_ORDER_STRIDE)
   }
 
   const formatCoord = ({ l, t, x, y }: Coord): string => `(${l}T${t})${String.fromCharCode(97 + x)}${8 - y}`
