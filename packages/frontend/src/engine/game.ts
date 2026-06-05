@@ -352,6 +352,7 @@ export class Game extends Disposable(Empty) {
     this.collect(Effect.useListener(window, 'mousedown', e => {
       if (this.gameInputDisabled) return
       if (e.button !== 0) return
+
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
       this.pointer.dragStartScreen = screen
@@ -364,6 +365,7 @@ export class Game extends Disposable(Empty) {
         this.finishPointerDrag()
         return
       }
+      if (e.button !== 0) return
 
       const screen: Vec2 = [e.clientX, e.clientY]
       this.pointer.screen = screen
