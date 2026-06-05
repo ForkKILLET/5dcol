@@ -1392,7 +1392,6 @@ const findLegalActionHypercuboid = (
   multiverse: Multiverse,
   player: Player,
 ): Action | null => {
-  if (Multiverse.isInCheck(multiverse, player)) return null
   if (Multiverse.hasSubmittedPresentMoves(multiverse, player)) return { moves: [] }
 
   const built = buildHypercuboid(multiverse, player)
@@ -1548,7 +1547,7 @@ const buildHypercuboid = (
     }
   }
 
-  const searchSpace: HypercuboidSearchSpace = { hcs: [hcByBranchCount] }
+  const searchSpace: HypercuboidSearchSpace = { hcs: [cloneHypercuboid(hcByBranchCount)] }
   for (let n = newAxis; n < dimension; n += 1) {
     hcByBranchCount.axes[n] = new Set(branchNonNull)
     searchSpace.hcs.unshift(cloneHypercuboid(hcByBranchCount))
@@ -2428,7 +2427,6 @@ export namespace GameState {
     lineLimit: number,
     hasBranched: boolean,
   ): Action | null => {
-    if (Multiverse.isInCheck(multiverse, player)) return null
     if (Multiverse.hasSubmittedPresentMoves(multiverse, player)) return { moves }
 
     for (const from of Multiverse.getMovablePieces(multiverse, player, presentM)) {
