@@ -8,6 +8,7 @@ import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMov
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { Logger, type GameMessage } from '@engine/logger'
 import { CanvasRenderer } from '@engine/canvas/renderer'
+import { SoundManager } from '@engine/sound'
 import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
 
 const canvas = useTemplateRef('canvas')
@@ -35,8 +36,11 @@ const importError = ref('')
 const exportText = ref('')
 const exportHasPendingMoves = ref(false)
 const exportCopyStatus = ref('')
+const loading = ref(true)
+const loadingError = ref('')
 const logger = new Logger(messages)
 let game: Game | null = null
+let soundManager: SoundManager | null = null
 
 const query = new URLSearchParams(window.location.search)
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
@@ -83,7 +87,7 @@ const recordRows = computed(() => recordActions.value)
 const menuButtonStyle = computed(() => getPresetButtonStyle(ButtonColors.White))
 const uiStyle = computed(() => ({
   '--button-width': `${Sizes.ButtonWidth}px`,
-  '--secondary-button-width': `${Sizes.RestartButtonWidth}px`,
+  '--secondary-button-width': `${Sizes.SecondaryButtonWidth}px`,
   '--record-panel-width': `${Sizes.RecordPanelWidth}px`,
   '--button-circle-size': `${Sizes.ButtonHeight}px`,
   '--button-height': `${Sizes.ButtonHeight}px`,
@@ -176,6 +180,7 @@ function updateGameStatus(status: GameStatusView) {
 }
 
 function toggleRecordPanel() {
+  playUISound()
   if (! recordPanelOpen.value) {
     const request = game?.getFiveDPGNExport()
     if (request) updateRecord(request)
@@ -189,6 +194,7 @@ function clickRecordMenuButton() {
 }
 
 function focusRecordSegment(segment: GameRecordMoveSegment) {
+  playUISound()
   game?.focusBoard(segment.l, segment.m)
 }
 
@@ -198,29 +204,35 @@ function getRecordMarker(action: GameRecordAction) {
 }
 
 function rollbackToRecordAction(action: GameRecordAction) {
+  playUISound()
   game?.rollbackToActionEnd(action.index + 1)
 }
 
 function toggleSecondaryMenu() {
+  playUISound()
   secondaryMenuOpen.value = ! secondaryMenuOpen.value
 }
 
 function closeSecondaryMenu() {
+  if (secondaryMenuOpen.value) playUISound()
   secondaryMenuOpen.value = false
 }
 
 function openLanguageDialog() {
+  playUISound()
   secondaryMenuOpen.value = false
   dialogMode.value = 'language'
 }
 
 function selectLanguage(nextLanguage: Language) {
+  playUISound()
   language.value = nextLanguage
   storeLanguage(nextLanguage)
   dialogMode.value = 'none'
 }
 
 function openImportDialog() {
+  playUISound()
   secondaryMenuOpen.value = false
   importText.value = ''
   importError.value = ''
@@ -228,6 +240,7 @@ function openImportDialog() {
 }
 
 function openExportDialog(request: GameExportRequest) {
+  playUISound()
   secondaryMenuOpen.value = false
   exportText.value = request.text
   exportHasPendingMoves.value = request.hasPendingMoves
@@ -235,7 +248,8 @@ function openExportDialog(request: GameExportRequest) {
   dialogMode.value = 'export'
 }
 
-function closeDialog() {
+function closeDialog(playSound = true) {
+  if (playSound && dialogMode.value !== 'none') playUISound()
   dialogMode.value = 'none'
   importError.value = ''
   exportCopyStatus.value = ''
@@ -264,6 +278,7 @@ function syncGameViewportInsets() {
 function submitImportDialog() {
   const text = importText.value.trim()
   if (! text) return
+  playUISound()
 
   const error = game?.importFiveDPGNText(text)
   if (error) {
@@ -271,10 +286,11 @@ function submitImportDialog() {
     return
   }
 
-  closeDialog()
+  closeDialog(false)
 }
 
 async function copyExportText() {
+  playUISound()
   exportCopyStatus.value = ''
   try {
     await navigator.clipboard.writeText(exportText.value)
@@ -303,11 +319,22 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   }
 }
 
+function playUISound() {
+  soundManager?.play('lightswitch.ogg')
+}
+
 async function init() {
   try {
-    const renderer = await CanvasRenderer.create(canvas.value!, logger)
+    loading.value = true
+    loadingError.value = ''
+    const [renderer, loadedSoundManager] = await Promise.all([
+      CanvasRenderer.create(canvas.value!, logger),
+      SoundManager.create(logger),
+    ])
+    soundManager = loadedSoundManager
     game = new Game({
       renderer,
+      soundManager: loadedSoundManager,
       logger,
       debug: query.get('debug') === '1',
       onToolbarChange: buttons => {
@@ -321,8 +348,10 @@ async function init() {
     syncGameInputState()
     game.start()
     syncGameViewportInsets()
+    loading.value = false
   }
   catch (err) {
+    loadingError.value = t.value('error.loadFailed')
     logger.error(String(err))
     console.error(err)
   }
@@ -337,6 +366,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleWindowKeyDown)
   window.removeEventListener('resize', syncGameViewportInsets)
   game?.dispose()
+  soundManager?.dispose()
 })
 
 watch(uiOverlayOpen, syncGameInputState)
@@ -558,7 +588,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
       <div
         v-if="dialogMode !== 'none'"
         class="dialog-backdrop"
-        @click="closeDialog"
+        @click="closeDialog()"
       >
         <div
           v-if="dialogMode === 'language'"
@@ -607,7 +637,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
               class="game-button dialog-button"
               :style="menuButtonStyle"
               type="button"
-              @click="closeDialog"
+              @click="closeDialog()"
             >
               <span>{{ t('button.cancel') }}</span>
             </button>
@@ -662,11 +692,30 @@ watch(recordPanelOpen, syncGameViewportInsets)
               class="game-button dialog-button"
               :style="menuButtonStyle"
               type="button"
-              @click="closeDialog"
+              @click="closeDialog()"
             >
               <span>{{ t('button.close') }}</span>
             </button>
           </div>
+        </div>
+      </div>
+
+      <div
+        v-if="loading"
+        class="dialog-backdrop loading-backdrop"
+      >
+        <div
+          class="dialog-card dialog-card--narrow"
+          :style="menuButtonStyle"
+        >
+          <h2 class="dialog-title">{{ t('dialog.loadingTitle') }}</h2>
+          <p
+            class="dialog-message"
+            :class="{ 'dialog-message-error': loadingError }"
+            aria-live="polite"
+          >
+            {{ loadingError || t('dialog.loadingAssets') }}
+          </p>
         </div>
       </div>
     </div>

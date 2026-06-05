@@ -16,6 +16,7 @@ import { type Renderer, RenderItemType } from '@engine/renderer'
 import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
 import { TimelineTilesPainter } from '@engine/painters/timelineTilesPainter'
 import { getMoveTravelTargetScale, getScaleToContainRects } from '@engine/viewport'
+import { type LoopingSound, type SoundManager } from '@engine/sound'
 import {
   getPlayerButtonColor,
   getUndoMoveButtonColor,
@@ -32,6 +33,7 @@ export interface GameConfig {
   debug: boolean
   logger: Logger
   renderer: Renderer
+  soundManager: SoundManager
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
   onRecordChange?: (request: GameExportRequest) => void
   onStatusChange?: (status: GameStatusView) => void
@@ -105,6 +107,8 @@ interface MoveAnimation {
   startedAt: number
   cameraCenter: Vec2
   cameraScale: number
+  travelLoop: LoopingSound | null
+  travelHitPlayed: boolean
 }
 interface BoardFocusPulse {
   l: number
@@ -149,6 +153,7 @@ export class Game extends Disposable(Empty) {
     super()
     this.logger = config.logger
     this.renderer = config.renderer
+    this.soundManager = config.soundManager
     this.layout = new GameLayout(config.renderer)
     this.presentPainter = new PresentPainter(config.renderer, this.layout)
     this.timelineTilesPainter = new TimelineTilesPainter(config.renderer, this.layout)
@@ -157,6 +162,7 @@ export class Game extends Disposable(Empty) {
 
   public readonly logger: Logger
   public readonly renderer: Renderer
+  public readonly soundManager: SoundManager
   public readonly layout: GameLayout
   public readonly presentPainter: PresentPainter
   public readonly timelineTilesPainter: TimelineTilesPainter
@@ -274,7 +280,7 @@ export class Game extends Disposable(Empty) {
       this.pendingMoves = preview.pendingMoves
       this.multiverse = preview.multiverse
       this.pendingMove = this.pendingMoves.at(-1) ?? null
-      this.moveAnimation = null
+      this.clearMoveAnimation()
       this.submitRequestedDuringMoveAnimation = false
       this.deselectPiece()
       this.syncCheckState()
@@ -324,6 +330,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private restartGame() {
+    this.playRestartSound()
     this.multiverseCommitted = Multiverse.createInitial()
     this.multiverse = this.multiverseCommitted
     this.player = Player.W
@@ -338,7 +345,7 @@ export class Game extends Disposable(Empty) {
     this.checkWarningBoardKeys.clear()
     this.pendingChecks = []
     this.pendingCheckBoardKeys.clear()
-    this.moveAnimation = null
+    this.clearMoveAnimation()
     this.gameEndStatus = null
     this.gameEndTrial = false
     this.gameEndTrialStatus = null
@@ -397,7 +404,7 @@ export class Game extends Disposable(Empty) {
     this.collect(Effect.useListener(window, 'contextmenu', e => {
       if (this.gameInputDisabled) return
       e.preventDefault()
-      if (! this.isMoveAnimating()) this.deselectPiece()
+      if (! this.isMoveAnimating()) this.cancelPieceSelection()
       this.finishPointerDrag()
     }))
 
@@ -642,6 +649,7 @@ export class Game extends Disposable(Empty) {
     this.updateScreen()
     this.updateCameraMotion()
     this.updateCameraBounds()
+    this.updateMoveTravelSound()
     this.render()
     this.renderer.flush()
     this.finalizeSubmittedMoveAfterAnimation()
@@ -690,7 +698,9 @@ export class Game extends Disposable(Empty) {
           turnPlayer: this.getGameStatusPlayer(),
           labelKey: 'button.finishGame',
           piece: null,
-          onClick: () => {},
+          onClick: () => {
+            this.playUISound()
+          },
         } satisfies ButtonConfig
       : null
     const leftButton: ButtonConfig = this.selectedPiece
@@ -702,7 +712,7 @@ export class Game extends Disposable(Empty) {
           labelKey: 'button.deselect',
           piece: this.selectedPiece.piece,
           onClick: () => {
-            this.deselectPiece()
+            this.cancelPieceSelection()
           },
         }
       : {
@@ -896,6 +906,7 @@ export class Game extends Disposable(Empty) {
     const selection = this.getPieceSelectionAtScreen(screen)
     if (! selection) return
     this.selectedPiece = selection
+    this.playUISound()
   }
 
   private tryCreatePassAt(screen: Vec2): boolean {
@@ -935,9 +946,12 @@ export class Game extends Disposable(Empty) {
       startedAt: performance.now(),
       cameraCenter: [...this.renderer.getCamera().center],
       cameraScale: this.renderer.getCamera().scale,
+      travelLoop: null,
+      travelHitPlayed: false,
     }
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
+    this.playUISound()
     this.persistGameState()
     return true
   }
@@ -985,9 +999,12 @@ export class Game extends Disposable(Empty) {
       startedAt: performance.now(),
       cameraCenter: [...this.renderer.getCamera().center],
       cameraScale: this.renderer.getCamera().scale,
+      travelLoop: null,
+      travelHitPlayed: false,
     }
     this.submitRequestedDuringMoveAnimation = false
     this.selectedPiece = null
+    this.playUISound()
     this.persistGameState()
     return true
   }
@@ -995,6 +1012,7 @@ export class Game extends Disposable(Empty) {
   private undoMove() {
     if (this.submitRequestedDuringMoveAnimation) return
     if (this.pendingMoves.length === 0) return
+    this.playUndoSound()
     this.pendingMoves.pop()
     this.multiverse = this.replayPendingMoves()
     this.pendingMove = this.pendingMoves.at(-1) ?? null
@@ -1007,7 +1025,7 @@ export class Game extends Disposable(Empty) {
       this.gameEndStatus = null
     }
     this.syncCheckState()
-    this.moveAnimation = null
+    this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
     this.persistGameState()
@@ -1015,6 +1033,7 @@ export class Game extends Disposable(Empty) {
 
   private submitMoves() {
     if (! this.canSubmitMoves()) return
+    this.playUISound()
 
     if (this.isMoveAnimating()) {
       this.submitRequestedDuringMoveAnimation = true
@@ -1049,7 +1068,7 @@ export class Game extends Disposable(Empty) {
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
-    this.moveAnimation = null
+    this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
     this.player = CorePlayers.opponent(this.player)
@@ -1057,6 +1076,8 @@ export class Game extends Disposable(Empty) {
     this.gameEndTrial = false
     this.gameEndTrialStatus = null
     this.updateGameEndState()
+    if (this.isGameEnded()) this.playGameEndSound()
+    else this.playTurnStartSound()
     this.syncCheckState()
     this.persistGameState()
   }
@@ -1095,7 +1116,7 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.pendingMove = null
     this.pendingMoves = []
-    this.moveAnimation = null
+    this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.gameEndTrial = false
     this.gameEndTrialStatus = null
@@ -1127,7 +1148,7 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.pendingMove = null
     this.pendingMoves = []
-    this.moveAnimation = null
+    this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.gameEndTrial = false
     this.gameEndTrialStatus = null
@@ -1141,6 +1162,38 @@ export class Game extends Disposable(Empty) {
 
   private deselectPiece() {
     this.selectedPiece = null
+  }
+
+  private cancelPieceSelection() {
+    if (! this.selectedPiece) return
+    this.selectedPiece = null
+    this.playUISound()
+  }
+
+  private playUISound() {
+    this.soundManager.play('lightswitch.ogg')
+  }
+
+  private playUndoSound() {
+    this.soundManager.play('guiro_long.ogg')
+  }
+
+  private playRestartSound() {
+    this.soundManager.play('timpani_hit_a2.ogg')
+  }
+
+  private playTurnStartSound() {
+    this.soundManager.playSequence([
+      { name: 'timpani_hit_c3.ogg', nextAfter: 0.5 },
+      'timpani_hit_e3.ogg',
+    ])
+  }
+
+  private playGameEndSound() {
+    this.soundManager.playSequence([
+      { name: 'timpani_hit_c3.ogg', nextAfter: 0.5 },
+      'fanfare.ogg',
+    ])
   }
 
   private canSubmitMoves(): boolean {
@@ -1421,6 +1474,38 @@ export class Game extends Disposable(Empty) {
       Sizes.MoveArrowCurveSamples,
     )
     return Math.max(1, length / Animations.MoveTravelSpeed)
+  }
+
+  private updateMoveTravelSound() {
+    const animation = this.moveAnimation
+    const pendingMove = this.pendingMove
+    if (! animation || ! pendingMove?.is5D) return
+
+    const sourceProgress = this.getMoveSourceBoardAnimationProgress()
+    const travelProgress = this.getMoveTravelAnimationProgress()
+    const inTravel = sourceProgress >= 1 && travelProgress < 1
+
+    if (inTravel && ! animation.travelLoop) {
+      animation.travelLoop = this.soundManager.playLoop('timpani_roll_f3.ogg')
+    }
+
+    if (travelProgress < 1) return
+
+    this.stopMoveTravelLoop(animation)
+    if (! animation.travelHitPlayed && sourceProgress >= 1) {
+      this.soundManager.play('timpani_hit_f3.ogg')
+      animation.travelHitPlayed = true
+    }
+  }
+
+  private clearMoveAnimation() {
+    if (this.moveAnimation) this.stopMoveTravelLoop(this.moveAnimation)
+    this.moveAnimation = null
+  }
+
+  private stopMoveTravelLoop(animation: MoveAnimation) {
+    animation.travelLoop?.stop()
+    animation.travelLoop = null
   }
 
   private hasSubmittedPresentMoves(): boolean {
