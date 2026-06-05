@@ -137,6 +137,8 @@ export namespace Colors {
   export const BoardTimeWhite = Color4.fromRgba(200, 200, 195, 1)
   export const BoardTimeEndedBlack = Color4.fromRgba(155, 161, 171, 1)
   export const BoardTimeEndedWhite = Color4.fromRgba(162, 167, 176, 1)
+  export const BoardTimeDrawBlack = Color4.fromRgba(162, 158, 151, 1)
+  export const BoardTimeDrawWhite = Color4.fromRgba(168, 164, 157, 1)
 
   export const BoardBorderWhite = Color4.fromRgba(249, 250, 246, 1)
   export const BoardBorderBlack = Color4.fromRgba(39, 39, 39, 1)
@@ -168,6 +170,7 @@ export namespace Animations {
   export const BoardFocusPulseSettleScale = 0.02
   export const BoardFocusMaskAlpha = 0.42
   export const PulseEffectDuration = 1000
+  export const GameEndBackgroundDuration = 600
 }
 
 export interface ButtonColorPreset {

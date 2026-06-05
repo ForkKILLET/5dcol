@@ -136,6 +136,11 @@ interface PendingCheck {
   fromBoard: { l: number, m: number }
   toBoard: { l: number, m: number }
 }
+interface GameEndBackgroundAnimation {
+  from: number
+  to: number
+  startedAt: number
+}
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
 
@@ -183,6 +188,10 @@ export class Game extends Disposable(Empty) {
   private boardFocusPulse: BoardFocusPulse | null = null
   private gameEndStatus: Exclude<CheckmateStatus, 'not-checkmate'> | null = null
   private gameEndTrial = false
+  private gameEndTrialStatus: Exclude<CheckmateStatus, 'not-checkmate'> | null = null
+  private gameEndBackgroundTarget = false
+  private gameEndBackgroundStatus: Exclude<CheckmateStatus, 'not-checkmate'> = 'checkmate'
+  private gameEndBackgroundAnimation: GameEndBackgroundAnimation | null = null
   private submitRequestedDuringMoveAnimation = false
   private toolbarSignature = ''
   private recordSignature = ''
@@ -332,6 +341,7 @@ export class Game extends Disposable(Empty) {
     this.moveAnimation = null
     this.gameEndStatus = null
     this.gameEndTrial = false
+    this.gameEndTrialStatus = null
     this.submitRequestedDuringMoveAnimation = false
     this.cameraMotion = null
     this.clearPointerDrag()
@@ -808,6 +818,7 @@ export class Game extends Disposable(Empty) {
 
   private updateGameEndState() {
     this.gameEndTrial = false
+    this.gameEndTrialStatus = null
     if (this.pendingMoves.length > 0) {
       this.gameEndStatus = null
       return
@@ -890,7 +901,8 @@ export class Game extends Disposable(Empty) {
   private tryCreatePassAt(screen: Vec2): boolean {
     const warning = this.getCheckWarningBadgeAtScreen(screen)
     if (! warning) return false
-    const wasGameEnded = this.isGameEnded()
+    const wasGameEndStatus = this.gameEndStatus
+    const wasGameEnded = wasGameEndStatus !== null
 
     const t = Coord.turn(warning.m, this.player)
     const move: Move = {
@@ -916,6 +928,7 @@ export class Game extends Disposable(Empty) {
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
     this.gameEndTrial ||= wasGameEnded
+    if (wasGameEndStatus) this.gameEndTrialStatus = wasGameEndStatus
     this.gameEndStatus = null
     this.syncCheckState()
     this.moveAnimation = {
@@ -931,7 +944,8 @@ export class Game extends Disposable(Empty) {
 
   private tryCreateMoveAt(screen: Vec2): boolean {
     if (! this.selectedPiece) return false
-    const wasGameEnded = this.isGameEnded()
+    const wasGameEndStatus = this.gameEndStatus
+    const wasGameEnded = wasGameEndStatus !== null
 
     const hit = this.getBoardSquareAtScreen(screen)
     if (! hit) return false
@@ -964,6 +978,7 @@ export class Game extends Disposable(Empty) {
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
     this.gameEndTrial ||= wasGameEnded
+    if (wasGameEndStatus) this.gameEndTrialStatus = wasGameEndStatus
     this.gameEndStatus = null
     this.syncCheckState()
     this.moveAnimation = {
@@ -985,6 +1000,7 @@ export class Game extends Disposable(Empty) {
     this.pendingMove = this.pendingMoves.at(-1) ?? null
     if (this.pendingMoves.length === 0) {
       this.gameEndTrial = false
+      this.gameEndTrialStatus = null
       this.updateGameEndState()
     }
     else {
@@ -1039,6 +1055,7 @@ export class Game extends Disposable(Empty) {
     this.player = CorePlayers.opponent(this.player)
     this.actionIndex += 1
     this.gameEndTrial = false
+    this.gameEndTrialStatus = null
     this.updateGameEndState()
     this.syncCheckState()
     this.persistGameState()
@@ -1081,6 +1098,7 @@ export class Game extends Disposable(Empty) {
     this.moveAnimation = null
     this.submitRequestedDuringMoveAnimation = false
     this.gameEndTrial = false
+    this.gameEndTrialStatus = null
     this.cameraMotion = null
     this.clearPointerDrag()
     this.updateGameEndState()
@@ -1112,6 +1130,7 @@ export class Game extends Disposable(Empty) {
     this.moveAnimation = null
     this.submitRequestedDuringMoveAnimation = false
     this.gameEndTrial = false
+    this.gameEndTrialStatus = null
     this.cameraMotion = null
     this.clearPointerDrag()
     this.updateGameEndState()
@@ -1617,7 +1636,8 @@ export class Game extends Disposable(Empty) {
 
   private renderMultiverse() {
     this.timelineTilesPainter.render(this.multiverse, {
-      ended: this.isGameEnded() || this.gameEndTrial,
+      endedProgress: this.getGameEndBackgroundProgress(),
+      endedStatus: this.gameEndBackgroundStatus,
     })
     if (this.pendingMove && this.isMoveAnimating()) {
       if (this.pendingMove.is5D && this.getMoveBoardAnimationProgress() === 0) {
@@ -1635,6 +1655,57 @@ export class Game extends Disposable(Empty) {
     })
     this.renderMultiverseStatic(this.multiverse)
     this.renderPendingCheckArrows()
+  }
+
+  private getGameEndBackgroundProgress(): number {
+    const now = performance.now()
+    const targetStatus = this.getGameEndBackgroundTargetStatus()
+    const target = targetStatus !== null
+    const targetProgress = target ? 1 : 0
+    const currentProgress = this.resolveGameEndBackgroundProgress(now)
+
+    if (targetStatus) this.gameEndBackgroundStatus = targetStatus
+
+    if (target !== this.gameEndBackgroundTarget) {
+      this.gameEndBackgroundTarget = target
+      this.gameEndBackgroundAnimation = {
+        from: currentProgress,
+        to: targetProgress,
+        startedAt: now,
+      }
+      return currentProgress
+    }
+
+    return currentProgress
+  }
+
+  private getGameEndBackgroundTargetStatus(): Exclude<CheckmateStatus, 'not-checkmate'> | null {
+    if (this.gameEndStatus) return this.gameEndStatus
+    if (this.gameEndTrial) return this.gameEndTrialStatus ?? 'checkmate'
+    return null
+  }
+
+  private resolveGameEndBackgroundProgress(now: number): number {
+    if (! this.gameEndBackgroundAnimation) return this.gameEndBackgroundTarget ? 1 : 0
+
+    const progress = Scalar.clamp(
+      (now - this.gameEndBackgroundAnimation.startedAt) / Animations.GameEndBackgroundDuration,
+      0,
+      1,
+    )
+    const eased = Easing.easeInOut(progress)
+    const value = Scalar.lerp(
+      this.gameEndBackgroundAnimation.from,
+      this.gameEndBackgroundAnimation.to,
+      eased,
+    )
+
+    if (progress >= 1) {
+      this.gameEndBackgroundAnimation = null
+      return this.gameEndBackgroundTarget ? 1 : 0
+    }
+
+    return value
   }
 
   private renderMultiverseStatic(multiverse: Multiverse) {
