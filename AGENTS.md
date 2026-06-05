@@ -12,6 +12,7 @@
 
 - The user normally keeps `core` and `frontend` dev servers running.
 - Do not start dev server or run builds.
+- For efficiency, only run checks for larger changes or before committing, and limit them to the necessary packages.
 - Prefer targeted type checks when verification is needed:
   - `pnpm -F @5dcol/core exec tsc -p tsconfig.json --noEmit`
   - `pnpm -F @5dcol/frontend exec tsc -p tsconfig.json --noEmit`
