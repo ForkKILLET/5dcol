@@ -1,4 +1,5 @@
 import { type Logger } from '@engine/logger'
+import type { AssetLoadProgressCallback } from '@engine/assets'
 
 export const SOUND_NAME_LIST = [
   'ambience.ogg',
@@ -9,7 +10,6 @@ export const SOUND_NAME_LIST = [
   'guiro_long.ogg',
   'guiro_short.ogg',
   'lightswitch.ogg',
-  'music.ogg',
   'paper_shuffle.ogg',
   'timpani_hit_a2.ogg',
   'timpani_hit_c3.ogg',
@@ -50,13 +50,17 @@ export class SoundManager {
 
   private context: AudioContext | null = null
 
-  static async create(logger: Logger): Promise<SoundManager> {
+  static async create(logger: Logger, onProgress?: AssetLoadProgressCallback): Promise<SoundManager> {
     logger.info('Loading sounds...')
     const decodeContext = new OfflineAudioContext(1, 1, 44100)
-    const entries = await Promise.all(SOUND_NAME_LIST.map(async name => [
-      name,
-      await fetchSound(decodeContext, name),
-    ] as const))
+    let completed = 0
+    onProgress?.({ completed, total: SOUND_NAME_LIST.length })
+    const entries = await Promise.all(SOUND_NAME_LIST.map(async name => {
+      const buffer = await fetchSound(decodeContext, name)
+      completed += 1
+      onProgress?.({ completed, total: SOUND_NAME_LIST.length })
+      return [name, buffer] as const
+    }))
 
     return new SoundManager(new Map(entries))
   }

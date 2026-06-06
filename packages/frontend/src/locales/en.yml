@@ -45,6 +45,8 @@ dialog.importTitle: "Import 5dpgn"
 dialog.exportTitle: "Export 5dpgn"
 dialog.loadingTitle: "Loading"
 dialog.loadingAssets: "Loading assets..."
+dialog.loadingGraphics: "Graphics {completed}/{total}"
+dialog.loadingSounds: "Sounds {completed}/{total}"
 
 language.en: "English"
 language.zh: "中文"

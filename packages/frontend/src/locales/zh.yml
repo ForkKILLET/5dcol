@@ -45,6 +45,8 @@ dialog.importTitle: "导入 5dpgn"
 dialog.exportTitle: "导出 5dpgn"
 dialog.loadingTitle: "加载中"
 dialog.loadingAssets: "正在加载资源..."
+dialog.loadingGraphics: "图形 {completed}/{total}"
+dialog.loadingSounds: "音频 {completed}/{total}"
 
 language.en: "English"
 language.zh: "中文"

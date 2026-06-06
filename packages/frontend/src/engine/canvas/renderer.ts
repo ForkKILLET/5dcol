@@ -1,4 +1,5 @@
 import { Color4, Mat3, type Device as Screen } from '@engine/basic'
+import type { AssetLoadProgressCallback } from '@engine/assets'
 import { CircleRenderItem, type CornerRadii, CurveRenderItem, type FillStyle, PolygonRenderItem, QuadRenderItem, Renderer, RoundRectRenderItem, TextRenderItem, TextureRenderItem } from '@engine/renderer'
 import { CanvasBitmapTexture, CanvasSVGTexture, CanvasTextureManager, CanvasTextureType } from '@engine/canvas/textureManager'
 import type { Logger } from '@engine/logger'
@@ -43,10 +44,14 @@ export class CanvasRenderer extends Renderer {
     canvasDisplay.style.height = `${heightCss}px`
   }
 
-  static async create(canvas: HTMLCanvasElement, logger: Logger): Promise<CanvasRenderer> {
+  static async create(
+    canvas: HTMLCanvasElement,
+    logger: Logger,
+    onProgress?: AssetLoadProgressCallback,
+  ): Promise<CanvasRenderer> {
     const textureManager = new CanvasTextureManager()
     logger.info('Loading assets...')
-    await textureManager.loadAll()
+    await textureManager.loadAll(onProgress)
     return new CanvasRenderer(textureManager, canvas, logger)
   }
 

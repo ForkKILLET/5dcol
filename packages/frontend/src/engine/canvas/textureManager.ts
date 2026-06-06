@@ -1,4 +1,5 @@
 import { isElem } from '@/utils'
+import type { AssetLoadProgressCallback } from '@engine/assets'
 import { getTextureLabel, TEXTURE_ID_TO_NAME, type TextureID, TextureManager, type TextureName } from '@engine/texture'
 
 export const enum CanvasTextureType {
@@ -161,11 +162,17 @@ export namespace SVGParser {
 export class CanvasTextureManager extends TextureManager<CanvasTexture> {
   private images = new Map<TextureID, CanvasTexture>()
 
-  async loadAll() {
-    return await Promise.all(Array
-      .from(TEXTURE_ID_TO_NAME.entries())
-      .map(([id, name]) => this.load(id, name))
-    )
+  async loadAll(onProgress?: AssetLoadProgressCallback) {
+    const entries = Array.from(TEXTURE_ID_TO_NAME.entries())
+    let completed = 0
+    onProgress?.({ completed, total: entries.length })
+
+    return await Promise.all(entries.map(async ([id, name]) => {
+      const texture = await this.load(id, name)
+      completed += 1
+      onProgress?.({ completed, total: entries.length })
+      return texture
+    }))
   }
 
   async load(id: TextureID, name: TextureName) {

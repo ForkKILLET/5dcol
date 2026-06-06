@@ -43,6 +43,8 @@ const exportHasPendingMoves = ref(false)
 const exportCopyStatus = ref('')
 const loading = ref(true)
 const loadingError = ref('')
+const textureLoadProgress = ref({ completed: 0, total: 0 })
+const soundLoadProgress = ref({ completed: 0, total: 0 })
 const gameStarted = ref(false)
 const hasSavedGame = ref(false)
 const mainMenuMode = ref<'home' | 'match'>('home')
@@ -1262,9 +1264,15 @@ async function init() {
   try {
     loading.value = true
     loadingError.value = ''
+    textureLoadProgress.value = { completed: 0, total: 0 }
+    soundLoadProgress.value = { completed: 0, total: 0 }
     const [renderer, loadedSoundManager] = await Promise.all([
-      CanvasRenderer.create(canvas.value!, logger),
-      SoundManager.create(logger),
+      CanvasRenderer.create(canvas.value!, logger, progress => {
+        textureLoadProgress.value = progress
+      }),
+      SoundManager.create(logger, progress => {
+        soundLoadProgress.value = progress
+      }),
     ])
     soundManager = loadedSoundManager
     canvasRenderer = renderer
@@ -1923,6 +1931,24 @@ watch(matchNickname, storeMatchNickname)
           >
             {{ loadingError || t('dialog.loadingAssets') }}
           </p>
+          <div
+            v-if="!loadingError"
+            class="loading-progress"
+            aria-live="polite"
+          >
+            <div>
+              {{ t('dialog.loadingGraphics', {
+                completed: String(textureLoadProgress.completed),
+                total: String(textureLoadProgress.total),
+              }) }}
+            </div>
+            <div>
+              {{ t('dialog.loadingSounds', {
+                completed: String(soundLoadProgress.completed),
+                total: String(soundLoadProgress.total),
+              }) }}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2542,6 +2568,18 @@ canvas {
 
 .dialog-message-error {
   color: #9b3a32;
+}
+
+.loading-progress {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 0.5);
+  min-width: 220px;
+  color: var(--button-text-color);
+  font-size: 18px;
+  line-height: 1.25;
+  opacity: 0.82;
+  text-align: center;
 }
 
 .help-content {
