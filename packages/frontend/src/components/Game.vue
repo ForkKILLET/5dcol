@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
 import { Player } from '@5dcol/core'
+import type { Action } from '@5dcol/core'
+import type { MatchGameState, MatchPresence, MatchRoomStatus } from '@5dcol/backend/protocol'
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
@@ -8,9 +10,11 @@ import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMov
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
+import { MatchClient, type MatchServerState } from '@engine/matchClient'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 import { type LoopingSound, SoundManager } from '@engine/sound'
 import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
+import GameButton from './GameButton.vue'
 
 const canvas = useTemplateRef('canvas')
 
@@ -41,15 +45,56 @@ const loading = ref(true)
 const loadingError = ref('')
 const gameStarted = ref(false)
 const hasSavedGame = ref(false)
+const mainMenuMode = ref<'home' | 'match'>('home')
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
+const DEFAULT_MATCH_SERVER_ID = 'localhost:5161'
+const expandedMatchServerIds = reactive(new Set<string>([DEFAULT_MATCH_SERVER_ID]))
+const manualMatchServerAddress = ref('')
+const matchRoomName = ref('')
+const matchNickname = ref(getStoredMatchNickname())
+const matchServers = reactive<MatchServerState[]>([
+  {
+    id: DEFAULT_MATCH_SERVER_ID,
+    address: 'http://localhost:5161',
+    status: 'idle',
+    name: '',
+    rooms: [],
+    error: '',
+  },
+])
+const onlineSession = ref<StoredOnlineSession | null>(getStoredOnlineSession())
+const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
+const onlineRoomReady = ref(false)
+const onlinePlayer = ref<Player | null>(null)
+const onlinePresence = ref<MatchPresence | null>(null)
+const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
+const onlineError = ref('')
+const onlineRecoveryError = ref('')
 const logger = new Logger(messages)
 let game: Game | null = null
 let canvasRenderer: CanvasRenderer | null = null
 let soundManager: SoundManager | null = null
 let ambienceLoop: LoopingSound | null = null
+let matchRefreshTimer: number | null = null
+let onlinePollTimer: number | null = null
+let onlineReconnectTimer: number | null = null
+let unsubscribeOnlineRoomState: (() => void) | null = null
+let onlineRoomStateSubscriptionActive = false
 
 const query = new URLSearchParams(window.location.search)
+const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
+const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
+const MATCH_REFRESH_INTERVAL_MS = 5000
+const ONLINE_RECONNECT_DELAY_MS = 1000
+
+interface StoredOnlineSession {
+  serverAddress: string
+  roomId: string
+  roomName: string
+  sessionId: string
+}
+type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
 const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
 const t = computed(() => createTranslator(language.value))
@@ -59,10 +104,40 @@ const gameStatusText = computed(() => {
   const player = gameStatus.value.player === Player.B
     ? t.value('player.black')
     : t.value('player.white')
+  const owner = ! onlineSession.value || gameStatus.value.player === onlinePlayer.value
+    ? t.value('status.owner.your')
+    : t.value('status.owner.their')
   return t.value(
     gameStatus.value.kind === 'checkmate' ? 'status.checkmate' : 'status.turn',
-    { player },
+    { owner, player },
   )
+})
+const onlineStatusText = computed(() => {
+  if (! gameStarted.value || ! onlineSession.value || onlinePlayer.value === null) return ''
+
+  if (onlineError.value) {
+    return t.value('online.error', { message: onlineError.value })
+  }
+  if (onlineRoomStatus.value === 'finished') {
+    return t.value('online.finished')
+  }
+  if (onlineConnectionStatus.value === 'offline' || onlinePresence.value?.self === 'offline') {
+    return t.value('online.youOffline')
+  }
+  if (onlineRoomReady.value && onlinePresence.value?.opponent !== 'online') {
+    return t.value('online.opponentOffline')
+  }
+  if (! onlineRoomReady.value) {
+    return t.value('online.waiting')
+  }
+  switch (onlineConnectionStatus.value) {
+    case 'connecting':
+      return t.value('online.connecting')
+    case 'reconnecting':
+      return t.value('online.reconnecting')
+    case 'connected':
+      return t.value('online.playingAs')
+  }
 })
 const languageOptions = computed(() => LANGUAGES.map(value => ({
   value,
@@ -115,6 +190,7 @@ const uiStyle = computed(() => ({
   '--button-height': `${Sizes.ButtonHeight}px`,
   '--button-top': `${Sizes.ButtonTop}px`,
   '--button-shadow-offset': `${Sizes.ButtonShadowOffset}px`,
+  '--small-button-shadow-offset': `${Sizes.SmallButtonShadowOffset}px`,
   '--button-border': `${Sizes.ButtonBorder}px`,
   '--button-font-size': `${Sizes.ButtonFontSize}px`,
   '--button-icon-size': `${Sizes.ButtonIconSize}px`,
@@ -320,6 +396,167 @@ function getButtonText(button: GameToolbarButton): string {
   return t.value(button.labelKey, button.labelParams)
 }
 
+function getMatchStatusText(status: MatchServerState['status']) {
+  switch (status) {
+    case 'idle':
+      return t.value('match.status.idle')
+    case 'connecting':
+      return t.value('match.status.connecting')
+    case 'connected':
+      return t.value('match.status.connected')
+    case 'failed':
+      return t.value('match.status.failed')
+  }
+}
+
+function getMatchRoomStatusText(status: MatchRoomStatus) {
+  switch (status) {
+    case 'waiting':
+      return t.value('match.roomStatus.waiting')
+    case 'playing':
+      return t.value('match.roomStatus.playing')
+    case 'finished':
+      return t.value('match.roomStatus.finished')
+  }
+}
+
+function getSortedMatchRooms(server: MatchServerState) {
+  return [...server.rooms].sort((a, b) => (
+    getMatchRoomSortRank(a.status) - getMatchRoomSortRank(b.status)
+      || b.updatedAt - a.updatedAt
+  ))
+}
+
+function getMatchRoomSortRank(status: MatchRoomStatus) {
+  switch (status) {
+    case 'waiting':
+      return 0
+    case 'playing':
+      return 1
+    case 'finished':
+      return 2
+  }
+}
+
+function getMatchRoomMeta(room: MatchServerState['rooms'][number]) {
+  return t.value('match.roomMeta', {
+    id: getShortMatchRoomId(room.id),
+    date: getMatchRoomDate(room),
+    actions: String(room.actionCount),
+    players: getMatchRoomPlayerLabel(room),
+    status: getMatchRoomStatusText(room.status),
+  })
+}
+
+function getSavedOnlineGameMeta(session: StoredOnlineSession) {
+  const room = getStoredOnlineSessionRoom(session)
+  return t.value('match.savedGameMeta', {
+    players: room
+      ? getMatchRoomPlayerLabel(room)
+      : t.value('match.playersVersus', {
+          player1: t.value('match.anonymous'),
+          player2: '?',
+        }),
+    date: room ? getMatchRoomDate(room) : '-',
+    actions: room ? String(room.actionCount) : '-',
+  })
+}
+
+function getSavedOnlineGameTitle(session: StoredOnlineSession) {
+  return t.value('match.savedGame', {
+    room: session.roomName,
+  })
+}
+
+function getStoredOnlineSessionRoom(session: StoredOnlineSession) {
+  return matchServers
+    .find(server => server.address === session.serverAddress)
+    ?.rooms.find(room => room.id === session.roomId)
+    ?? null
+}
+
+function getMatchRoomDate(room: MatchServerState['rooms'][number]) {
+  return new Date(room.startedAt ?? room.createdAt).toLocaleDateString()
+}
+
+function getMatchRoomPlayerLabel(room: MatchServerState['rooms'][number]) {
+  const [player1, player2] = room.seats
+  const left = getMatchRoomSeatLabel(player1)
+  const right = player2 ? getMatchRoomSeatLabel(player2) : '?'
+  return t.value('match.playersVersus', { player1: left, player2: right })
+}
+
+function getMatchRoomSeatLabel(seat: MatchServerState['rooms'][number]['seats'][number]) {
+  return seat?.nickname || t.value('match.anonymous')
+}
+
+function getShortMatchRoomId(id: string) {
+  return id.length > 8 ? id.slice(0, 8) : id
+}
+
+function getMatchServerDisplayAddress(server: MatchServerState) {
+  return server.address.replace(/^https?:\/\//, '')
+}
+
+function isManualMatchServer(server: MatchServerState) {
+  return server.id !== DEFAULT_MATCH_SERVER_ID
+}
+
+function isMatchServerExpanded(server: MatchServerState) {
+  return expandedMatchServerIds.has(server.id)
+}
+
+function toggleMatchServerExpanded(server: MatchServerState) {
+  playUISound()
+  if (expandedMatchServerIds.has(server.id)) {
+    expandedMatchServerIds.delete(server.id)
+  }
+  else {
+    expandedMatchServerIds.add(server.id)
+  }
+}
+
+function addManualMatchServer() {
+  const address = normalizeMatchServerAddress(manualMatchServerAddress.value)
+  if (! address) return
+
+  playUISound()
+  manualMatchServerAddress.value = ''
+  const existing = matchServers.find(server => server.address === address)
+  if (existing) {
+    expandedMatchServerIds.add(existing.id)
+    void connectMatchServer(existing)
+    return
+  }
+
+  const server: MatchServerState = {
+    id: address,
+    address,
+    status: 'idle',
+    name: '',
+    rooms: [],
+    error: '',
+  }
+  matchServers.push(server)
+  expandedMatchServerIds.add(server.id)
+  void connectMatchServer(server)
+}
+
+function removeManualMatchServer(server: MatchServerState) {
+  if (! isManualMatchServer(server)) return
+
+  playUISound()
+  const index = matchServers.findIndex(item => item.id === server.id)
+  if (index >= 0) matchServers.splice(index, 1)
+  expandedMatchServerIds.delete(server.id)
+}
+
+function normalizeMatchServerAddress(address: string) {
+  const trimmed = address.trim()
+  if (! trimmed) return ''
+  return /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`
+}
+
 function updateRecord(request: GameExportRequest) {
   recordText.value = request.text
   recordActions.value = request.actions
@@ -359,12 +596,13 @@ function focusRecordSegment(segment: GameRecordMoveSegment) {
 }
 
 function getRecordMarker(action: GameRecordAction) {
-  if (recordHoveredActionIndex.value === action.index) return '@'
+  if (! onlineSession.value && recordHoveredActionIndex.value === action.index) return '@'
   return action.index === recordCurrentActionIndex.value - 1 ? '*' : ''
 }
 
 function rollbackToRecordAction(action: GameRecordAction) {
   if (! gameStarted.value) return
+  if (onlineSession.value) return
   playUISound()
   game?.rollbackToActionEnd(action.index + 1)
 }
@@ -394,6 +632,153 @@ function openHelpDialog() {
 function openGitHub() {
   playUISound()
   window.open('https://github.com/ForkKILLET/5dcol', '_blank', 'noopener,noreferrer')
+}
+
+function openMatchPage() {
+  playUISound()
+  mainMenuMode.value = 'match'
+  onlineRecoveryError.value = ''
+  void connectMatchServers()
+  startMatchServerRefresh()
+}
+
+function clickRecoverOnlineSession() {
+  playUISound()
+  void recoverOnlineSession()
+}
+
+function forgetOnlineSession() {
+  playUISound()
+  onlineRecoveryError.value = ''
+  clearStoredOnlineSession()
+}
+
+function closeMatchPage() {
+  playUISound()
+  stopMatchServerRefresh()
+  mainMenuMode.value = 'home'
+}
+
+async function connectMatchServers() {
+  await Promise.all(matchServers.map(server => connectMatchServer(server)))
+}
+
+async function connectMatchServer(server: MatchServerState) {
+  if (server.status === 'connecting') return
+
+  server.status = 'connecting'
+  server.error = ''
+  try {
+    const client = new MatchClient(server.address)
+    const [info, rooms] = await Promise.all([
+      client.getInfo(),
+      client.getRooms(),
+    ])
+    server.name = info.name
+    server.rooms = rooms
+    server.status = 'connected'
+  }
+  catch (err) {
+    server.rooms = []
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function refreshConnectedMatchServers() {
+  await Promise.all(
+    matchServers
+      .filter(server => server.status === 'connected')
+      .map(server => refreshMatchServerRooms(server)),
+  )
+}
+
+async function refreshMatchServerRooms(server: MatchServerState) {
+  try {
+    const client = new MatchClient(server.address)
+    server.rooms = await client.getRooms()
+    server.error = ''
+  }
+  catch (err) {
+    server.rooms = []
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+  }
+}
+
+function startMatchServerRefresh() {
+  stopMatchServerRefresh()
+  matchRefreshTimer = window.setInterval(() => {
+    if (mainMenuMode.value !== 'match' || gameStarted.value) return
+    void refreshConnectedMatchServers()
+  }, MATCH_REFRESH_INTERVAL_MS)
+}
+
+function stopMatchServerRefresh() {
+  if (matchRefreshTimer === null) return
+  window.clearInterval(matchRefreshTimer)
+  matchRefreshTimer = null
+}
+
+function clickConnectMatchServer(server: MatchServerState) {
+  playUISound()
+  void connectMatchServer(server)
+}
+
+function clickRefreshMatchServers() {
+  playUISound()
+  void connectMatchServers()
+}
+
+async function createMatchRoom(server: MatchServerState) {
+  playUISound()
+  if (server.status !== 'connected' || ! canvasRenderer || ! soundManager) return
+
+  try {
+    const client = new MatchClient(server.address)
+    const state = await client.createRoom({
+      name: matchRoomName.value,
+      nickname: matchNickname.value,
+    })
+    storeOnlineSession(server.address, state)
+    startOnlineGame(server.address, state)
+  }
+  catch (err) {
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function joinMatchRoom(server: MatchServerState, roomId: string) {
+  playUISound()
+  if (server.status !== 'connected' || ! canvasRenderer || ! soundManager) return
+
+  try {
+    const client = new MatchClient(server.address)
+    const state = await client.joinRoom(roomId, { nickname: matchNickname.value })
+    storeOnlineSession(server.address, state)
+    startOnlineGame(server.address, state)
+  }
+  catch (err) {
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function recoverOnlineSession() {
+  const session = onlineSession.value
+  if (! session || gameStarted.value || ! canvasRenderer || ! soundManager) return
+
+  onlineRecoveryError.value = ''
+  try {
+    const client = new MatchClient(session.serverAddress)
+    const state = await client.getSession(session.sessionId)
+    storeOnlineSession(session.serverAddress, state)
+    startOnlineGame(session.serverAddress, state)
+  }
+  catch (err) {
+    onlineRecoveryError.value = err instanceof Error ? err.message : String(err)
+  }
 }
 
 function selectLanguage(nextLanguage: Language) {
@@ -535,6 +920,175 @@ function startLocalGame() {
   syncGameViewportInsets()
 }
 
+function startOnlineGame(serverAddress: string, state: MatchGameState) {
+  if (! canvasRenderer || ! soundManager || ! state.session || gameStarted.value) return
+
+  stopAmbience()
+  stopOnlinePolling()
+  onlineRoomStatus.value = state.room.status
+  onlineRoomReady.value = state.room.status === 'playing'
+  onlinePlayer.value = state.session.player
+  onlinePresence.value = state.presence
+  onlineConnectionStatus.value = 'connecting'
+  onlineError.value = ''
+  game = new Game({
+    renderer: canvasRenderer,
+    soundManager,
+    logger,
+    debug: query.get('debug') === '1',
+    initialActions: state.actions,
+    localPlayer: state.session.player,
+    canControlOnlineGame: () => onlineRoomReady.value,
+    isExternallyFinished: () => onlineRoomStatus.value === 'finished',
+    onToolbarChange: buttons => {
+      toolbarButtons.value = buttons
+    },
+    onRecordChange: updateRecord,
+    onStatusChange: updateGameStatus,
+    onImportRequest: openImportDialog,
+    onExportRequest: openExportDialog,
+    onReturnToMainMenuRequest: returnToMainMenu,
+    onActionSubmitted: action => {
+      void submitOnlineAction(serverAddress, state.session!.roomId, state.session!.id, action)
+    },
+  })
+  gameStarted.value = true
+  mainMenuMode.value = 'home'
+  stopMatchServerRefresh()
+  syncGameInputState()
+  game.start()
+  syncGameViewportInsets()
+  startOnlineRoomStateSubscription(serverAddress, state.session.roomId, state.session.id)
+  startOnlinePolling(serverAddress, state.session.roomId, state.session.id)
+}
+
+function applyOnlineGameState(
+  serverAddress: string,
+  state: MatchGameState,
+  { force = false }: { force?: boolean } = {},
+) {
+  onlineRoomStatus.value = state.room.status
+  onlineRoomReady.value = state.room.status === 'playing'
+  if (state.session) onlinePlayer.value = state.session.player
+  onlinePresence.value = state.presence
+  onlineError.value = ''
+  if (state.session) storeOnlineSession(serverAddress, state)
+  game?.loadActions(state.actions, { focus: false, force, animate: true })
+}
+
+async function submitOnlineAction(
+  serverAddress: string,
+  roomId: string,
+  sessionId: string,
+  action: Action,
+) {
+  try {
+    const client = new MatchClient(serverAddress)
+    const state = await client.submitAction(roomId, { sessionId, action })
+    applyOnlineGameState(serverAddress, state)
+  }
+  catch (err) {
+    onlineError.value = err instanceof Error ? err.message : String(err)
+    logger.error(onlineError.value)
+    await syncOnlineGameState(serverAddress, roomId, sessionId, { force: true })
+  }
+}
+
+function startOnlineRoomStateSubscription(serverAddress: string, roomId: string, sessionId: string) {
+  stopOnlineRoomStateSubscription()
+  onlineRoomStateSubscriptionActive = true
+  const client = new MatchClient(serverAddress)
+  unsubscribeOnlineRoomState = client.subscribeRoomState(
+    roomId,
+    sessionId,
+    state => applyOnlineGameState(serverAddress, state),
+    {
+      onOpen: () => {
+        onlineConnectionStatus.value = 'connected'
+      },
+      onError: () => {
+        if (! onlineRoomStateSubscriptionActive) return
+        onlineConnectionStatus.value = 'reconnecting'
+        scheduleOnlineRoomStateReconnect(serverAddress, roomId, sessionId)
+      },
+    },
+  )
+}
+
+function stopOnlineRoomStateSubscription() {
+  onlineRoomStateSubscriptionActive = false
+  stopOnlineReconnect()
+  unsubscribeOnlineRoomState?.()
+  unsubscribeOnlineRoomState = null
+}
+
+function scheduleOnlineRoomStateReconnect(serverAddress: string, roomId: string, sessionId: string) {
+  if (onlineReconnectTimer !== null) return
+  onlineReconnectTimer = window.setTimeout(() => {
+    onlineReconnectTimer = null
+    if (! onlineRoomStateSubscriptionActive) return
+    startOnlineRoomStateSubscription(serverAddress, roomId, sessionId)
+  }, ONLINE_RECONNECT_DELAY_MS)
+}
+
+function stopOnlineReconnect() {
+  if (onlineReconnectTimer === null) return
+  window.clearTimeout(onlineReconnectTimer)
+  onlineReconnectTimer = null
+}
+
+function startOnlinePolling(serverAddress: string, roomId: string, sessionId: string) {
+  stopOnlinePolling()
+  onlinePollTimer = window.setInterval(() => {
+    void syncOnlineGameState(serverAddress, roomId, sessionId)
+  }, 8000)
+}
+
+function stopOnlinePolling() {
+  if (onlinePollTimer === null) return
+  window.clearInterval(onlinePollTimer)
+  onlinePollTimer = null
+}
+
+async function syncOnlineGameState(
+  serverAddress: string,
+  roomId: string,
+  sessionId: string,
+  options: { force?: boolean } = {},
+) {
+  try {
+    const client = new MatchClient(serverAddress)
+    const state = await client.getRoomState(roomId, sessionId)
+    applyOnlineGameState(serverAddress, state, options)
+  }
+  catch (err) {
+    if (onlineConnectionStatus.value !== 'connected') {
+      onlineConnectionStatus.value = 'reconnecting'
+    }
+    logger.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function forfeitOnlineRoom(session: StoredOnlineSession) {
+  try {
+    const client = new MatchClient(session.serverAddress)
+    await client.forfeitRoom(session.roomId, { sessionId: session.sessionId })
+  }
+  catch (err) {
+    logger.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function leaveWaitingOnlineRoom(session: StoredOnlineSession) {
+  try {
+    const client = new MatchClient(session.serverAddress)
+    await client.leaveRoom(session.roomId, { sessionId: session.sessionId })
+  }
+  catch (err) {
+    logger.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
 function refreshSavedGameState() {
   hasSavedGame.value = getHasSavedGame()
 }
@@ -553,6 +1107,89 @@ function getHasSavedGame() {
   }
 }
 
+function getStoredOnlineSession(): StoredOnlineSession | null {
+  const storage = getLocalStorage()
+  if (! storage) return null
+
+  try {
+    const raw = storage.getItem(ONLINE_SESSION_STORAGE_KEY)
+    if (! raw) return null
+    const value = JSON.parse(raw) as Partial<StoredOnlineSession>
+    if (
+      typeof value.serverAddress !== 'string'
+      || typeof value.roomId !== 'string'
+      || typeof value.roomName !== 'string'
+      || typeof value.sessionId !== 'string'
+    ) return null
+    return value as StoredOnlineSession
+  }
+  catch {
+    return null
+  }
+}
+
+function getStoredMatchNickname(): string {
+  const storage = getLocalStorage()
+  if (! storage) return ''
+
+  try {
+    return storage.getItem(MATCH_NICKNAME_STORAGE_KEY) ?? ''
+  }
+  catch {
+    return ''
+  }
+}
+
+function storeMatchNickname(nickname: string) {
+  const storage = getLocalStorage()
+  if (! storage) return
+
+  try {
+    const trimmed = nickname.trim()
+    if (trimmed) storage.setItem(MATCH_NICKNAME_STORAGE_KEY, trimmed)
+    else storage.removeItem(MATCH_NICKNAME_STORAGE_KEY)
+  }
+  catch {
+    // Ignore storage failures; nickname persistence is only a convenience.
+  }
+}
+
+function storeOnlineSession(serverAddress: string, state: MatchGameState) {
+  if (! state.session) return
+
+  const session: StoredOnlineSession = {
+    serverAddress,
+    roomId: state.session.roomId,
+    roomName: state.room.name,
+    sessionId: state.session.id,
+  }
+  onlineSession.value = session
+
+  const storage = getLocalStorage()
+  if (! storage) return
+
+  try {
+    storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify(session))
+  }
+  catch {
+    // Losing the session id only affects reconnect; the active match can continue.
+  }
+}
+
+function clearStoredOnlineSession() {
+  onlineSession.value = null
+
+  const storage = getLocalStorage()
+  if (! storage) return
+
+  try {
+    storage.removeItem(ONLINE_SESSION_STORAGE_KEY)
+  }
+  catch {
+    // Ignore storage cleanup failures.
+  }
+}
+
 function clearSavedGameState() {
   const storage = getLocalStorage()
   if (! storage) return
@@ -565,8 +1202,29 @@ function clearSavedGameState() {
   }
 }
 
-function returnToMainMenu({ clearSave = true }: { clearSave?: boolean } = {}) {
+function returnToMainMenu(
+  { clearSave = true, forfeit = false }: { clearSave?: boolean, forfeit?: boolean } = {},
+) {
+  const currentOnlineSession = onlineSession.value
+  if (currentOnlineSession && onlineRoomStatus.value === 'waiting') {
+    void leaveWaitingOnlineRoom(currentOnlineSession)
+    clearStoredOnlineSession()
+  }
+  else if (clearSave && forfeit && currentOnlineSession && onlineRoomStatus.value !== 'finished') {
+    void forfeitOnlineRoom(currentOnlineSession)
+  }
   if (clearSave) clearSavedGameState()
+  if (clearSave) clearStoredOnlineSession()
+  stopMatchServerRefresh()
+  stopOnlinePolling()
+  stopOnlineRoomStateSubscription()
+  onlineRoomStatus.value = null
+  onlineRoomReady.value = false
+  onlinePlayer.value = null
+  onlinePresence.value = null
+  onlineConnectionStatus.value = 'offline'
+  onlineError.value = ''
+  onlineRecoveryError.value = ''
   game?.dispose()
   game = null
   toolbarButtons.value = []
@@ -579,6 +1237,7 @@ function returnToMainMenu({ clearSave = true }: { clearSave?: boolean } = {}) {
   secondaryMenuOpen.value = false
   dialogMode.value = 'none'
   gameStarted.value = false
+  mainMenuMode.value = 'home'
   refreshSavedGameState()
   syncGameInputState()
   startAmbience()
@@ -627,6 +1286,9 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleWindowKeyDown)
   window.removeEventListener('resize', handleWindowResize)
+  stopMatchServerRefresh()
+  stopOnlinePolling()
+  stopOnlineRoomStateSubscription()
   stopAmbience()
   game?.dispose()
   canvasRenderer?.dispose()
@@ -635,6 +1297,7 @@ onUnmounted(() => {
 
 watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
+watch(matchNickname, storeMatchNickname)
 </script>
 
 <template>
@@ -666,38 +1329,243 @@ watch(recordPanelOpen, syncGameViewportInsets)
         >
           <polygon :points="mainArrowGeometry.points" />
         </svg>
-        <h1 class="main-title">
-          <span class="main-title-primary">5D Chess</span>
-          <span class="main-title-secondary">
-            With Multiverse Time Travel
-            <span class="main-title-online">Online</span>
-          </span>
-        </h1>
-        <div class="main-menu-buttons">
-          <button
-            class="game-button main-menu-button"
-            :style="menuButtonStyle"
-            type="button"
-            @click="startLocalGame"
-          >
-            <span>{{ mainMenuStartText }}</span>
-          </button>
-          <button
-            class="game-button main-menu-button"
-            :style="menuButtonStyle"
-            type="button"
-            @click="openHelpDialog"
-          >
-            <span>{{ t('main.help') }}</span>
-          </button>
-          <button
-            class="game-button main-menu-button"
-            :style="menuButtonStyle"
-            type="button"
-            @click="openGitHub"
-          >
-            <span>{{ t('main.github') }}</span>
-          </button>
+        <template v-if="mainMenuMode === 'home'">
+          <h1 class="main-title">
+            <span class="main-title-primary">5D Chess</span>
+            <span class="main-title-secondary">
+              With Multiverse Time Travel
+              <span class="main-title-online">Online</span>
+            </span>
+          </h1>
+          <div class="main-menu-buttons">
+            <GameButton
+              class="main-menu-button"
+              :style="menuButtonStyle"
+              @click="startLocalGame"
+            >
+              <span>{{ mainMenuStartText }}</span>
+            </GameButton>
+            <GameButton
+              class="main-menu-button"
+              :style="menuButtonStyle"
+              :badge="onlineSession ? '!' : ''"
+              @click="openMatchPage"
+            >
+              <span>{{ t('main.match') }}</span>
+            </GameButton>
+            <GameButton
+              class="main-menu-button"
+              :style="menuButtonStyle"
+              @click="openHelpDialog"
+            >
+              <span>{{ t('main.help') }}</span>
+            </GameButton>
+            <GameButton
+              class="main-menu-button"
+              :style="menuButtonStyle"
+              @click="openGitHub"
+            >
+              <span>{{ t('main.github') }}</span>
+            </GameButton>
+          </div>
+        </template>
+        <div
+          v-else
+          class="match-card"
+          :style="menuButtonStyle"
+        >
+          <div class="match-card-header">
+            <h2 class="dialog-title">{{ t('match.title') }}</h2>
+            <div class="match-card-actions">
+              <div class="match-control-slot match-control-slot--input match-nickname-slot">
+                <input
+                  v-model="matchNickname"
+                  class="match-server-input"
+                  :placeholder="t('match.nicknamePlaceholder')"
+                  type="text"
+                  spellcheck="false"
+                >
+              </div>
+              <GameButton
+                class="match-small-button"
+                :style="menuButtonStyle"
+                @click="clickRefreshMatchServers"
+              >
+                <span>{{ t('match.refresh') }}</span>
+              </GameButton>
+              <GameButton
+                class="match-small-button"
+                :style="menuButtonStyle"
+                @click="closeMatchPage"
+              >
+                <span>{{ t('button.back') }}</span>
+              </GameButton>
+            </div>
+          </div>
+          <div class="match-server-list">
+            <section
+              v-if="onlineSession"
+              class="match-server match-server--saved"
+            >
+              <div class="match-room">
+                <div class="match-room-main">
+                  <div class="match-room-name">{{ getSavedOnlineGameTitle(onlineSession) }}</div>
+                  <div class="match-room-meta">
+                    {{ getSavedOnlineGameMeta(onlineSession) }}
+                  </div>
+                  <div
+                    v-if="onlineRecoveryError"
+                    class="match-error"
+                  >
+                    {{ onlineRecoveryError }}
+                  </div>
+                </div>
+                <div class="match-server-actions">
+                  <GameButton
+                    class="match-small-button"
+                    :style="menuButtonStyle"
+                    @click="clickRecoverOnlineSession"
+                  >
+                    <span>{{ t('match.continueGame') }}</span>
+                  </GameButton>
+                  <GameButton
+                    class="match-small-button"
+                    :style="menuButtonStyle"
+                    @click="forgetOnlineSession"
+                  >
+                    <span>{{ t('match.forgetSavedGame') }}</span>
+                  </GameButton>
+                </div>
+              </div>
+            </section>
+            <section class="match-server match-server--manual">
+              <div class="match-manual-row">
+                <div class="match-control-slot match-control-slot--input">
+                  <input
+                    v-model="manualMatchServerAddress"
+                    class="match-server-input"
+                    :placeholder="t('match.serverAddressPlaceholder')"
+                    type="text"
+                    spellcheck="false"
+                    @keydown.enter.prevent="addManualMatchServer"
+                  >
+                </div>
+                <GameButton
+                  class="match-small-button"
+                  :style="menuButtonStyle"
+                  :disabled="manualMatchServerAddress.trim().length === 0"
+                  @click="addManualMatchServer"
+                >
+                  <span>{{ t('match.addServer') }}</span>
+                </GameButton>
+              </div>
+            </section>
+            <section
+              v-for="server in matchServers"
+              :key="server.id"
+              class="match-server"
+            >
+              <div class="match-server-header">
+                <GameButton
+                  class="match-toggle-button"
+                  :style="menuButtonStyle"
+                  :aria-label="isMatchServerExpanded(server) ? t('match.collapseServer') : t('match.expandServer')"
+                  :aria-expanded="isMatchServerExpanded(server)"
+                  @click="toggleMatchServerExpanded(server)"
+                >
+                  <span>{{ isMatchServerExpanded(server) ? 'v' : '>' }}</span>
+                </GameButton>
+                <div class="match-server-main">
+                  <div class="match-server-address">{{ getMatchServerDisplayAddress(server) }}</div>
+                  <div class="match-server-meta">
+                    <span
+                      class="match-status"
+                      :class="`match-status--${server.status}`"
+                    >
+                      {{ getMatchStatusText(server.status) }}
+                    </span>
+                    <span v-if="server.name">{{ server.name }}</span>
+                  </div>
+                </div>
+                <div class="match-server-actions">
+                  <GameButton
+                    v-if="server.status !== 'connected' && server.status !== 'connecting'"
+                    class="match-small-button"
+                    :style="menuButtonStyle"
+                    @click="clickConnectMatchServer(server)"
+                  >
+                    <span>{{ t('match.connect') }}</span>
+                  </GameButton>
+                  <GameButton
+                    v-if="isManualMatchServer(server)"
+                    class="match-small-button"
+                    :style="menuButtonStyle"
+                    @click="removeManualMatchServer(server)"
+                  >
+                    <span>{{ t('match.removeServer') }}</span>
+                  </GameButton>
+                </div>
+              </div>
+              <div
+                v-if="server.status === 'connected' && isMatchServerExpanded(server)"
+                class="match-room-list"
+              >
+                <div class="match-room match-room--create">
+                  <div class="match-room-main">
+                    <div class="match-room-fields">
+                      <div class="match-control-slot match-control-slot--input">
+                        <input
+                          v-model="matchRoomName"
+                          class="match-server-input"
+                          :placeholder="t('match.roomNamePlaceholder')"
+                          type="text"
+                          spellcheck="false"
+                          @keydown.enter.prevent="createMatchRoom(server)"
+                        >
+                      </div>
+                    </div>
+                  </div>
+                  <GameButton
+                    class="match-small-button"
+                    :style="menuButtonStyle"
+                    @click="createMatchRoom(server)"
+                  >
+                    <span>{{ t('match.createRoom') }}</span>
+                  </GameButton>
+                </div>
+                <div
+                  v-if="server.rooms.length === 0"
+                  class="match-empty"
+                >
+                  {{ t('match.noRooms') }}
+                </div>
+                <div
+                  v-for="room in getSortedMatchRooms(server)"
+                  :key="room.id"
+                  class="match-room"
+                >
+                  <div class="match-room-main">
+                    <div class="match-room-name">{{ room.name }}</div>
+                    <div class="match-room-meta">{{ getMatchRoomMeta(room) }}</div>
+                  </div>
+                  <GameButton
+                    v-if="room.status === 'waiting'"
+                    class="match-small-button"
+                    :style="menuButtonStyle"
+                    @click="joinMatchRoom(server, room.id)"
+                  >
+                    <span>{{ t('match.join') }}</span>
+                  </GameButton>
+                </div>
+              </div>
+              <div
+                v-else-if="server.status === 'failed' && isMatchServerExpanded(server)"
+                class="match-error"
+              >
+                {{ server.error || t('match.failedMessage') }}
+              </div>
+            </section>
+          </div>
         </div>
       </section>
 
@@ -705,14 +1573,12 @@ watch(recordPanelOpen, syncGameViewportInsets)
         v-if="gameStarted"
         class="toolbar toolbar-primary"
       >
-        <button
+        <GameButton
           v-for="button in primaryButtons"
           :key="button.id"
-          class="game-button"
-          :class="{ 'is-pulsing': button.effect === 'pulse' && !button.disabled }"
           :style="getButtonStyle(button)"
           :disabled="button.disabled"
-          type="button"
+          :pulsing="button.effect === 'pulse'"
           @click="clickToolbarButton(button)"
         >
           <span>{{ getButtonText(button) }}</span>
@@ -723,16 +1589,15 @@ watch(recordPanelOpen, syncGameViewportInsets)
             alt=""
             draggable="false"
           >
-        </button>
+        </GameButton>
       </div>
 
       <div
         class="toolbar toolbar-secondary"
       >
-        <button
-          class="game-button game-button--circle"
+        <GameButton
+          class="game-button--circle"
           :style="menuButtonStyle"
-          type="button"
           :aria-label="t('dialog.languageTitle')"
           @click="openLanguageDialog"
         >
@@ -750,26 +1615,35 @@ watch(recordPanelOpen, syncGameViewportInsets)
             <path d="M12 3c2.3 2.5 3.5 5.5 3.5 9s-1.2 6.5-3.5 9" />
             <path d="M12 3c-2.3 2.5-3.5 5.5-3.5 9s1.2 6.5 3.5 9" />
           </svg>
-        </button>
-        <button
+        </GameButton>
+        <GameButton
           v-if="gameStarted"
-          class="game-button game-button--circle"
+          class="game-button--circle"
           :style="menuButtonStyle"
-          type="button"
           :aria-label="t('button.menu')"
           :aria-expanded="secondaryMenuOpen"
           @click="toggleSecondaryMenu"
         >
           <span>...</span>
-        </button>
+        </GameButton>
       </div>
 
       <div
         v-if="gameStarted"
-        class="game-status"
-        :class="{ 'game-status--ended': gameStatus.ended }"
+        class="game-status-stack"
       >
-        {{ gameStatusText }}
+        <div
+          v-if="onlineStatusText"
+          class="online-status"
+        >
+          {{ onlineStatusText }}
+        </div>
+        <div
+          class="game-status"
+          :class="{ 'game-status--ended': gameStatus.ended }"
+        >
+          {{ gameStatusText }}
+        </div>
       </div>
 
       <aside
@@ -781,18 +1655,17 @@ watch(recordPanelOpen, syncGameViewportInsets)
         <div class="record-header-bar">
           <h2 class="record-title">{{ t('record.title') }}</h2>
           <div class="record-header-actions">
-            <button
+            <GameButton
               v-for="button in recordActionButtons"
               :key="button.id"
-              class="game-button record-header-button"
-              :class="{ 'is-pulsing': button.effect === 'pulse' && !button.disabled }"
+              class="record-header-button"
               :style="menuButtonStyle"
               :disabled="button.disabled"
-              type="button"
+              :pulsing="button.effect === 'pulse'"
               @click="clickToolbarButton(button)"
             >
               <span>{{ getButtonText(button) }}</span>
-            </button>
+            </GameButton>
           </div>
         </div>
         <p
@@ -871,32 +1744,26 @@ watch(recordPanelOpen, syncGameViewportInsets)
           class="secondary-menu-card"
           @click.stop
         >
-          <button
-            class="game-button"
-            :class="{ 'is-open': recordPanelOpen }"
+          <GameButton
             :style="menuButtonStyle"
-            type="button"
+            :open="recordPanelOpen"
             :aria-expanded="recordPanelOpen"
             @click="clickRecordMenuButton"
           >
             <span>{{ t('button.record') }}</span>
-          </button>
-          <button
-            class="game-button"
+          </GameButton>
+          <GameButton
             :style="menuButtonStyle"
-            type="button"
             @click="clickReturnToMainMenuButton"
           >
             <span>{{ t('button.returnToMainMenu') }}</span>
-          </button>
-          <button
+          </GameButton>
+          <GameButton
             v-for="button in menuButtons"
             :key="button.id"
-            class="game-button"
-            :class="{ 'is-pulsing': button.effect === 'pulse' && !button.disabled }"
             :style="menuButtonStyle"
             :disabled="button.disabled"
-            type="button"
+            :pulsing="button.effect === 'pulse'"
             @click="clickToolbarButton(button)"
           >
             <span>{{ getButtonText(button) }}</span>
@@ -907,7 +1774,7 @@ watch(recordPanelOpen, syncGameViewportInsets)
               alt=""
               draggable="false"
             >
-          </button>
+          </GameButton>
         </div>
       </div>
 
@@ -924,17 +1791,16 @@ watch(recordPanelOpen, syncGameViewportInsets)
         >
           <h2 class="dialog-title">{{ t('dialog.languageTitle') }}</h2>
           <div class="language-list">
-            <button
+            <GameButton
               v-for="option in languageOptions"
               :key="option.value"
-              class="game-button language-button"
-              :class="{ 'is-open': option.value === language }"
+              class="language-button"
               :style="getPresetButtonStyle(option.value === language ? ButtonColors.GreenWhite : ButtonColors.White)"
-              type="button"
+              :open="option.value === language"
               @click="selectLanguage(option.value)"
             >
               <span>{{ option.label }}</span>
-            </button>
+            </GameButton>
           </div>
         </div>
 
@@ -959,23 +1825,21 @@ watch(recordPanelOpen, syncGameViewportInsets)
             {{ importError || t('error.importFailed') }}
           </p>
           <div class="dialog-actions">
-            <button
-              class="game-button dialog-button"
+            <GameButton
+              class="dialog-button"
               :style="menuButtonStyle"
-              type="button"
               @click="closeDialog()"
             >
               <span>{{ t('button.cancel') }}</span>
-            </button>
-            <button
-              class="game-button dialog-button"
+            </GameButton>
+            <GameButton
+              class="dialog-button"
               :style="menuButtonStyle"
               :disabled="importText.trim().length === 0"
-              type="button"
               @click="submitImportDialog"
             >
               <span>{{ t('button.import') }}</span>
-            </button>
+            </GameButton>
           </div>
         </div>
 
@@ -1006,22 +1870,20 @@ watch(recordPanelOpen, syncGameViewportInsets)
             {{ exportCopyStatus || t('export.copied') }}
           </p>
           <div class="dialog-actions">
-            <button
-              class="game-button dialog-button"
+            <GameButton
+              class="dialog-button"
               :style="menuButtonStyle"
-              type="button"
               @click="copyExportText"
             >
               <span>{{ t('button.copy') }}</span>
-            </button>
-            <button
-              class="game-button dialog-button"
+            </GameButton>
+            <GameButton
+              class="dialog-button"
               :style="menuButtonStyle"
-              type="button"
               @click="closeDialog()"
             >
               <span>{{ t('button.close') }}</span>
-            </button>
+            </GameButton>
           </div>
         </div>
 
@@ -1034,14 +1896,13 @@ watch(recordPanelOpen, syncGameViewportInsets)
           <h2 class="dialog-title">{{ t('dialog.helpTitle') }}</h2>
           <div class="help-content">{{ t('dialog.helpText') }}</div>
           <div class="dialog-actions">
-            <button
-              class="game-button dialog-button"
+            <GameButton
+              class="dialog-button"
               :style="menuButtonStyle"
-              type="button"
               @click="closeDialog()"
             >
               <span>{{ t('button.close') }}</span>
-            </button>
+            </GameButton>
           </div>
         </div>
       </div>
@@ -1191,6 +2052,204 @@ canvas {
   font-size: var(--main-menu-button-font-size);
 }
 
+.match-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 3);
+  width: min(760px, calc(100vw - var(--button-top) * 2));
+  height: min(620px, calc(100vh - var(--button-top) * 2));
+  padding: calc(var(--button-content-gap) * 5);
+  border: var(--button-border) solid var(--menu-card-border-color);
+  border-radius: 8px;
+  background: var(--menu-card-fill-color);
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
+  color: var(--button-text-color);
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+.match-card-header,
+.match-server-header,
+.match-room {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--button-content-gap) * 2);
+}
+
+.match-card-actions {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--button-content-gap) * 1.5);
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.match-server-list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--button-content-gap);
+  min-height: 0;
+  padding-right: calc(var(--button-content-gap) * 0.5);
+  overflow: auto;
+}
+
+.match-server {
+  display: flex;
+  flex-direction: column;
+  gap: var(--button-content-gap);
+  padding: var(--button-content-gap);
+  border: var(--button-border) solid var(--button-border-color);
+  border-radius: 8px;
+  background: var(--button-fill-color);
+}
+
+.match-server--saved {
+  flex: 0 0 auto;
+}
+
+.match-manual-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--button-content-gap);
+}
+
+.match-control-slot {
+  height: calc(32px + var(--small-button-shadow-offset));
+}
+
+.match-control-slot--input {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.match-nickname-slot {
+  flex: 0 1 190px;
+}
+
+.match-server-main,
+.match-room-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.match-server-address,
+.match-room-name {
+  overflow: hidden;
+  font-size: 18px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-server-meta,
+.match-room-meta,
+.match-error,
+.match-empty {
+  font-size: 14px;
+  line-height: 1.25;
+  opacity: 0.78;
+}
+
+.match-server-meta {
+  display: flex;
+  gap: calc(var(--button-content-gap) * 0.75);
+  min-width: 0;
+}
+
+.match-server-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--button-content-gap) * 1.5);
+}
+
+.match-status--connected {
+  color: rgb(92, 135, 95);
+}
+
+.match-status--failed {
+  color: rgb(184, 84, 61);
+}
+
+.match-room-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 0.5);
+}
+
+.match-room {
+  padding: calc(var(--button-content-gap) * 0.75) 0 0;
+}
+
+.match-room:not(:first-child) {
+  border-top: 1px solid color-mix(in srgb, var(--button-border-color) 55%, transparent);
+}
+
+.match-room--create {
+  align-items: baseline;
+}
+
+.match-room-fields {
+  display: flex;
+  gap: var(--button-content-gap);
+}
+
+.game-button.match-small-button {
+  --button-shadow-offset: var(--small-button-shadow-offset);
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 96px;
+  height: 32px;
+  padding: 0 12px;
+  border-width: 2px;
+  border-radius: 16px;
+  font-size: 16px;
+}
+
+.game-button.match-toggle-button {
+  --button-shadow-offset: var(--small-button-shadow-offset);
+  flex: 0 0 auto;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  border-width: 2px;
+  border-radius: 50%;
+  font-size: 18px;
+}
+
+.match-server-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 2px solid var(--button-border-color);
+  border-radius: 16px;
+  background: var(--button-fill-color);
+  color: var(--button-text-color);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  outline: none;
+  box-shadow: var(--small-button-shadow-offset) var(--small-button-shadow-offset) 0 var(--button-shadow-color);
+}
+
+.match-server-input:focus {
+  border-color: var(--button-hover-border-color);
+  background: var(--button-hover-fill-color);
+  color: var(--button-hover-text-color);
+}
+
 .toolbar-primary {
   top: var(--button-top);
   left: 50%;
@@ -1202,19 +2261,35 @@ canvas {
   bottom: var(--button-top);
 }
 
-.game-status {
+.game-status-stack {
   position: absolute;
   left: var(--button-top);
   bottom: var(--button-top);
-  max-width: min(560px, calc(100vw - var(--button-top) * 2));
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 0.75);
+  max-width: min(720px, calc(100vw - var(--button-top) * 2));
+  pointer-events: none;
+  user-select: none;
+}
+
+.game-status,
+.online-status {
   color: var(--game-status-color);
-  font-size: var(--button-font-size);
   line-height: 1.1;
   text-shadow:
     0 2px 7px var(--game-status-shadow-color),
     0 0 3px var(--game-status-shadow-color);
-  pointer-events: none;
-  user-select: none;
+}
+
+.game-status {
+  max-width: min(560px, calc(100vw - var(--button-top) * 2));
+  font-size: var(--button-font-size);
+}
+
+.online-status {
+  max-width: min(640px, calc(100vw - var(--button-top) * 2));
+  font-size: 20px;
 }
 
 .game-status--ended {
@@ -1306,7 +2381,7 @@ canvas {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
-  align-items: start;
+  align-items: baseline;
   padding: 2px var(--button-content-gap);
   border-radius: 8px;
   cursor: pointer;
@@ -1331,7 +2406,6 @@ canvas {
 
 .record-serial {
   font-variant-numeric: tabular-nums;
-  text-align: right;
   white-space: nowrap;
   opacity: 0.78;
 }
@@ -1440,6 +2514,7 @@ canvas {
   border-radius: 8px;
   background: var(--button-fill-color);
   color: var(--button-text-color);
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
   font: inherit;
   font-size: 18px;
   line-height: 1.35;
@@ -1496,38 +2571,6 @@ canvas {
 .language-button {
   width: var(--secondary-button-width);
   max-width: calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10);
-}
-
-.game-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--button-content-gap);
-  width: var(--button-width);
-  height: var(--button-height);
-  padding: 0 20px;
-  border: var(--button-border) solid var(--button-border-color);
-  border-radius: calc(var(--button-height) / 2);
-  background: var(--button-fill-color);
-  color: var(--button-text-color);
-  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
-  font: inherit;
-  font-size: var(--button-font-size);
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  outline: none;
-  user-select: none;
-}
-
-.game-button > span,
-.dialog-title,
-.game-status,
-.record-title,
-.record-message,
-.record-empty,
-.dialog-message {
-  transform: translateY(var(--ui-text-y));
 }
 
 .toolbar-secondary .game-button {

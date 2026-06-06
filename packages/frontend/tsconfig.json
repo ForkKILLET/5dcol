@@ -23,6 +23,8 @@
 
     /* paths */
     "paths": {
+      "@5dcol/backend/protocol": ["../backend/src/protocol.ts"],
+      "@5dcol/core": ["../core/src/index.ts"],
       "@comp/*": ["./src/components/*"],
       "@engine/*": ["./src/engine/*"],
       "@/*": ["./src/*"],

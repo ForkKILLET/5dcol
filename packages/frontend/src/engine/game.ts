@@ -34,12 +34,21 @@ export interface GameConfig {
   logger: Logger
   renderer: Renderer
   soundManager: SoundManager
+  initialActions?: Action[]
+  localPlayer?: Player
+  canControlOnlineGame?: () => boolean
+  isExternallyFinished?: () => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
   onRecordChange?: (request: GameExportRequest) => void
   onStatusChange?: (status: GameStatusView) => void
   onImportRequest?: () => void
   onExportRequest?: (request: GameExportRequest) => void
-  onReturnToMainMenuRequest?: () => void
+  onReturnToMainMenuRequest?: (request?: GameReturnToMainMenuRequest) => void
+  onActionSubmitted?: (action: Action, actions: Action[]) => void
+}
+
+export interface GameReturnToMainMenuRequest {
+  forfeit?: boolean
 }
 
 export interface GameExportRequest {
@@ -192,6 +201,9 @@ export class Game extends Disposable(Empty) {
   private pendingChecks: PendingCheck[] = []
   private pendingCheckBoardKeys = new Set<string>()
   private moveAnimation: MoveAnimation | null = null
+  private remoteActionQueue: Action[] = []
+  private remoteActionMoves: Move[] | null = null
+  private remoteActionTargetSignature = ''
   private boardFocusPulse: BoardFocusPulse | null = null
   private gameEndStatus: Exclude<CheckmateStatus, 'not-checkmate'> | null = null
   private gameEndTrial = false
@@ -211,7 +223,9 @@ export class Game extends Disposable(Empty) {
   private gameDisposed = false
 
   public start() {
-    const restored = this.restoreGameState()
+    const restored = this.config.initialActions
+      ? this.restoreInitialActions(this.config.initialActions)
+      : this.restoreGameState()
     this.renderer.start()
     if (restored) this.focusCurrentPresent({ smooth: false })
     else this.focusInitialTurn({ smooth: false })
@@ -257,6 +271,29 @@ export class Game extends Disposable(Empty) {
     })
   }
 
+  public loadActions(
+    actions: Action[],
+    { focus = true, force = false, animate = false }: { focus?: boolean, force?: boolean, animate?: boolean } = {},
+  ) {
+    if (! force && this.pendingMoves.length > 0 && actions.length <= this.actions.length) return
+    if (JSON.stringify(actions) === JSON.stringify(this.actions)) {
+      this.syncToolbarButtons()
+      this.syncStatus()
+      return
+    }
+    if (animate && ! force && this.tryStartRemoteActionPlayback(actions)) return
+
+    this.loadCoreGameState(CoreGameState.create(actions), { focus })
+    this.syncToolbarButtons()
+    this.syncRecord()
+    this.syncStatus()
+  }
+
+  private restoreInitialActions(actions: Action[]): boolean {
+    this.loadCoreGameState(CoreGameState.create(actions), { focus: false })
+    return actions.length > 0
+  }
+
   private restoreGameState(): boolean {
     const storage = getLocalStorage()
     if (! storage) return false
@@ -300,6 +337,12 @@ export class Game extends Disposable(Empty) {
   }
 
   private persistGameState() {
+    if (this.isOnlineGame()) {
+      this.syncRecord()
+      this.syncStatus()
+      return
+    }
+
     const storage = getLocalStorage()
 
     const state: StoredGameState = {
@@ -324,6 +367,15 @@ export class Game extends Disposable(Empty) {
     this.syncStatus()
   }
 
+  private isOnlineGame(): boolean {
+    return this.config.localPlayer !== undefined
+  }
+
+  private canControlTurn(): boolean {
+    return (this.config.canControlOnlineGame?.() ?? true)
+      && (this.config.localPlayer === undefined || this.config.localPlayer === this.player)
+  }
+
   private clearStoredGameState() {
     const storage = getLocalStorage()
     if (! storage) return
@@ -331,9 +383,7 @@ export class Game extends Disposable(Empty) {
     try {
       storage.removeItem(GAME_STORAGE_KEY)
     }
-    catch {
-      // Ignore storage cleanup failures; gameplay state should still reset in memory.
-    }
+    catch {} // Ignore storage cleanup failures; gameplay state should still reset in memory.
   }
 
   private bindEvents() {
@@ -633,6 +683,7 @@ export class Game extends Disposable(Empty) {
     this.render()
     this.renderer.flush()
     this.finalizeSubmittedMoveAfterAnimation()
+    this.continueRemoteActionPlaybackAfterAnimation()
     this.animationFrame = requestAnimationFrame(this.loop)
   }
 
@@ -659,18 +710,21 @@ export class Game extends Disposable(Empty) {
       return
     }
 
-    this.hoverCheckWarning = this.gameInputDisabled
+    const canControlTurn = this.canControlTurn()
+    this.hoverCheckWarning = this.gameInputDisabled || ! canControlTurn
       ? null
       : this.getCheckWarningBadgeAtScreen(this.pointer.screen)
     const hit = this.getBoardSquareAtScreen(this.pointer.screen)
     this.hoverSquare = hit ? { l: hit.l, m: hit.m, coord: hit.coord } : null
     const playableHit = this.getPlayableBoardSquareAtScreen(this.pointer.screen)
-    this.hoverPiece = this.selectedPiece || ! playableHit ? null : this.getPieceSelectionFromHit(playableHit)
+    this.hoverPiece = this.selectedPiece || ! playableHit || ! canControlTurn
+      ? null
+      : this.getPieceSelectionFromHit(playableHit)
     this.syncToolbarButtons()
   }
 
   private getToolbarButtons(): ButtonConfig[] {
-    const finishGameButton = this.isGameEnded()
+    const finishGameButton = this.shouldShowFinishGameButton()
       ? {
           id: 'submit-moves',
           disabled: false,
@@ -680,14 +734,14 @@ export class Game extends Disposable(Empty) {
           piece: null,
           onClick: () => {
             this.playUISound()
-            this.config.onReturnToMainMenuRequest?.()
+            this.config.onReturnToMainMenuRequest?.({ forfeit: false })
           },
         } satisfies ButtonConfig
       : null
     const leftButton: ButtonConfig = this.selectedPiece
       ? {
           id: 'deselect-piece',
-          disabled: this.isMoveAnimating(),
+          disabled: this.isMoveAnimating() || ! this.canControlTurn(),
           colorPreset: ButtonColors.Board,
           turnPlayer: this.player,
           labelKey: 'button.deselect',
@@ -698,7 +752,9 @@ export class Game extends Disposable(Empty) {
         }
       : {
           id: 'undo-move',
-          disabled: this.pendingMoves.length === 0 || this.submitRequestedDuringMoveAnimation,
+          disabled: ! this.canControlTurn()
+            || this.pendingMoves.length === 0
+            || this.submitRequestedDuringMoveAnimation,
           colorPreset: this.hasPendingChecks()
             ? ButtonColors.Red
             : getUndoMoveButtonColor(this.pendingMoves.at(-1)?.is5D ?? false),
@@ -714,7 +770,9 @@ export class Game extends Disposable(Empty) {
       leftButton,
       finishGameButton ?? {
         id: 'submit-moves',
-        disabled: ! this.canSubmitMoves() || this.submitRequestedDuringMoveAnimation,
+        disabled: ! this.canControlTurn()
+          || ! this.canSubmitMoves()
+          || this.submitRequestedDuringMoveAnimation,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
         labelKey: 'button.submitMoves',
@@ -733,12 +791,12 @@ export class Game extends Disposable(Empty) {
         piece: null,
         onClick: () => {
           this.playRestartSound()
-          this.config.onReturnToMainMenuRequest?.()
+          this.config.onReturnToMainMenuRequest?.({ forfeit: true })
         },
       },
       {
         id: 'import-5dpgn',
-        disabled: this.isMoveAnimating(),
+        disabled: this.isMoveAnimating() || this.isOnlineGame(),
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
         labelKey: 'button.import',
@@ -878,8 +936,13 @@ export class Game extends Disposable(Empty) {
     return this.gameEndStatus !== null
   }
 
+  private shouldShowFinishGameButton(): boolean {
+    return this.isGameEnded() || (this.config.isExternallyFinished?.() ?? false)
+  }
+
   private handleBoardClick(screen: Vec2) {
     if (this.isMoveAnimating()) return
+    if (! this.canControlTurn()) return
     if (this.tryCreatePassAt(screen)) return
     if (this.tryCreateMoveAt(screen)) return
     this.selectPieceAt(screen)
@@ -957,8 +1020,18 @@ export class Game extends Disposable(Empty) {
       from: this.selectedPiece.from,
       to: target,
     }
+    this.createAnimatedPendingMove(move, { playSound: true, persist: true })
+    this.gameEndTrial ||= wasGameEnded
+    if (wasGameEndStatus) this.gameEndTrialStatus = wasGameEndStatus
+    this.selectedPiece = null
+    return true
+  }
+
+  private createAnimatedPendingMove(
+    move: Move,
+    { playSound, persist }: { playSound: boolean, persist: boolean },
+  ): PendingMove {
     const multiverseBefore = this.multiverse
-    const created = Multiverse.getMoveArrivalBoardIndex(move, this.player, multiverseBefore)
     const order = this.getMoveOrder(this.pendingMoves.length)
     const pendingMove: PendingMove = {
       move,
@@ -966,16 +1039,14 @@ export class Game extends Disposable(Empty) {
       multiverseBefore,
       is5D: ! Coord.isSameBoard(move.from, move.to),
       from: {
-        l: this.selectedPiece.l,
-        m: this.selectedPiece.m,
+        l: move.from.l,
+        m: Coord.boardIndex(move.from, this.player),
       },
-      created,
+      created: Multiverse.getMoveArrivalBoardIndex(move, this.player, multiverseBefore),
     }
     this.multiverse = Multiverse.applyMove(move, this.player, multiverseBefore, order)
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
-    this.gameEndTrial ||= wasGameEnded
-    if (wasGameEndStatus) this.gameEndTrialStatus = wasGameEndStatus
     this.gameEndStatus = null
     this.syncCheckState()
     this.moveAnimation = {
@@ -986,13 +1057,13 @@ export class Game extends Disposable(Empty) {
       travelHitPlayed: false,
     }
     this.submitRequestedDuringMoveAnimation = false
-    this.selectedPiece = null
-    this.playUISound()
-    this.persistGameState()
-    return true
+    if (playSound) this.playUISound()
+    if (persist) this.persistGameState()
+    return pendingMove
   }
 
   private undoMove() {
+    if (! this.canControlTurn()) return
     if (this.submitRequestedDuringMoveAnimation) return
     if (this.pendingMoves.length === 0) return
     this.playUndoSound()
@@ -1015,6 +1086,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private submitMoves() {
+    if (! this.canControlTurn()) return
     if (! this.canSubmitMoves()) return
     this.playUISound()
 
@@ -1033,6 +1105,20 @@ export class Game extends Disposable(Empty) {
     this.finalizeSubmitMoves()
   }
 
+  private continueRemoteActionPlaybackAfterAnimation() {
+    if (! this.remoteActionMoves) return
+    if (this.isMoveAnimating()) return
+
+    if (this.remoteActionMoves.length > 0) {
+      this.startNextRemoteMove()
+      return
+    }
+
+    this.finalizeRemoteAction()
+    this.remoteActionMoves = null
+    this.startNextRemoteAction()
+  }
+
   private finalizeSubmitMoves() {
     if (! this.canSubmitMoves()) {
       this.submitRequestedDuringMoveAnimation = false
@@ -1043,11 +1129,80 @@ export class Game extends Disposable(Empty) {
     if (this.actionIndex < this.actions.length) {
       this.actions = this.actions.slice(0, this.actionIndex)
     }
-    this.actions.push({
+    const action: Action = {
       moves: this.pendingMoves
         .filter(pendingMove => ! pendingMove.isPass)
         .map(pendingMove => pendingMove.move),
-    })
+    }
+    this.actions.push(action)
+    this.multiverseCommitted = this.multiverse
+    this.pendingMove = null
+    this.pendingMoves = []
+    this.clearMoveAnimation()
+    this.submitRequestedDuringMoveAnimation = false
+    this.deselectPiece()
+    this.player = CorePlayers.opponent(this.player)
+    this.actionIndex += 1
+    this.gameEndTrial = false
+    this.gameEndTrialStatus = null
+    this.updateGameEndState()
+    if (this.isGameEnded()) this.playGameEndSound()
+    else this.playTurnStartSound()
+    this.syncCheckState()
+    this.persistGameState()
+    this.config.onActionSubmitted?.(action, this.actions)
+  }
+
+  private tryStartRemoteActionPlayback(actions: Action[]): boolean {
+    const signature = JSON.stringify(actions)
+    if (signature === this.remoteActionTargetSignature) return true
+    if (! this.isOnlineGame()) return false
+    if (! isActionPrefix(this.actions, actions)) return false
+
+    const nextActions = actions.slice(this.actions.length)
+    if (nextActions.length === 0) return false
+
+    this.remoteActionTargetSignature = signature
+    this.remoteActionQueue = nextActions
+    this.remoteActionMoves = null
+    this.startNextRemoteAction()
+    return true
+  }
+
+  private startNextRemoteAction() {
+    if (this.isMoveAnimating() || this.pendingMoves.length > 0) return
+
+    const action = this.remoteActionQueue.shift()
+    if (! action) {
+      this.remoteActionTargetSignature = ''
+      return
+    }
+
+    this.remoteActionMoves = [...action.moves]
+    if (this.remoteActionMoves.length === 0) {
+      this.finalizeRemoteAction()
+      this.remoteActionMoves = null
+      this.startNextRemoteAction()
+      return
+    }
+
+    this.startNextRemoteMove()
+  }
+
+  private startNextRemoteMove() {
+    const move = this.remoteActionMoves?.shift()
+    if (! move) return
+
+    this.createAnimatedPendingMove(move, { playSound: true, persist: false })
+  }
+
+  private finalizeRemoteAction() {
+    const action: Action = {
+      moves: this.pendingMoves
+        .filter(pendingMove => ! pendingMove.isPass)
+        .map(pendingMove => pendingMove.move),
+    }
+    this.actions.push(action)
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
@@ -1120,7 +1275,7 @@ export class Game extends Disposable(Empty) {
     this.config.onExportRequest?.(this.getFiveDPGNExport())
   }
 
-  private loadCoreGameState(state: CoreGameState) {
+  private loadCoreGameState(state: CoreGameState, { focus = true }: { focus?: boolean } = {}) {
     this.actions = state.actions
     this.multiverseCommitted = state.multiverseCommitted
     this.multiverse = state.multiverse
@@ -1140,7 +1295,7 @@ export class Game extends Disposable(Empty) {
     this.updateGameEndState()
     this.syncCheckState()
     this.persistGameState()
-    this.focusCurrentPresent()
+    if (focus) this.focusCurrentPresent()
   }
 
   private deselectPiece() {
@@ -1166,6 +1321,11 @@ export class Game extends Disposable(Empty) {
   }
 
   private playTurnStartSound() {
+    if (this.config.localPlayer === this.player) {
+      this.soundManager.play('bell.ogg')
+      return
+    }
+
     this.soundManager.playSequence([
       { name: 'timpani_hit_c3.ogg', nextAfter: 0.5 },
       'timpani_hit_e3.ogg',
@@ -2653,4 +2813,13 @@ export class Game extends Disposable(Empty) {
       color: [1, 0, 0, 0.5],
     })
   }
+}
+
+const isActionPrefix = (prefix: Action[], actions: Action[]): boolean => {
+  if (prefix.length > actions.length) return false
+
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (JSON.stringify(prefix[i]) !== JSON.stringify(actions[i])) return false
+  }
+  return true
 }

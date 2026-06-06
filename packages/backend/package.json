@@ -1,0 +1,29 @@
+{
+  "name": "@5dcol/backend",
+  "version": "0.0.0",
+  "description": "Backend server for 5dcol online matches.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite-node --watch src/index.ts",
+    "start": "node dist/main.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10",
+    "vite-node": "^6.0.0"
+  },
+  "dependencies": {
+    "@5dcol/core": "workspace:*",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/websocket": "^11.2.0",
+    "fastify": "^5.8.5"
+  }
+}

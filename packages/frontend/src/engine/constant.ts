@@ -77,6 +77,7 @@ export namespace Sizes {
   export const ButtonHeight = 56
   export const ButtonTop = 18
   export const ButtonShadowOffset = 5
+  export const SmallButtonShadowOffset = 3
   export const ButtonBorder = 3
   export const ButtonFontSize = 32
   export const ButtonIconSize = 28

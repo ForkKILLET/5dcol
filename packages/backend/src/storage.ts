@@ -1,0 +1,95 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { GameState } from '@5dcol/core'
+
+import type { RoomState } from './server.ts'
+
+interface StoredRoomsFile {
+  version: 1
+  rooms: RoomState[]
+}
+
+const dirname = path.dirname(fileURLToPath(import.meta.url))
+const DEFAULT_DATA_FILE = path.resolve(dirname, '../data/rooms.json')
+
+export function createRoomStorage(filePath = process.env.MATCH_DATA_FILE ?? DEFAULT_DATA_FILE) {
+  return {
+    load(): RoomState[] {
+      try {
+        const raw = fs.readFileSync(filePath, 'utf8')
+        const data = JSON.parse(raw) as Partial<StoredRoomsFile>
+        if (data.version !== 1 || ! Array.isArray(data.rooms)) return []
+
+        const rooms = data.rooms.filter(isValidRoom)
+        return rooms
+      }
+      catch (err) {
+        if (isNotFoundError(err)) return []
+        console.error(err)
+        return []
+      }
+    },
+
+    save(rooms: RoomState[]) {
+      const data: StoredRoomsFile = {
+        version: 1,
+        rooms,
+      }
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      fs.writeFileSync(filePath, `${JSON.stringify(data)}\n`, 'utf8')
+    },
+  }
+}
+
+function isValidRoom(room: Partial<RoomState>): room is RoomState {
+  if (
+    typeof room.id !== 'string'
+    || typeof room.name !== 'string'
+    || room.maxPlayers !== 2
+    || ! Array.isArray(room.sessions)
+    || ! Array.isArray(room.actions)
+    || typeof room.updatedAt !== 'number'
+  ) return false
+
+  const now = Date.now()
+  if (room.sessions.some(session => {
+    if (
+      typeof session.id !== 'string'
+      || session.roomId !== room.id
+      || (session.player !== 0 && session.player !== 1)
+    ) return true
+
+    session.lastSeenAt ??= now
+    session.nickname ??= null
+    return typeof session.lastSeenAt !== 'number'
+      || (session.nickname !== null && typeof session.nickname !== 'string')
+  })) return false
+
+  room.winner ??= null
+  room.finishReason ??= null
+  room.createdAt ??= room.updatedAt
+  room.startedAt ??= null
+  if (room.winner !== null && room.winner !== 0 && room.winner !== 1) return false
+  if (typeof room.createdAt !== 'number') return false
+  if (room.startedAt !== null && typeof room.startedAt !== 'number') return false
+  if (
+    room.finishReason !== null
+    && room.finishReason !== 'checkmate'
+    && room.finishReason !== 'stalemate'
+    && room.finishReason !== 'forfeit'
+  ) return false
+
+  try {
+    GameState.create(room.actions)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return err instanceof Error && 'code' in err && err.code === 'ENOENT'
+}
