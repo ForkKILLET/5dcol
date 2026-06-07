@@ -323,9 +323,9 @@ const MAIN_MENU_BASE_LAYOUT: MainMenuLayout = {
   buttonHeight: Sizes.ButtonHeight,
   buttonFontSize: Sizes.ButtonFontSize,
   buttonGap: Sizes.ButtonContentGap * 1.5,
-  buttonsTop: 350,
+  buttonsTop: 430,
   arrowWidth: 300,
-  arrowHeight: 900,
+  arrowHeight: 945,
   arrowBorderWidth: 4,
 }
 
@@ -1570,6 +1570,7 @@ watch(gameSettings, () => {
         </svg>
         <template v-if="mainMenuMode === 'home'">
           <h1 class="main-title">
+            <span class="main-title-secondary">The unofficial</span>
             <span class="main-title-primary">5D Chess</span>
             <span class="main-title-secondary">
               With Multiverse Time Travel
