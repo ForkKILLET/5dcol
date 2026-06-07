@@ -43,6 +43,7 @@ export interface MatchRoom {
   winner: Player | null
   finishReason: MatchRoomFinishReason | null
   settings: MatchRoomSettings
+  private: boolean
   createdAt: number
   startedAt: number | null
   updatedAt: number
@@ -74,9 +75,14 @@ export interface MatchRoomsResponse {
   rooms: MatchRoom[]
 }
 
+export interface MatchRoomsRequestQuery {
+  password?: string
+}
+
 export interface CreateMatchRoomRequest {
   name?: string
   nickname?: string
+  password?: string
   settings?: Partial<MatchRoomSettings>
 }
 
@@ -86,6 +92,7 @@ export interface CreateMatchRoomResponse {
 
 export interface JoinMatchRoomRequest {
   nickname?: string
+  password?: string
 }
 
 export interface JoinMatchRoomResponse {

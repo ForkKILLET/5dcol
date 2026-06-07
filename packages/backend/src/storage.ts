@@ -71,6 +71,9 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
   room.winner ??= null
   room.finishReason ??= null
   room.settings = getValidRoomSettings(room.settings)
+  room.password = typeof room.password === 'string' && room.password.length > 0
+    ? room.password
+    : null
   room.createdAt ??= room.updatedAt
   room.startedAt ??= null
   if (room.winner !== null && room.winner !== 0 && room.winner !== 1) return false

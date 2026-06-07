@@ -24,6 +24,7 @@ import {
   type MatchRoomCreatorPlayer,
   type MatchRoomFinishReason,
   type MatchRoomSettings,
+  type MatchRoomsRequestQuery,
   type MatchRoomStateEvent,
   type MatchRoomsResponse,
   type MatchServerInfo,
@@ -52,6 +53,7 @@ export interface RoomState {
   winner: Player | null
   finishReason: MatchRoomFinishReason | null
   settings: MatchRoomSettings
+  password: string | null
   createdAt: number
   startedAt: number | null
   updatedAt: number
@@ -98,8 +100,8 @@ export function createBackendServer(options: BackendServerOptions) {
     name: options.name ?? DEFAULT_SERVER_NAME,
   }))
 
-  app.get('/rooms', async (): Promise<MatchRoomsResponse> => ({
-    rooms: getListedRooms(rooms),
+  app.get<{ Querystring: MatchRoomsRequestQuery }>('/rooms', async (request): Promise<MatchRoomsResponse> => ({
+    rooms: getListedRooms(rooms, normalizePassword(request.query.password)),
   }))
 
   app.post<{ Body: CreateMatchRoomRequest }>('/rooms', async (request, reply): Promise<CreateMatchRoomResponse> => {
@@ -114,6 +116,7 @@ export function createBackendServer(options: BackendServerOptions) {
       winner: null,
       finishReason: null,
       settings,
+      password: normalizePassword(body?.password),
       createdAt: Date.now(),
       startedAt: null,
       updatedAt: Date.now(),
@@ -185,6 +188,9 @@ export function createBackendServer(options: BackendServerOptions) {
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
       if (toRoomView(room).status !== 'waiting') return sendError(reply, 409, 'Room is not joinable')
+      if (! canAccessRoom(room, normalizePassword(request.body?.password))) {
+        return sendError(reply, 403, 'Invalid room password')
+      }
 
       const player = getAvailablePlayer(room)
       if (player === null) return sendError(reply, 409, 'Room is full')
@@ -325,6 +331,15 @@ function normalizeNickname(nickname: string | null | undefined): string | null {
   return trimmed ? trimmed.slice(0, 32) : null
 }
 
+function normalizePassword(password: string | null | undefined): string | null {
+  const trimmed = password?.trim()
+  return trimmed ? trimmed.slice(0, 128) : null
+}
+
+function canAccessRoom(room: RoomState, password: string | null): boolean {
+  return room.password === null || room.password === password
+}
+
 function normalizeRoomSettings(settings: Partial<MatchRoomSettings> | null | undefined): MatchRoomSettings {
   return {
     canSpectate: getBooleanSetting(settings?.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
@@ -390,6 +405,7 @@ function toRoomView(room: RoomState): MatchRoom {
     winner: room.winner,
     finishReason: room.finishReason,
     settings: room.settings,
+    private: room.password !== null,
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
@@ -406,12 +422,14 @@ function getRoomSeats(room: RoomState): MatchRoom['seats'] {
   ]
 }
 
-function getListedRooms(rooms: RoomState[]): MatchRoom[] {
+function getListedRooms(rooms: RoomState[], password: string | null): MatchRoom[] {
   const now = Date.now()
   const activeRooms = rooms
+    .filter(room => canAccessRoom(room, password))
     .filter(room => getRoomStatus(room) !== 'finished')
     .map(toRoomView)
   const finishedRooms = rooms
+    .filter(room => canAccessRoom(room, password))
     .filter(room => getRoomStatus(room) === 'finished')
     .filter(room => room.actions.length > 0)
     .filter(room => room.settings.saveRecordToServer)

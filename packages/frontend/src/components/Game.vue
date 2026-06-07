@@ -63,6 +63,7 @@ const viewportHeight = ref(window.innerHeight)
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
 const matchNickname = ref(getStoredMatchNickname())
+const matchPrivateRoomPassword = ref('')
 const matchRoomSettings = reactive<MatchRoomSettings>(getStoredMatchRoomSettings())
 const DEFAULT_SERVERS: Record<string, { name: string }> = {
   'http://localhost:5161': { name: 'Debug Server' },
@@ -728,7 +729,7 @@ async function connectMatchServer(server: MatchServerState) {
     const client = new MatchClient(server.address)
     const [info, rooms] = await Promise.all([
       client.getInfo(),
-      client.getRooms(),
+      client.getRooms(matchPrivateRoomPassword.value),
     ])
     server.name = info.name
     server.rooms = rooms
@@ -752,7 +753,7 @@ async function refreshConnectedMatchServers() {
 async function refreshMatchServerRooms(server: MatchServerState) {
   try {
     const client = new MatchClient(server.address)
-    server.rooms = await client.getRooms()
+    server.rooms = await client.getRooms(matchPrivateRoomPassword.value)
     server.error = ''
   }
   catch (err) {
@@ -795,6 +796,7 @@ async function createMatchRoom(server: MatchServerState) {
     const state = await client.createRoom({
       name: matchRoomName.value,
       nickname: matchNickname.value,
+      password: matchPrivateRoomPassword.value,
       settings: matchRoomSettings,
     })
     storeOnlineSession(server.address, state)
@@ -812,7 +814,10 @@ async function joinMatchRoom(server: MatchServerState, roomId: string) {
 
   try {
     const client = new MatchClient(server.address)
-    const state = await client.joinRoom(roomId, { nickname: matchNickname.value })
+    const state = await client.joinRoom(roomId, {
+      nickname: matchNickname.value,
+      password: matchPrivateRoomPassword.value,
+    })
     storeOnlineSession(server.address, state)
     startOnlineGame(server.address, state)
   }
@@ -1633,6 +1638,16 @@ watch(gameSettings, () => {
                   spellcheck="false"
                 >
               </div>
+              <div class="match-control-slot match-control-slot--input match-private-password-slot">
+                <input
+                  v-model="matchPrivateRoomPassword"
+                  class="match-server-input"
+                  :placeholder="t('match.privatePasswordPlaceholder')"
+                  type="password"
+                  autocomplete="off"
+                  @keydown.enter.prevent="clickRefreshMatchServers"
+                >
+              </div>
               <GameButton
                 class="match-small-button"
                 :style="menuButtonStyle"
@@ -1833,7 +1848,15 @@ watch(gameSettings, () => {
                   class="match-room"
                 >
                   <div class="match-room-main">
-                    <div class="match-room-name">{{ room.name }}</div>
+                    <div class="match-room-name">
+                      {{ room.name }}
+                      <span
+                        v-if="room.private"
+                        class="match-room-private"
+                      >
+                        {{ t('match.privateRoom') }}
+                      </span>
+                    </div>
                     <div class="match-room-meta">{{ getMatchRoomMeta(room) }}</div>
                   </div>
                   <GameButton
@@ -2498,6 +2521,10 @@ canvas {
   flex: 0 1 190px;
 }
 
+.match-private-password-slot {
+  flex: 0 1 170px;
+}
+
 .match-server-main,
 .match-room-main {
   flex: 1 1 auto;
@@ -2511,6 +2538,12 @@ canvas {
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.match-room-private {
+  margin-left: calc(var(--button-content-gap) * 0.75);
+  font-size: 12px;
+  opacity: 0.72;
 }
 
 .match-server-meta,

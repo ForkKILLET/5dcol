@@ -44,8 +44,11 @@ export class MatchClient {
     return await this.request<MatchServerInfo>('/health')
   }
 
-  async getRooms(): Promise<MatchRoom[]> {
-    const response = await this.request<MatchRoomsResponse>('/rooms')
+  async getRooms(password = ''): Promise<MatchRoom[]> {
+    const query = password.trim()
+      ? `?password=${encodeURIComponent(password.trim())}`
+      : ''
+    const response = await this.request<MatchRoomsResponse>(`/rooms${query}`)
     return response.rooms
   }
 
