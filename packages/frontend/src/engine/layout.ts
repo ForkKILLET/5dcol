@@ -1,4 +1,4 @@
-import { Line, Multiverse, type CoordSpacelike } from '@5dcol/core'
+import { Line, Multiverse, Player, type CoordSpacelike } from '@5dcol/core'
 import { Rect, Vec2, type Rect as RectType, type Vec2 as Vec2Type } from '@engine/basic'
 import { Sizes } from '@engine/constant'
 import { type Renderer } from '@engine/renderer'
@@ -26,6 +26,19 @@ export class GameLayout {
   constructor(private readonly renderer: Renderer) {}
 
   private viewportInsets: ViewportInsets = { ...DEFAULT_VIEWPORT_INSETS }
+  private viewPlayer: Player = Player.W
+
+  setViewPlayer(player: Player) {
+    this.viewPlayer = player
+  }
+
+  getDisplayLine(l: number): number {
+    return this.viewPlayer === Player.W ? -l : l
+  }
+
+  getLogicalLine(displayLine: number): number {
+    return this.viewPlayer === Player.W ? -displayLine : displayLine
+  }
 
   setViewportInsets(insets: Partial<ViewportInsets>) {
     this.viewportInsets = {
@@ -57,11 +70,11 @@ export class GameLayout {
   }
 
   getTurnY(l: number): number {
-    return l * Sizes.TurnHeight
+    return this.getDisplayLine(l) * Sizes.TurnHeight
   }
 
   getLineY(l: number): number {
-    return l * (Sizes.BoardWidth + Sizes.BoardGap)
+    return this.getDisplayLine(l) * (Sizes.BoardWidth + Sizes.BoardGap)
   }
 
   getSquareCenter(l: number, m: number, coord: CoordSpacelike): Vec2Type {

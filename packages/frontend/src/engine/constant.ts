@@ -183,6 +183,7 @@ export namespace Animations {
   export const BoardFocusMaskAlpha = 0.42
   export const PulseEffectDuration = 1000
   export const GameEndBackgroundDuration = 600
+  export const ViewFlipTransitionDuration = 360
 }
 
 export interface ButtonColorPreset {

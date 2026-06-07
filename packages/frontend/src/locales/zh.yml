@@ -10,6 +10,7 @@ button.cancel: "取消"
 button.copy: "复制"
 button.close: "关闭"
 button.menu: "菜单"
+button.flipView: "翻转视角"
 button.returnToMainMenu: "主菜单"
 button.back: "返回"
 
@@ -32,6 +33,7 @@ dialog.helpText: |
   WASD：平移视口
   Q / E：缩小 / 放大
   R：显示或隐藏记谱面板
+  U：翻转视角
   Esc：打开或关闭局内菜单
 
   记谱和文件

@@ -15,6 +15,7 @@ import { CanvasRenderer } from '@engine/canvas/renderer'
 import { type LoopingSound, SoundManager } from '@engine/sound'
 import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
 import GameButton from './GameButton.vue'
+import GameIcon from './GameIcon.vue'
 
 const canvas = useTemplateRef('canvas')
 
@@ -78,6 +79,7 @@ const onlinePresence = ref<MatchPresence | null>(null)
 const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
 const onlineError = ref('')
 const onlineRecoveryError = ref('')
+const viewPlayer = ref<Player>(getStoredViewPlayer() ?? Player.W)
 const logger = new Logger(messages)
 let game: Game | null = null
 let canvasRenderer: CanvasRenderer | null = null
@@ -92,6 +94,7 @@ let onlineRoomStateSubscriptionActive = false
 const query = new URLSearchParams(window.location.search)
 const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
 const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
+const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
 const MATCH_REFRESH_INTERVAL_MS = 5000
 const ONLINE_RECONNECT_DELAY_MS = 1000
 
@@ -173,7 +176,18 @@ const recordHeaders = computed(() => (
     .filter(line => line.startsWith('['))
 ))
 const recordRows = computed(() => recordActions.value)
-const menuButtonStyle = computed(() => getPresetButtonStyle(ButtonColors.White))
+const viewButtonPreset = computed(() => (
+  gameStarted.value && viewPlayer.value === Player.B
+    ? ButtonColors.Black
+    : ButtonColors.White
+))
+const viewHoverButtonPreset = computed(() => (
+  viewPlayer.value === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
+))
+const menuButtonStyle = computed(() => getPresetButtonStyle(
+  viewButtonPreset.value,
+  viewHoverButtonPreset.value,
+))
 const mainMenuStartText = computed(() => (
   hasSavedGame.value ? t.value('main.resume') : t.value('main.start')
 ))
@@ -189,7 +203,9 @@ const mainArrowStyle = computed(() => ({
   width: `${mainMenuLayout.value.arrowWidth}px`,
   height: `${mainMenuLayout.value.arrowHeight}px`,
 }))
-const uiStyle = computed(() => ({
+const uiStyle = computed(() => {
+  const menuCardPreset = viewButtonPreset.value
+  return {
   '--button-width': `${Sizes.ButtonWidth}px`,
   '--secondary-button-width': `${Sizes.SecondaryButtonWidth}px`,
   '--record-panel-width': `${Sizes.RecordPanelWidth}px`,
@@ -205,8 +221,8 @@ const uiStyle = computed(() => ({
   '--button-shadow-color': Color4.toRgbaString(Colors.Shadow),
   '--button-pulse-duration': `${Animations.PulseEffectDuration * 2}ms`,
   '--overlay-mask-color': Color4.toRgbaString(Colors.OverlayMask),
-  '--menu-card-border-color': Color4.toRgbaString(ButtonColors.White.border),
-  '--menu-card-fill-color': Color4.toRgbaString(ButtonColors.White.fill),
+  '--menu-card-border-color': Color4.toRgbaString(menuCardPreset.border),
+  '--menu-card-fill-color': Color4.toRgbaString(menuCardPreset.fill),
   '--record-white-bg': Color4.toRgbaString(ButtonColors.White.border),
   '--record-white-text': Color4.toRgbaString(ButtonColors.White.text),
   '--record-black-bg': Color4.toRgbaString(ButtonColors.Black.fill),
@@ -232,7 +248,8 @@ const uiStyle = computed(() => ({
   '--main-menu-button-font-size': `${mainMenuLayout.value.buttonFontSize}px`,
   '--main-menu-button-gap': `${mainMenuLayout.value.buttonGap}px`,
   '--main-menu-buttons-top': `${mainMenuLayout.value.buttonsTop}px`,
-}))
+  }
+})
 
 interface MainMenuLayout {
   areaLeft: number
@@ -897,6 +914,15 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   }
 }
 
+function toggleViewPlayer() {
+  game?.toggleViewPlayer()
+}
+
+function updateViewPlayer(player: Player) {
+  viewPlayer.value = player
+  storeViewPlayer(player)
+}
+
 function playUISound() {
   soundManager?.play('lightswitch.ogg')
   if (! loading.value && ! gameStarted.value) startAmbience()
@@ -917,6 +943,9 @@ function startLocalGame() {
     },
     onRecordChange: updateRecord,
     onStatusChange: updateGameStatus,
+    viewPlayer: viewPlayer.value,
+    autoSwitchViewPlayer: true,
+    onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
     onReturnToMainMenuRequest: returnToMainMenu,
@@ -935,6 +964,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   onlineRoomStatus.value = state.room.status
   onlineRoomReady.value = state.room.status === 'playing'
   onlinePlayer.value = state.session.player
+  updateViewPlayer(state.session.player)
   onlinePresence.value = state.presence
   onlineConnectionStatus.value = 'connecting'
   onlineError.value = ''
@@ -945,6 +975,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     debug: query.get('debug') === '1',
     initialActions: state.actions,
     localPlayer: state.session.player,
+    viewPlayer: viewPlayer.value,
     canControlOnlineGame: () => onlineRoomReady.value,
     isExternallyFinished: () => onlineRoomStatus.value === 'finished',
     onToolbarChange: buttons => {
@@ -952,6 +983,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     },
     onRecordChange: updateRecord,
     onStatusChange: updateGameStatus,
+    onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
     onReturnToMainMenuRequest: returnToMainMenu,
@@ -1144,6 +1176,33 @@ function getStoredMatchNickname(): string {
   }
   catch {
     return ''
+  }
+}
+
+function getStoredViewPlayer(): Player | null {
+  const storage = getLocalStorage()
+  if (! storage) return null
+
+  try {
+    const value = storage.getItem(VIEW_PLAYER_STORAGE_KEY)
+    if (value === 'white') return Player.W
+    if (value === 'black') return Player.B
+    return null
+  }
+  catch {
+    return null
+  }
+}
+
+function storeViewPlayer(player: Player) {
+  const storage = getLocalStorage()
+  if (! storage) return
+
+  try {
+    storage.setItem(VIEW_PLAYER_STORAGE_KEY, player === Player.W ? 'white' : 'black')
+  }
+  catch {
+    // Ignore storage failures; view persistence is only a convenience.
   }
 }
 
@@ -1614,20 +1673,16 @@ watch(matchNickname, storeMatchNickname)
           :aria-label="t('dialog.languageTitle')"
           @click="openLanguageDialog"
         >
-          <svg
-            class="button-icon"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <circle
-              cx="12"
-              cy="12"
-              r="9"
-            />
-            <path d="M3 12h18" />
-            <path d="M12 3c2.3 2.5 3.5 5.5 3.5 9s-1.2 6.5-3.5 9" />
-            <path d="M12 3c-2.3 2.5-3.5 5.5-3.5 9s1.2 6.5 3.5 9" />
-          </svg>
+          <GameIcon name="globe" />
+        </GameButton>
+        <GameButton
+          v-if="gameStarted"
+          class="game-button--circle"
+          :style="menuButtonStyle"
+          :aria-label="t('button.flipView')"
+          @click="toggleViewPlayer"
+        >
+          <GameIcon name="flip" />
         </GameButton>
         <GameButton
           v-if="gameStarted"
@@ -1637,7 +1692,7 @@ watch(matchNickname, storeMatchNickname)
           :aria-expanded="secondaryMenuOpen"
           @click="toggleSecondaryMenu"
         >
-          <span>...</span>
+          <GameIcon name="ellipsis" />
         </GameButton>
       </div>
 
@@ -1808,7 +1863,7 @@ watch(matchNickname, storeMatchNickname)
               v-for="option in languageOptions"
               :key="option.value"
               class="language-button"
-              :style="getPresetButtonStyle(option.value === language ? ButtonColors.GreenWhite : ButtonColors.White)"
+              :style="getPresetButtonStyle(option.value === language ? viewHoverButtonPreset : viewButtonPreset)"
               :open="option.value === language"
               @click="selectLanguage(option.value)"
             >
@@ -2673,17 +2728,6 @@ canvas {
   width: var(--button-icon-size);
   height: var(--button-icon-size);
   object-fit: contain;
-  pointer-events: none;
-}
-
-.button-icon {
-  width: calc(var(--button-icon-size) * 0.9);
-  height: calc(var(--button-icon-size) * 0.9);
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
   pointer-events: none;
 }
 

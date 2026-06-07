@@ -10,6 +10,7 @@ button.cancel: "Cancel"
 button.copy: "Copy"
 button.close: "Close"
 button.menu: "Menu"
+button.flipView: "Flip view"
 button.returnToMainMenu: "Main menu"
 button.back: "Back"
 
@@ -32,6 +33,7 @@ dialog.helpText: |
   WASD: Pan viewport
   Q / E: Zoom out / in
   R: Toggle Record panel
+  U: Flip view
   Esc: Open or close the in-game menu
 
   Record and files

@@ -124,8 +124,8 @@ export class CanvasRenderer extends Renderer {
     }
   }
 
-  drawQuad({ mat, color }: QuadRenderItem): void {
-    this.applyTransform(mat)
+  drawQuad({ mat, color, space }: QuadRenderItem): void {
+    this.applyTransform(mat, space)
     this.ctx.fillStyle = Color4.toRgbaString(color)
     this.ctx.fillRect(0, 0, 1, 1)
   }

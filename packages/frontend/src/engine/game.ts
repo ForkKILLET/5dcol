@@ -36,6 +36,8 @@ export interface GameConfig {
   soundManager: SoundManager
   initialActions?: Action[]
   localPlayer?: Player
+  viewPlayer?: Player
+  autoSwitchViewPlayer?: boolean
   canControlOnlineGame?: () => boolean
   isExternallyFinished?: () => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
@@ -45,6 +47,7 @@ export interface GameConfig {
   onExportRequest?: (request: GameExportRequest) => void
   onReturnToMainMenuRequest?: (request?: GameReturnToMainMenuRequest) => void
   onActionSubmitted?: (action: Action, actions: Action[]) => void
+  onViewPlayerChange?: (player: Player) => void
 }
 
 export interface GameReturnToMainMenuRequest {
@@ -156,6 +159,12 @@ interface GameEndBackgroundAnimation {
   to: number
   startedAt: number
 }
+interface ViewFlipTransition {
+  from: Player
+  to: Player
+  startedAt: number
+  applied: boolean
+}
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
 
@@ -169,6 +178,8 @@ export class Game extends Disposable(Empty) {
     this.presentPainter = new PresentPainter(config.renderer, this.layout)
     this.timelineTilesPainter = new TimelineTilesPainter(config.renderer, this.layout)
     this.linePainter = new LinePainter(config.renderer, this.layout)
+    this.viewPlayer = config.viewPlayer ?? Player.W
+    this.layout.setViewPlayer(this.viewPlayer)
   }
 
   public readonly logger: Logger
@@ -182,6 +193,7 @@ export class Game extends Disposable(Empty) {
   private multiverseCommitted = Multiverse.createInitial()
   private multiverse = this.multiverseCommitted
   private player: Player = Player.W
+  private viewPlayer: Player = Player.W
   private actionIndex = 0
   private actions: Action[] = []
   private readonly pointer: PointerState = {
@@ -212,6 +224,7 @@ export class Game extends Disposable(Empty) {
   private gameEndBackgroundTarget = false
   private gameEndBackgroundStatus: Exclude<CheckmateStatus, 'not-checkmate'> = 'checkmate'
   private gameEndBackgroundAnimation: GameEndBackgroundAnimation | null = null
+  private viewFlipTransition: ViewFlipTransition | null = null
   private submitRequestedDuringMoveAnimation = false
   private toolbarSignature = ''
   private recordSignature = ''
@@ -232,6 +245,7 @@ export class Game extends Disposable(Empty) {
     else this.focusInitialTurn({ smooth: false })
     this.bindEvents()
     this.updateGameEndState()
+    this.syncAutomaticViewPlayer()
     this.syncCheckState()
     this.syncToolbarButtons()
     this.syncRecord()
@@ -259,6 +273,57 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.hoverCheckWarning = null
     this.clearPointerDrag()
+  }
+
+  public setViewPlayer(
+    player: Player,
+    { playSound = false, transition = true }: { playSound?: boolean, transition?: boolean } = {},
+  ) {
+    if (this.viewPlayer === player) {
+      if (this.viewFlipTransition?.to !== player) this.viewFlipTransition = null
+      return
+    }
+
+    if (playSound) this.playUISound()
+
+    if (! transition) {
+      this.applyViewPlayer(player)
+      this.viewFlipTransition = null
+      return
+    }
+
+    this.viewFlipTransition = {
+      from: this.viewPlayer,
+      to: player,
+      startedAt: performance.now(),
+      applied: false,
+    }
+    if (this.viewFlipTransition.from === player) {
+      this.viewFlipTransition = null
+    }
+  }
+
+  public toggleViewPlayer() {
+    this.setViewPlayer(CorePlayers.opponent(this.viewPlayer), { playSound: true })
+  }
+
+  private applyViewPlayer(player: Player) {
+    if (this.viewPlayer === player) return
+
+    const shouldMirrorCameraY = this.layout.getDisplayLine(1) !== (
+      player === Player.W ? -1 : 1
+    )
+    if (shouldMirrorCameraY) {
+      const camera = this.renderer.getCamera()
+      this.renderer.setCamera({
+        center: [camera.center[0], -camera.center[1]],
+      })
+    }
+    this.viewPlayer = player
+    this.layout.setViewPlayer(player)
+    this.config.onViewPlayerChange?.(player)
+    this.cameraMotion = null
+    this.updateCameraBounds()
   }
 
   public setViewportInsets(insets: Partial<ViewportInsets>) {
@@ -328,6 +393,7 @@ export class Game extends Disposable(Empty) {
       this.clearMoveAnimation()
       this.submitRequestedDuringMoveAnimation = false
       this.deselectPiece()
+      this.syncAutomaticViewPlayer()
       this.syncCheckState()
       return true
     }
@@ -529,6 +595,11 @@ export class Game extends Disposable(Empty) {
         e.preventDefault()
         this.zoomCameraByStep(CameraControl.KeyboardZoomStep)
         break
+      case 'u':
+      case 'U':
+        e.preventDefault()
+        this.toggleViewPlayer()
+        break
     }
   }
 
@@ -681,6 +752,7 @@ export class Game extends Disposable(Empty) {
     this.updateCameraMotion()
     this.updateCameraBounds()
     this.updateMoveTravelSound()
+    this.updateViewFlipTransition()
     this.render()
     this.renderer.flush()
     this.finalizeSubmittedMoveAfterAnimation()
@@ -700,6 +772,51 @@ export class Game extends Disposable(Empty) {
     if (this.config.debug) {
       this.renderPointer()
     }
+    this.renderViewFlipOverlay()
+  }
+
+  private updateViewFlipTransition() {
+    const transition = this.viewFlipTransition
+    if (! transition) return
+
+    const progress = this.getViewFlipTransitionProgress(transition)
+    if (! transition.applied && progress >= 0.5) {
+      transition.applied = true
+      this.applyViewPlayer(transition.to)
+    }
+    if (progress >= 1) {
+      if (! transition.applied) this.applyViewPlayer(transition.to)
+      this.viewFlipTransition = null
+    }
+  }
+
+  private renderViewFlipOverlay() {
+    const transition = this.viewFlipTransition
+    if (! transition) return
+
+    const progress = this.getViewFlipTransitionProgress(transition)
+    const alpha = progress < 0.5
+      ? Easing.easeInOut(progress * 2)
+      : 1 - Easing.easeInOut((progress - 0.5) * 2)
+    if (alpha <= 0) return
+
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    this.renderer.submit({
+      type: RenderItemType.Quad,
+      layer: RenderLayer.UI,
+      order: 100000,
+      space: 'screen',
+      mat: Mat3.transform([0, 0], [widthCss, heightCss]),
+      color: Color4.fromRgba(0, 0, 0, alpha),
+    })
+  }
+
+  private getViewFlipTransitionProgress(transition: ViewFlipTransition): number {
+    return Scalar.clamp(
+      (performance.now() - transition.startedAt) / Animations.ViewFlipTransitionDuration,
+      0,
+      1,
+    )
   }
 
   private updateInteraction() {
@@ -1147,6 +1264,7 @@ export class Game extends Disposable(Empty) {
     this.deselectPiece()
     this.player = CorePlayers.opponent(this.player)
     this.actionIndex += 1
+    this.syncAutomaticViewPlayer()
     this.gameEndTrial = false
     this.gameEndTrialStatus = null
     this.updateGameEndState()
@@ -1215,6 +1333,7 @@ export class Game extends Disposable(Empty) {
     this.deselectPiece()
     this.player = CorePlayers.opponent(this.player)
     this.actionIndex += 1
+    this.syncAutomaticViewPlayer()
     this.gameEndTrial = false
     this.gameEndTrialStatus = null
     this.updateGameEndState()
@@ -1253,6 +1372,7 @@ export class Game extends Disposable(Empty) {
     this.multiverse = state.multiverse
     this.player = state.player
     this.actionIndex = state.actionIndex
+    this.syncAutomaticViewPlayer()
     this.selectedPiece = null
     this.hoverSquare = null
     this.hoverPiece = null
@@ -1285,6 +1405,7 @@ export class Game extends Disposable(Empty) {
     this.multiverse = state.multiverse
     this.player = state.player
     this.actionIndex = state.actionIndex
+    this.syncAutomaticViewPlayer()
     this.selectedPiece = null
     this.hoverSquare = null
     this.hoverPiece = null
@@ -1341,6 +1462,11 @@ export class Game extends Disposable(Empty) {
       { name: 'timpani_hit_c3.ogg', nextAfter: 0.5 },
       'fanfare.ogg',
     ])
+  }
+
+  private syncAutomaticViewPlayer() {
+    if (! this.config.autoSwitchViewPlayer) return
+    this.setViewPlayer(this.player)
   }
 
   private canSubmitMoves(): boolean {
@@ -1730,10 +1856,13 @@ export class Game extends Disposable(Empty) {
         const [[borderX, borderY]] = this.layout.getBoardRect(l, m)
         const x0 = borderX + Sizes.BoardBorder
         const y0 = borderY + Sizes.BoardBorder
-        const x = Math.floor((world[0] - x0) / Sizes.PieceWidth)
-        const y = Math.floor((world[1] - y0) / Sizes.PieceWidth)
-        const coord = { x, y }
-        if (! Coord.isInBoard(coord)) continue
+        const displayCoord = {
+          x: Math.floor((world[0] - x0) / Sizes.PieceWidth),
+          y: Math.floor((world[1] - y0) / Sizes.PieceWidth),
+        }
+        if (! Coord.isInBoard(displayCoord)) continue
+
+        const coord = this.toBoardCoord(displayCoord)
 
         return { l, m, board, coord }
       }
@@ -2483,10 +2612,7 @@ export class Game extends Disposable(Empty) {
 
     for (const [x, y] of Coord.spacelikes()) {
       const coord = { x, y }
-      const pos: Vec2 = [
-        x0 + x * Sizes.PieceWidth,
-        y0 + y * Sizes.PieceWidth,
-      ]
+      const pos = this.getSquarePos(x0, y0, coord)
       const isWhiteSquare = (x + y) % 2 === 0
       const moveHighlightColor = this.getMoveFormationHighlightColor(board, coord, isWhiteSquare)
       const baseColor = this.isHighlightedBoardSquare(l, m, coord)
@@ -2518,19 +2644,20 @@ export class Game extends Disposable(Empty) {
     const labelAlpha = this.getSpacelikeLabelAlpha() * alpha
     if (labelAlpha <= 0) return
 
-    for (let x = 0; x < 8; x ++) {
-      const y = 7
-      const isWhiteSquare = (x + y) % 2 === 0
+    for (let displayX = 0; displayX < 8; displayX ++) {
+      const displayCoord = { x: displayX, y: 7 }
+      const boardCoord = this.toBoardCoord(displayCoord)
+      const isWhiteSquare = (boardCoord.x + boardCoord.y) % 2 === 0
       this.renderer.submit({
         type: RenderItemType.Text,
         layer,
         order: 1,
         pos: [
-          x0 + x * Sizes.PieceWidth + Sizes.SpacelikeLabelInset,
-          y0 + (y + 1) * Sizes.PieceWidth - Sizes.SpacelikeLabelInset,
+          x0 + displayCoord.x * Sizes.PieceWidth + Sizes.SpacelikeLabelInset,
+          y0 + (displayCoord.y + 1) * Sizes.PieceWidth - Sizes.SpacelikeLabelInset,
         ],
         angle: 0,
-        text: 'abcdefgh'[x],
+        text: 'abcdefgh'[boardCoord.x],
         fontSize: Sizes.SpacelikeLabelFontSize,
         color: Color4.withAlpha(
           isWhiteSquare ? Colors.BoardBlack : Colors.BoardWhite,
@@ -2541,19 +2668,20 @@ export class Game extends Disposable(Empty) {
       })
     }
 
-    for (let y = 0; y < 8; y ++) {
-      const x = 7
-      const isWhiteSquare = (x + y) % 2 === 0
+    for (let displayY = 0; displayY < 8; displayY ++) {
+      const displayCoord = { x: 7, y: displayY }
+      const boardCoord = this.toBoardCoord(displayCoord)
+      const isWhiteSquare = (boardCoord.x + boardCoord.y) % 2 === 0
       this.renderer.submit({
         type: RenderItemType.Text,
         layer,
         order: 1,
         pos: [
-          x0 + (x + 1) * Sizes.PieceWidth - Sizes.SpacelikeLabelInset,
-          y0 + y * Sizes.PieceWidth + Sizes.SpacelikeLabelInset,
+          x0 + (displayCoord.x + 1) * Sizes.PieceWidth - Sizes.SpacelikeLabelInset,
+          y0 + displayCoord.y * Sizes.PieceWidth + Sizes.SpacelikeLabelInset,
         ],
         angle: 0,
-        text: String(8 - y),
+        text: String(8 - boardCoord.y),
         fontSize: Sizes.SpacelikeLabelFontSize,
         color: Color4.withAlpha(
           isWhiteSquare ? Colors.BoardBlack : Colors.BoardWhite,
@@ -2574,6 +2702,27 @@ export class Game extends Disposable(Empty) {
       1,
     )
     return Easing.easeInOut(progress)
+  }
+
+  private getSquarePos(x0: number, y0: number, coord: CoordSpacelike): Vec2 {
+    const displayCoord = this.toDisplayCoord(coord)
+    return [
+      x0 + displayCoord.x * Sizes.PieceWidth,
+      y0 + displayCoord.y * Sizes.PieceWidth,
+    ]
+  }
+
+  private toDisplayCoord(coord: CoordSpacelike): CoordSpacelike {
+    return this.viewPlayer === Player.W
+      ? coord
+      : {
+          x: 7 - coord.x,
+          y: 7 - coord.y,
+        }
+  }
+
+  private toBoardCoord(displayCoord: CoordSpacelike): CoordSpacelike {
+    return this.toDisplayCoord(displayCoord)
   }
 
   private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number) {
@@ -2746,8 +2895,8 @@ export class Game extends Disposable(Empty) {
 
     const fromM = Coord.boardIndex(move.from, player)
     const toM = Coord.boardIndex(move.to, player)
-    const from = this.layout.getSquareCenter(move.from.l, fromM, move.from)
-    const to = this.layout.getSquareCenter(move.to.l, toM, move.to)
+    const from = this.getVisibleSquareCenter(move.from.l, fromM, move.from)
+    const to = this.getVisibleSquareCenter(move.to.l, toM, move.to)
     return this.getCurvedArrowGeometry(from, to, player)
   }
 
@@ -2789,11 +2938,21 @@ export class Game extends Disposable(Empty) {
     boardPositions?: ReadonlyMap<string, Vec2>,
   ): Vec2 {
     const boardPos = boardPositions?.get(this.getBoardKey(l, m))
-    if (! boardPos) return this.layout.getSquareCenter(l, m, coord)
+    if (! boardPos) return this.getVisibleSquareCenter(l, m, coord)
 
+    return this.getVisibleSquareCenterAtBoardPos(boardPos, coord)
+  }
+
+  private getVisibleSquareCenter(l: number, m: number, coord: CoordSpacelike): Vec2 {
+    const [boardPos] = this.layout.getBoardRect(l, m)
+    return this.getVisibleSquareCenterAtBoardPos(boardPos, coord)
+  }
+
+  private getVisibleSquareCenterAtBoardPos(boardPos: Vec2, coord: CoordSpacelike): Vec2 {
+    const displayCoord = this.toDisplayCoord(coord)
     return Vec2.add(boardPos, [
-      Sizes.BoardBorder + (coord.x + 0.5) * Sizes.PieceWidth,
-      Sizes.BoardBorder + (coord.y + 0.5) * Sizes.PieceWidth,
+      Sizes.BoardBorder + (displayCoord.x + 0.5) * Sizes.PieceWidth,
+      Sizes.BoardBorder + (displayCoord.y + 0.5) * Sizes.PieceWidth,
     ])
   }
 

@@ -43,6 +43,10 @@ export interface LoopingSound {
   stop: () => void
 }
 
+export interface SoundLoadOptions {
+  optional?: boolean
+}
+
 export class SoundManager {
   private constructor(
     private readonly buffers: Map<SoundName, AudioBuffer>,
@@ -50,19 +54,38 @@ export class SoundManager {
 
   private context: AudioContext | null = null
 
+  static createSilent(): SoundManager {
+    return new SoundManager(new Map())
+  }
+
   static async create(logger: Logger, onProgress?: AssetLoadProgressCallback): Promise<SoundManager> {
+    const manager = SoundManager.createSilent()
+    await manager.load(logger, onProgress)
+    return manager
+  }
+
+  async load(
+    logger: Logger,
+    onProgress?: AssetLoadProgressCallback,
+    { optional = false }: SoundLoadOptions = {},
+  ): Promise<void> {
     logger.info('Loading sounds...')
     const decodeContext = new OfflineAudioContext(1, 1, 44100)
     let completed = 0
     onProgress?.({ completed, total: SOUND_NAME_LIST.length })
-    const entries = await Promise.all(SOUND_NAME_LIST.map(async name => {
-      const buffer = await fetchSound(decodeContext, name)
-      completed += 1
-      onProgress?.({ completed, total: SOUND_NAME_LIST.length })
-      return [name, buffer] as const
+    await Promise.all(SOUND_NAME_LIST.map(async name => {
+      try {
+        this.buffers.set(name, await fetchSound(decodeContext, name))
+      }
+      catch (error) {
+        if (! optional) throw error
+        logger.error(String(error))
+      }
+      finally {
+        completed += 1
+        onProgress?.({ completed, total: SOUND_NAME_LIST.length })
+      }
     }))
-
-    return new SoundManager(new Map(entries))
   }
 
   get(name: SoundName): AudioBuffer {
@@ -71,8 +94,10 @@ export class SoundManager {
     return buffer
   }
 
-  play(name: SoundName, options: SoundPlayOptions = {}): AudioBufferSourceNode {
+  play(name: SoundName, options: SoundPlayOptions = {}): AudioBufferSourceNode | null {
     const source = this.createSource(name)
+    if (! source) return null
+
     const startTime = this.getStartTime(options.when ?? 0)
     source.start(startTime)
     void this.resume().catch(() => {})
@@ -91,6 +116,8 @@ export class SoundManager {
 
   playLoop(name: SoundName): LoopingSound {
     const source = this.createSource(name)
+    if (! source) return { stop: () => {} }
+
     source.loop = true
     source.start()
     void this.resume().catch(() => {})
@@ -109,10 +136,13 @@ export class SoundManager {
     this.context = null
   }
 
-  private createSource(name: SoundName): AudioBufferSourceNode {
+  private createSource(name: SoundName): AudioBufferSourceNode | null {
+    const buffer = this.buffers.get(name)
+    if (! buffer) return null
+
     const context = this.getContext()
     const source = context.createBufferSource()
-    source.buffer = this.get(name)
+    source.buffer = buffer
     source.connect(context.destination)
     return source
   }
@@ -122,7 +152,7 @@ export class SoundManager {
   }
 
   private getNextOffset(name: SoundName, nextAfter: number | undefined): number {
-    const bufferDuration = this.get(name).duration
+    const bufferDuration = this.buffers.get(name)?.duration ?? 0
     return nextAfter === undefined
       ? bufferDuration
       : Math.max(0, nextAfter)

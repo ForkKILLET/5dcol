@@ -24,8 +24,8 @@ export class TimelineTilesPainter {
     const [[x, y], [w, h]] = tileViewport
     const t0 = Math.floor((x + Sizes.BoardMargin) / Sizes.TurnWidth)
     const t1 = Math.ceil((x + w + Sizes.BoardMargin) / Sizes.TurnWidth)
-    const l0 = Math.floor(- (y + h) / Sizes.TurnHeight - 0.5)
-    const l1 = Math.ceil(- y / Sizes.TurnHeight - 0.5)
+    const displayL0 = Math.floor((y - Sizes.TurnHeight / 2) / Sizes.TurnHeight)
+    const displayL1 = Math.ceil((y + h + Sizes.TurnHeight / 2) / Sizes.TurnHeight)
     const tileOverdraw = Sizes.BoardTimeOverdrawDevicePixels
       / this.renderer.getScreen().dpr
       / this.renderer.getCamera().scale
@@ -38,7 +38,8 @@ export class TimelineTilesPainter {
       : Colors.BoardTimeEndedBlack
 
     for (let t = t0; t < t1; t ++) {
-      for (let l = l0; l < l1; l ++) {
+      for (let displayL = displayL0; displayL < displayL1; displayL ++) {
+        const l = this.layout.getLogicalLine(displayL)
         const [turnPos, turnSize] = this.layout.getTurnRect(l, t)
 
         this.renderer.submit({
@@ -56,8 +57,8 @@ export class TimelineTilesPainter {
     this.renderLabels(multiverse, {
       t0,
       t1,
-      l0,
-      l1,
+      displayL0,
+      displayL1,
       endedProgress,
       endedWhite,
       endedBlack,
@@ -69,16 +70,16 @@ export class TimelineTilesPainter {
     {
       t0,
       t1,
-      l0,
-      l1,
+      displayL0,
+      displayL1,
       endedProgress,
       endedWhite,
       endedBlack,
     }: {
       t0: number
       t1: number
-      l0: number
-      l1: number
+      displayL0: number
+      displayL1: number
       endedProgress: number
       endedWhite: Color4
       endedBlack: Color4
@@ -90,8 +91,9 @@ export class TimelineTilesPainter {
     const bounds = this.getBoardGridBounds(multiverse)
     if (! bounds) return
 
-    const bottomLabelLine = bounds.lMax + 1
-    if (bottomLabelLine >= l0 && bottomLabelLine < l1) {
+    const bottomLabelDisplayLine = bounds.displayLMax + 1
+    const bottomLabelLine = this.layout.getLogicalLine(bottomLabelDisplayLine)
+    if (bottomLabelDisplayLine >= displayL0 && bottomLabelDisplayLine < displayL1) {
       for (let t = Math.max(0, t0); t < t1; t ++) {
         const [pos, size] = this.layout.getTurnRect(bottomLabelLine, t)
         this.renderer.submit({
@@ -118,7 +120,8 @@ export class TimelineTilesPainter {
 
     const rightLabelTurn = Math.floor((bounds.mMax + 1) / 2)
     if (rightLabelTurn >= t0 && rightLabelTurn < t1) {
-      for (let l = l0; l < l1; l ++) {
+      for (let displayL = displayL0; displayL < displayL1; displayL ++) {
+        const l = this.layout.getLogicalLine(displayL)
         const [pos, size] = this.layout.getTurnRect(l, rightLabelTurn)
         this.renderer.submit({
           type: RenderItemType.Text,
@@ -143,21 +146,21 @@ export class TimelineTilesPainter {
     }
   }
 
-  private getBoardGridBounds(multiverse: Multiverse): { lMax: number, mMax: number } | null {
-    let lMax = -Infinity
+  private getBoardGridBounds(multiverse: Multiverse): { displayLMax: number, mMax: number } | null {
+    let displayLMax = -Infinity
     let mMax = -Infinity
 
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
       for (const [m, board] of Line.getBoardEntries(line)) {
         if (! board) continue
-        lMax = Math.max(lMax, l)
+        displayLMax = Math.max(displayLMax, this.layout.getDisplayLine(l))
         mMax = Math.max(mMax, m)
       }
     }
 
-    if (! Number.isFinite(lMax) || ! Number.isFinite(mMax)) return null
-    return { lMax, mMax }
+    if (! Number.isFinite(displayLMax) || ! Number.isFinite(mMax)) return null
+    return { displayLMax, mMax }
   }
 
   private getTileColor(
