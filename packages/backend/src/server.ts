@@ -7,6 +7,7 @@ import { GameState, type Action, type Player } from '@5dcol/core'
 
 import {
   MATCH_PROTOCOL_VERSION,
+  DEFAULT_MATCH_ROOM_SETTINGS,
   type CreateMatchRoomRequest,
   type CreateMatchRoomResponse,
   type ForfeitMatchRoomRequest,
@@ -20,7 +21,9 @@ import {
   type MatchErrorResponse,
   type MatchGameState,
   type MatchRoom,
+  type MatchRoomCreatorPlayer,
   type MatchRoomFinishReason,
+  type MatchRoomSettings,
   type MatchRoomStateEvent,
   type MatchRoomsResponse,
   type MatchServerInfo,
@@ -48,6 +51,7 @@ export interface RoomState {
   actions: Action[]
   winner: Player | null
   finishReason: MatchRoomFinishReason | null
+  settings: MatchRoomSettings
   createdAt: number
   startedAt: number | null
   updatedAt: number
@@ -100,6 +104,7 @@ export function createBackendServer(options: BackendServerOptions) {
 
   app.post<{ Body: CreateMatchRoomRequest }>('/rooms', async (request, reply): Promise<CreateMatchRoomResponse> => {
     const body = request.body
+    const settings = normalizeRoomSettings(body?.settings)
     const room: RoomState = {
       id: randomUUID(),
       name: body?.name?.trim() || `Room ${rooms.length + 1}`,
@@ -108,12 +113,13 @@ export function createBackendServer(options: BackendServerOptions) {
       actions: [],
       winner: null,
       finishReason: null,
+      settings,
       createdAt: Date.now(),
       startedAt: null,
       updatedAt: Date.now(),
     }
     rooms.push(room)
-    const session = createSession(room, PLAYER_W, body?.nickname)
+    const session = createSession(room, getCreatorPlayer(settings.creatorPlayer), body?.nickname)
     storage.save(rooms)
     reply.code(201)
     return {
@@ -319,6 +325,37 @@ function normalizeNickname(nickname: string | null | undefined): string | null {
   return trimmed ? trimmed.slice(0, 32) : null
 }
 
+function normalizeRoomSettings(settings: Partial<MatchRoomSettings> | null | undefined): MatchRoomSettings {
+  return {
+    canSpectate: getBooleanSetting(settings?.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
+    creatorPlayer: getCreatorPlayerSetting(settings?.creatorPlayer),
+    saveRecordToServer: getBooleanSetting(settings?.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
+    showOpponentSmallMoves: getBooleanSetting(settings?.showOpponentSmallMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentSmallMoves),
+    showOpponentMoveRange: getBooleanSetting(settings?.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
+  }
+}
+
+function getBooleanSetting(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function getCreatorPlayerSetting(value: unknown): MatchRoomCreatorPlayer {
+  return value === 'white' || value === 'black' || value === 'random'
+    ? value
+    : DEFAULT_MATCH_ROOM_SETTINGS.creatorPlayer
+}
+
+function getCreatorPlayer(setting: MatchRoomCreatorPlayer): Player {
+  switch (setting) {
+    case 'black':
+      return PLAYER_B
+    case 'random':
+      return Math.random() < 0.5 ? PLAYER_W : PLAYER_B
+    case 'white':
+      return PLAYER_W
+  }
+}
+
 function getAvailablePlayer(room: RoomState): Player | null {
   const used = new Set(room.sessions.map(session => session.player))
   if (! used.has(PLAYER_W)) return PLAYER_W
@@ -352,6 +389,7 @@ function toRoomView(room: RoomState): MatchRoom {
     status: getRoomStatus(room),
     winner: room.winner,
     finishReason: room.finishReason,
+    settings: room.settings,
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
@@ -376,6 +414,7 @@ function getListedRooms(rooms: RoomState[]): MatchRoom[] {
   const finishedRooms = rooms
     .filter(room => getRoomStatus(room) === 'finished')
     .filter(room => room.actions.length > 0)
+    .filter(room => room.settings.saveRecordToServer)
     .filter(room => now - room.updatedAt <= FINISHED_ROOM_HISTORY_MS)
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, FINISHED_ROOM_HISTORY_LIMIT)

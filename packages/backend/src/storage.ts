@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { GameState } from '@5dcol/core'
 
+import { DEFAULT_MATCH_ROOM_SETTINGS } from './protocol.ts'
 import type { RoomState } from './server.ts'
 
 interface StoredRoomsFile {
@@ -69,6 +70,7 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
 
   room.winner ??= null
   room.finishReason ??= null
+  room.settings = getValidRoomSettings(room.settings)
   room.createdAt ??= room.updatedAt
   room.startedAt ??= null
   if (room.winner !== null && room.winner !== 0 && room.winner !== 1) return false
@@ -88,6 +90,29 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
   catch {
     return false
   }
+}
+
+function getValidRoomSettings(value: unknown): RoomState['settings'] {
+  if (! value || typeof value !== 'object') return { ...DEFAULT_MATCH_ROOM_SETTINGS }
+
+  const settings = value as Partial<RoomState['settings']>
+  return {
+    canSpectate: getBooleanSetting(settings.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
+    creatorPlayer: getCreatorPlayerSetting(settings.creatorPlayer),
+    saveRecordToServer: getBooleanSetting(settings.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
+    showOpponentSmallMoves: getBooleanSetting(settings.showOpponentSmallMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentSmallMoves),
+    showOpponentMoveRange: getBooleanSetting(settings.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
+  }
+}
+
+function getBooleanSetting(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function getCreatorPlayerSetting(value: unknown): RoomState['settings']['creatorPlayer'] {
+  return value === 'white' || value === 'black' || value === 'random'
+    ? value
+    : DEFAULT_MATCH_ROOM_SETTINGS.creatorPlayer
 }
 
 function isNotFoundError(err: unknown): boolean {

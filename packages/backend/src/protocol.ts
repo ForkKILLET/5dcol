@@ -10,6 +10,23 @@ export interface MatchServerInfo {
 export type MatchRoomStatus = 'waiting' | 'playing' | 'finished'
 export type MatchRoomFinishReason = 'checkmate' | 'stalemate' | 'forfeit'
 export type MatchPresenceStatus = 'online' | 'offline' | 'none'
+export type MatchRoomCreatorPlayer = 'white' | 'black' | 'random'
+
+export interface MatchRoomSettings {
+  canSpectate: boolean
+  creatorPlayer: MatchRoomCreatorPlayer
+  saveRecordToServer: boolean
+  showOpponentSmallMoves: boolean
+  showOpponentMoveRange: boolean
+}
+
+export const DEFAULT_MATCH_ROOM_SETTINGS: MatchRoomSettings = {
+  canSpectate: true,
+  creatorPlayer: 'white',
+  saveRecordToServer: true,
+  showOpponentSmallMoves: true,
+  showOpponentMoveRange: true,
+}
 
 export interface MatchRoomSeat {
   player: Player
@@ -25,6 +42,7 @@ export interface MatchRoom {
   status: MatchRoomStatus
   winner: Player | null
   finishReason: MatchRoomFinishReason | null
+  settings: MatchRoomSettings
   createdAt: number
   startedAt: number | null
   updatedAt: number
@@ -59,6 +77,7 @@ export interface MatchRoomsResponse {
 export interface CreateMatchRoomRequest {
   name?: string
   nickname?: string
+  settings?: Partial<MatchRoomSettings>
 }
 
 export interface CreateMatchRoomResponse {

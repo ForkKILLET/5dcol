@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
 import { Player } from '@5dcol/core'
 import type { Action } from '@5dcol/core'
-import type { MatchGameState, MatchPresence, MatchRoomStatus } from '@5dcol/backend/protocol'
+import { DEFAULT_MATCH_ROOM_SETTINGS, type MatchGameState, type MatchPresence, type MatchRoomSettings, type MatchRoomStatus } from '@5dcol/backend/protocol'
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
@@ -20,6 +20,7 @@ import GameIcon from './GameIcon.vue'
 const canvas = useTemplateRef('canvas')
 
 const SETTINGS_STORAGE_KEY = '5dcol.settings'
+const MATCH_ROOM_SETTINGS_STORAGE_KEY = '5dcol.matchRoomSettings'
 const DEFAULT_GAME_SETTINGS: GameSettings = {
   soundVolume: 1,
   autoSwitchViewPlayer: true,
@@ -62,6 +63,7 @@ const viewportHeight = ref(window.innerHeight)
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
 const matchNickname = ref(getStoredMatchNickname())
+const matchRoomSettings = reactive<MatchRoomSettings>(getStoredMatchRoomSettings())
 const DEFAULT_SERVERS: Record<string, { name: string }> = {
   'http://localhost:5161': { name: 'Debug Server' },
   'https://genshin.asm.ms:5161': { name: 'Server (China)' },
@@ -81,6 +83,7 @@ const matchServers = reactive<MatchServerState[]>(Object
 )
 const onlineSession = ref<StoredOnlineSession | null>(getStoredOnlineSession())
 const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
+const onlineRoomSettings = ref<MatchRoomSettings | null>(null)
 const onlineRoomReady = ref(false)
 const onlinePlayer = ref<Player | null>(null)
 const onlinePresence = ref<MatchPresence | null>(null)
@@ -792,6 +795,7 @@ async function createMatchRoom(server: MatchServerState) {
     const state = await client.createRoom({
       name: matchRoomName.value,
       nickname: matchNickname.value,
+      settings: matchRoomSettings,
     })
     storeOnlineSession(server.address, state)
     startOnlineGame(server.address, state)
@@ -993,6 +997,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   stopAmbience()
   stopOnlinePolling()
   onlineRoomStatus.value = state.room.status
+  onlineRoomSettings.value = state.room.settings
   onlineRoomReady.value = state.room.status === 'playing'
   onlinePlayer.value = state.session.player
   updateViewPlayer(state.session.player)
@@ -1009,7 +1014,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     viewPlayer: viewPlayer.value,
     autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
-    showOpponentMoveRange: gameSettings.showOpponentMoveRange,
+    showOpponentMoveRange: getEffectiveShowOpponentMoveRange(state.room.settings),
     canControlOnlineGame: () => onlineRoomReady.value,
     isExternallyFinished: () => onlineRoomStatus.value === 'finished',
     onToolbarChange: buttons => {
@@ -1042,6 +1047,7 @@ function applyOnlineGameState(
 ) {
   const wasReady = onlineRoomReady.value
   onlineRoomStatus.value = state.room.status
+  onlineRoomSettings.value = state.room.settings
   onlineRoomReady.value = state.room.status === 'playing'
   if (gameStarted.value && ! wasReady && onlineRoomReady.value) {
     soundManager?.play('bell.ogg')
@@ -1050,7 +1056,12 @@ function applyOnlineGameState(
   onlinePresence.value = state.presence
   onlineError.value = ''
   if (state.session) storeOnlineSession(serverAddress, state)
-  game?.loadActions(state.actions, { focus: false, force, animate: true })
+  game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange(state.room.settings))
+  game?.loadActions(state.actions, {
+    focus: false,
+    force,
+    animate: state.room.settings.showOpponentSmallMoves,
+  })
 }
 
 async function submitOnlineAction(
@@ -1260,6 +1271,47 @@ function getValidBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
+function getStoredMatchRoomSettings(): MatchRoomSettings {
+  const storage = getLocalStorage()
+  if (! storage) return { ...DEFAULT_MATCH_ROOM_SETTINGS }
+
+  try {
+    const value = JSON.parse(storage.getItem(MATCH_ROOM_SETTINGS_STORAGE_KEY) ?? '{}') as Partial<MatchRoomSettings>
+    return getValidMatchRoomSettings(value)
+  }
+  catch {
+    return { ...DEFAULT_MATCH_ROOM_SETTINGS }
+  }
+}
+
+function getValidMatchRoomSettings(value: Partial<MatchRoomSettings>): MatchRoomSettings {
+  return {
+    canSpectate: getValidBoolean(value.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
+    creatorPlayer: getValidCreatorPlayer(value.creatorPlayer),
+    saveRecordToServer: getValidBoolean(value.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
+    showOpponentSmallMoves: getValidBoolean(value.showOpponentSmallMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentSmallMoves),
+    showOpponentMoveRange: getValidBoolean(value.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
+  }
+}
+
+function getValidCreatorPlayer(value: unknown): MatchRoomSettings['creatorPlayer'] {
+  return value === 'white' || value === 'black' || value === 'random'
+    ? value
+    : DEFAULT_MATCH_ROOM_SETTINGS.creatorPlayer
+}
+
+function storeMatchRoomSettings() {
+  const storage = getLocalStorage()
+  if (! storage) return
+
+  try {
+    storage.setItem(MATCH_ROOM_SETTINGS_STORAGE_KEY, JSON.stringify(matchRoomSettings))
+  }
+  catch {
+    // Ignore storage failures; room settings should still apply to newly created rooms.
+  }
+}
+
 function storeGameSettings() {
   const storage = getLocalStorage()
   if (! storage) return
@@ -1276,7 +1328,11 @@ function syncGameSettings() {
   soundManager?.setVolume(gameSettings.soundVolume)
   game?.setAutoSwitchViewPlayer(gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
-  game?.setShowOpponentMoveRange(gameSettings.showOpponentMoveRange)
+  game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange())
+}
+
+function getEffectiveShowOpponentMoveRange(settings = onlineRoomSettings.value): boolean {
+  return gameSettings.showOpponentMoveRange && (settings?.showOpponentMoveRange ?? true)
 }
 
 function storeViewPlayer(player: Player) {
@@ -1370,6 +1426,7 @@ function returnToMainMenu(
   stopOnlinePolling()
   stopOnlineRoomStateSubscription()
   onlineRoomStatus.value = null
+  onlineRoomSettings.value = null
   onlineRoomReady.value = false
   onlinePlayer.value = null
   onlinePresence.value = null
@@ -1474,6 +1531,7 @@ onUnmounted(() => {
 watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
 watch(matchNickname, storeMatchNickname)
+watch(matchRoomSettings, storeMatchRoomSettings, { deep: true })
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
 watch(gameSettings, () => {
   storeGameSettings()
@@ -1711,6 +1769,47 @@ watch(gameSettings, () => {
                           @keydown.enter.prevent="createMatchRoom(server)"
                         >
                       </div>
+                    </div>
+                    <div class="match-room-settings">
+                      <label class="match-room-setting match-room-setting--select">
+                        <span>{{ t('match.setting.creatorPlayer') }}</span>
+                        <select
+                          v-model="matchRoomSettings.creatorPlayer"
+                          class="match-server-input match-server-select"
+                        >
+                          <option value="white">{{ t('match.setting.creatorWhite') }}</option>
+                          <option value="black">{{ t('match.setting.creatorBlack') }}</option>
+                          <option value="random">{{ t('match.setting.creatorRandom') }}</option>
+                        </select>
+                      </label>
+                      <label class="match-room-setting">
+                        <input
+                          v-model="matchRoomSettings.canSpectate"
+                          type="checkbox"
+                        >
+                        <span>{{ t('match.setting.canSpectate') }}</span>
+                      </label>
+                      <label class="match-room-setting">
+                        <input
+                          v-model="matchRoomSettings.saveRecordToServer"
+                          type="checkbox"
+                        >
+                        <span>{{ t('match.setting.saveRecord') }}</span>
+                      </label>
+                      <label class="match-room-setting">
+                        <input
+                          v-model="matchRoomSettings.showOpponentSmallMoves"
+                          type="checkbox"
+                        >
+                        <span>{{ t('match.setting.showOpponentSmallMoves') }}</span>
+                      </label>
+                      <label class="match-room-setting">
+                        <input
+                          v-model="matchRoomSettings.showOpponentMoveRange"
+                          type="checkbox"
+                        >
+                        <span>{{ t('match.setting.showOpponentMoveRange') }}</span>
+                      </label>
                     </div>
                   </div>
                   <GameButton
@@ -2466,6 +2565,34 @@ canvas {
   gap: var(--button-content-gap);
 }
 
+.match-room-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--button-content-gap) * 0.75) calc(var(--button-content-gap) * 1.5);
+  margin-top: calc(var(--button-content-gap) * 0.75);
+  font-size: 13px;
+  line-height: 1.1;
+  opacity: 0.9;
+}
+
+.match-room-setting {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--button-content-gap) * 0.5);
+  white-space: nowrap;
+}
+
+.match-room-setting input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--button-hover-fill-color);
+}
+
+.match-room-setting--select {
+  flex: 1 1 160px;
+}
+
 .game-button.match-small-button {
   --button-shadow-offset: var(--small-button-shadow-offset);
   flex: 0 0 auto;
@@ -2511,6 +2638,16 @@ canvas {
   border-color: var(--button-hover-border-color);
   background: var(--button-hover-fill-color);
   color: var(--button-hover-text-color);
+}
+
+.match-server-select {
+  flex: 0 0 110px;
+  height: 24px;
+  padding: 0 8px;
+  border-width: 1px;
+  border-radius: 12px;
+  font-size: 13px;
+  box-shadow: none;
 }
 
 .toolbar-primary {
