@@ -2347,7 +2347,6 @@ export namespace GameState {
       if (m === null || m % 2 !== player) continue
 
       const passedMultiverse = Multiverse.createPass(multiverse, player, [l])
-      if (! Multiverse.hasSubmittedPresentMoves(passedMultiverse, player)) continue
       if (Multiverse.findChecks(passedMultiverse, attackingPlayer).some((check) => (
         ! currentChecks.has(getMoveKey(check))
       ))) {
