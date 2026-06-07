@@ -2658,6 +2658,8 @@ export class Game extends Disposable(Empty) {
   }
 
   private renderMoveFormationArrow(board: Board, alpha = 1) {
+    if (this.selectedPiece) return
+
     const move = board.createdBy
     const player = board.createdByPlayer
     if (! move || player === null || board.createdByRole !== 'target') return
