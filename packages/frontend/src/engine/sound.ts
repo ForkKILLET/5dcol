@@ -53,6 +53,8 @@ export class SoundManager {
   ) {}
 
   private context: AudioContext | null = null
+  private gain: GainNode | null = null
+  private volume = 1
 
   static createSilent(): SoundManager {
     return new SoundManager(new Map())
@@ -134,6 +136,12 @@ export class SoundManager {
   dispose() {
     void this.context?.close()
     this.context = null
+    this.gain = null
+  }
+
+  setVolume(volume: number) {
+    this.volume = clamp(volume, 0, 1)
+    if (this.gain) this.gain.gain.value = this.volume
   }
 
   private createSource(name: SoundName): AudioBufferSourceNode | null {
@@ -143,7 +151,7 @@ export class SoundManager {
     const context = this.getContext()
     const source = context.createBufferSource()
     source.buffer = buffer
-    source.connect(context.destination)
+    source.connect(this.getGain())
     return source
   }
 
@@ -167,7 +175,20 @@ export class SoundManager {
     this.context ??= new AudioContext()
     return this.context
   }
+
+  private getGain(): GainNode {
+    if (! this.gain) {
+      this.gain = this.getContext().createGain()
+      this.gain.gain.value = this.volume
+      this.gain.connect(this.getContext().destination)
+    }
+    return this.gain
+  }
 }
+
+const clamp = (value: number, min: number, max: number): number => (
+  Math.min(max, Math.max(min, value))
+)
 
 const fetchSound = async (context: BaseAudioContext, name: SoundName): Promise<AudioBuffer> => {
   try {

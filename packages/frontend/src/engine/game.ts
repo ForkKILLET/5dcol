@@ -38,6 +38,8 @@ export interface GameConfig {
   localPlayer?: Player
   viewPlayer?: Player
   autoSwitchViewPlayer?: boolean
+  showMoveTravelAnimation?: boolean
+  showOpponentMoveRange?: boolean
   canControlOnlineGame?: () => boolean
   isExternallyFinished?: () => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
@@ -179,6 +181,9 @@ export class Game extends Disposable(Empty) {
     this.timelineTilesPainter = new TimelineTilesPainter(config.renderer, this.layout)
     this.linePainter = new LinePainter(config.renderer, this.layout)
     this.viewPlayer = config.viewPlayer ?? Player.W
+    this.autoSwitchViewPlayer = config.autoSwitchViewPlayer ?? true
+    this.showMoveTravelAnimation = config.showMoveTravelAnimation ?? true
+    this.showOpponentMoveRange = config.showOpponentMoveRange ?? true
     this.layout.setViewPlayer(this.viewPlayer)
   }
 
@@ -231,6 +236,9 @@ export class Game extends Disposable(Empty) {
   private statusSignature = ''
   private gameInputDisabled = false
   private cameraMotionId = 0
+  private autoSwitchViewPlayer = true
+  private showMoveTravelAnimation = true
+  private showOpponentMoveRange = true
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -305,6 +313,21 @@ export class Game extends Disposable(Empty) {
 
   public toggleViewPlayer() {
     this.setViewPlayer(CorePlayers.opponent(this.viewPlayer), { playSound: true })
+  }
+
+  public setAutoSwitchViewPlayer(enabled: boolean) {
+    this.autoSwitchViewPlayer = enabled
+    this.syncAutomaticViewPlayer()
+  }
+
+  public setShowMoveTravelAnimation(enabled: boolean) {
+    this.showMoveTravelAnimation = enabled
+    if (! enabled && this.moveAnimation) this.stopMoveTravelLoop(this.moveAnimation)
+  }
+
+  public setShowOpponentMoveRange(enabled: boolean) {
+    this.showOpponentMoveRange = enabled
+    if (! enabled) this.hoverPiece = null
   }
 
   private applyViewPlayer(player: Player) {
@@ -838,7 +861,7 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = this.selectedPiece || ! playableHit || ! canControlTurn
       ? null
       : this.getPieceSelectionFromHit(playableHit)
-    if (! this.selectedPiece && ! this.hoverPiece && canControlTurn) {
+    if (! this.selectedPiece && ! this.hoverPiece && canControlTurn && this.showOpponentMoveRange) {
       this.hoverPiece = this.getPendingOpponentPiecePreviewAtScreen(this.pointer.screen)
     }
     this.syncToolbarButtons()
@@ -1465,7 +1488,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private syncAutomaticViewPlayer() {
-    if (! this.config.autoSwitchViewPlayer) return
+    if (! this.autoSwitchViewPlayer) return
     this.setViewPlayer(this.player)
   }
 
@@ -1695,7 +1718,7 @@ export class Game extends Disposable(Empty) {
   private getMoveAnimationDuration(): number {
     if (! this.pendingMove?.is5D) return Animations.MoveAnimationDuration
     return Animations.MoveAnimationDuration
-      + this.getMoveTravelDuration(this.pendingMove)
+      + (this.showMoveTravelAnimation ? this.getMoveTravelDuration(this.pendingMove) : 0)
       + Animations.MoveAnimationDuration
   }
 
@@ -1730,6 +1753,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private getMoveTravelAnimationProgress(): number {
+    if (! this.showMoveTravelAnimation) return 1
     return Scalar.clamp(
       (this.getMoveAnimationElapsed() - Animations.MoveAnimationDuration)
         / this.getMoveTravelDuration(this.pendingMove),
@@ -1739,6 +1763,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private getMoveTravelDuration(pendingMove: PendingMove | null): number {
+    if (! this.showMoveTravelAnimation) return 0
     if (! pendingMove?.is5D) return Animations.MoveTravelDuration
 
     const geometry = this.getMoveArrowGeometry(pendingMove.move, this.player)
@@ -1757,6 +1782,10 @@ export class Game extends Disposable(Empty) {
   private updateMoveTravelSound() {
     const animation = this.moveAnimation
     const pendingMove = this.pendingMove
+    if (! this.showMoveTravelAnimation) {
+      if (animation) this.stopMoveTravelLoop(animation)
+      return
+    }
     if (! animation || ! pendingMove?.is5D) return
 
     const sourceProgress = this.getMoveSourceBoardAnimationProgress()
@@ -2383,6 +2412,7 @@ export class Game extends Disposable(Empty) {
 
   private followTravelAnimationViewport(pendingMove: PendingMove, progress: number) {
     if (! this.moveAnimation) return
+    if (! this.showMoveTravelAnimation) return
 
     const sourceOldRect = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
     const targetOldRect = this.layout.getBoardRect(
@@ -2437,6 +2467,7 @@ export class Game extends Disposable(Empty) {
 
   private renderTravelPiece(pendingMove: PendingMove, progress: number, alpha: number) {
     if (alpha <= 0) return
+    if (! this.showMoveTravelAnimation) return
 
     const sourceBoard = Multiverse.getBoard(
       pendingMove.multiverseBefore,

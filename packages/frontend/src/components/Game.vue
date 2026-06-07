@@ -19,6 +19,14 @@ import GameIcon from './GameIcon.vue'
 
 const canvas = useTemplateRef('canvas')
 
+const SETTINGS_STORAGE_KEY = '5dcol.settings'
+const DEFAULT_GAME_SETTINGS: GameSettings = {
+  soundVolume: 1,
+  autoSwitchViewPlayer: true,
+  showMoveTravelAnimation: true,
+  showOpponentMoveRange: true,
+}
+
 const messages = reactive<GameMessage[]>([])
 const toolbarButtons = ref<GameToolbarButton[]>([])
 const gameStatus = ref<GameStatusView>({
@@ -36,7 +44,7 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordHoveredActionIndex = ref<number | null>(null)
 const secondaryMenuOpen = ref(false)
-const dialogMode = ref<'none' | 'language' | 'help' | 'import' | 'export'>('none')
+const dialogMode = ref<'none' | 'language' | 'help' | 'settings' | 'import' | 'export'>('none')
 const importText = ref('')
 const importError = ref('')
 const exportText = ref('')
@@ -80,6 +88,7 @@ const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
 const onlineError = ref('')
 const onlineRecoveryError = ref('')
 const viewPlayer = ref<Player>(getStoredViewPlayer() ?? Player.W)
+const gameSettings = reactive<GameSettings>(getStoredGameSettings())
 const logger = new Logger(messages)
 let game: Game | null = null
 let canvasRenderer: CanvasRenderer | null = null
@@ -106,6 +115,12 @@ interface StoredOnlineSession {
   sessionId: string
 }
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
+interface GameSettings {
+  soundVolume: number
+  autoSwitchViewPlayer: boolean
+  showMoveTravelAnimation: boolean
+  showOpponentMoveRange: boolean
+}
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
 const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
 const t = computed(() => createTranslator(language.value))
@@ -661,6 +676,12 @@ function openHelpDialog() {
   dialogMode.value = 'help'
 }
 
+function openSettingsDialog() {
+  playUISound()
+  secondaryMenuOpen.value = false
+  dialogMode.value = 'settings'
+}
+
 function openGitHub() {
   playUISound()
   window.open('https://github.com/ForkKILLET/5dcol', '_blank', 'noopener,noreferrer')
@@ -952,7 +973,9 @@ function startLocalGame() {
     onRecordChange: updateRecord,
     onStatusChange: updateGameStatus,
     viewPlayer: viewPlayer.value,
-    autoSwitchViewPlayer: true,
+    autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
+    showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
+    showOpponentMoveRange: gameSettings.showOpponentMoveRange,
     onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
@@ -984,6 +1007,9 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     initialActions: state.actions,
     localPlayer: state.session.player,
     viewPlayer: viewPlayer.value,
+    autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
+    showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
+    showOpponentMoveRange: gameSettings.showOpponentMoveRange,
     canControlOnlineGame: () => onlineRoomReady.value,
     isExternallyFinished: () => onlineRoomStatus.value === 'finished',
     onToolbarChange: buttons => {
@@ -1206,6 +1232,53 @@ function getStoredViewPlayer(): Player | null {
   }
 }
 
+function getStoredGameSettings(): GameSettings {
+  const storage = getLocalStorage()
+  if (! storage) return { ...DEFAULT_GAME_SETTINGS }
+
+  try {
+    const value = JSON.parse(storage.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as Partial<GameSettings>
+    return {
+      soundVolume: getValidVolume(value.soundVolume),
+      autoSwitchViewPlayer: getValidBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
+      showMoveTravelAnimation: getValidBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
+      showOpponentMoveRange: getValidBoolean(value.showOpponentMoveRange, DEFAULT_GAME_SETTINGS.showOpponentMoveRange),
+    }
+  }
+  catch {
+    return { ...DEFAULT_GAME_SETTINGS }
+  }
+}
+
+function getValidVolume(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : DEFAULT_GAME_SETTINGS.soundVolume
+}
+
+function getValidBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function storeGameSettings() {
+  const storage = getLocalStorage()
+  if (! storage) return
+
+  try {
+    storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(gameSettings))
+  }
+  catch {
+    // Ignore storage failures; settings should still apply for the current session.
+  }
+}
+
+function syncGameSettings() {
+  soundManager?.setVolume(gameSettings.soundVolume)
+  game?.setAutoSwitchViewPlayer(gameSettings.autoSwitchViewPlayer)
+  game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
+  game?.setShowOpponentMoveRange(gameSettings.showOpponentMoveRange)
+}
+
 function storeViewPlayer(player: Player) {
   const storage = getLocalStorage()
   if (! storage) return
@@ -1364,6 +1437,7 @@ async function init() {
     textureLoadProgress.value = { completed: 0, total: 0 }
     soundLoadProgress.value = { completed: 0, total: 0 }
     soundManager = SoundManager.createSilent()
+    syncGameSettings()
     const renderer = await CanvasRenderer.create(canvas.value!, logger, progress => {
       textureLoadProgress.value = progress
     })
@@ -1401,6 +1475,10 @@ watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
 watch(matchNickname, storeMatchNickname)
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
+watch(gameSettings, () => {
+  storeGameSettings()
+  syncGameSettings()
+}, { deep: true })
 </script>
 
 <template>
@@ -1462,6 +1540,13 @@ watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
               @click="openHelpDialog"
             >
               <span>{{ t('main.help') }}</span>
+            </GameButton>
+            <GameButton
+              class="main-menu-button"
+              :style="menuButtonStyle"
+              @click="openSettingsDialog"
+            >
+              <span>{{ t('main.settings') }}</span>
             </GameButton>
             <GameButton
               class="main-menu-button"
@@ -1853,6 +1938,12 @@ watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
           </GameButton>
           <GameButton
             :style="menuButtonStyle"
+            @click="openSettingsDialog"
+          >
+            <span>{{ t('main.settings') }}</span>
+          </GameButton>
+          <GameButton
+            :style="menuButtonStyle"
             @click="clickReturnToMainMenuButton"
           >
             <span>{{ t('button.returnToMainMenu') }}</span>
@@ -1899,6 +1990,61 @@ watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
               @click="selectLanguage(option.value)"
             >
               <span>{{ option.label }}</span>
+            </GameButton>
+          </div>
+        </div>
+
+        <div
+          v-else-if="dialogMode === 'settings'"
+          class="dialog-card dialog-card--narrow"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">{{ t('dialog.settingsTitle') }}</h2>
+          <div class="settings-list">
+            <label class="settings-row">
+              <span>{{ t('settings.soundVolume') }}</span>
+              <input
+                v-model.number="gameSettings.soundVolume"
+                class="settings-range"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+              >
+            </label>
+            <label class="settings-row">
+              <span>{{ t('settings.autoSwitchView') }}</span>
+              <input
+                v-model="gameSettings.autoSwitchViewPlayer"
+                class="settings-checkbox"
+                type="checkbox"
+              >
+            </label>
+            <label class="settings-row">
+              <span>{{ t('settings.travelAnimation') }}</span>
+              <input
+                v-model="gameSettings.showMoveTravelAnimation"
+                class="settings-checkbox"
+                type="checkbox"
+              >
+            </label>
+            <label class="settings-row">
+              <span>{{ t('settings.opponentMoveRange') }}</span>
+              <input
+                v-model="gameSettings.showOpponentMoveRange"
+                class="settings-checkbox"
+                type="checkbox"
+              >
+            </label>
+          </div>
+          <div class="dialog-actions">
+            <GameButton
+              class="dialog-button"
+              :style="menuButtonStyle"
+              @click="closeDialog()"
+            >
+              <span>{{ t('button.close') }}</span>
             </GameButton>
           </div>
         </div>
@@ -2695,6 +2841,34 @@ canvas {
   align-items: center;
   gap: calc(var(--button-content-gap) * 2);
   width: 100%;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 2);
+  width: min(360px, calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10));
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--button-content-gap) * 3);
+  color: var(--button-text-color);
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.settings-range {
+  width: 150px;
+  accent-color: var(--button-hover-fill-color);
+}
+
+.settings-checkbox {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--button-hover-fill-color);
 }
 
 .language-button {

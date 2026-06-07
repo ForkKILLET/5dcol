@@ -23,6 +23,7 @@ main.github: "GitHub"
 
 dialog.languageTitle: "Language"
 dialog.helpTitle: "Help"
+dialog.settingsTitle: "Settings"
 dialog.helpPlaceholder: ""
 dialog.helpText: |
   Shortcuts
@@ -52,6 +53,11 @@ dialog.loadingSounds: "Sounds {completed}/{total}"
 
 language.en: "English"
 language.zh: "中文"
+
+settings.soundVolume: "Sound volume"
+settings.autoSwitchView: "Auto switch view"
+settings.travelAnimation: "Travel animation"
+settings.opponentMoveRange: "Opponent move range"
 
 player.white: "White"
 player.black: "Black"

@@ -23,6 +23,7 @@ main.github: "GitHub"
 
 dialog.languageTitle: "语言"
 dialog.helpTitle: "帮助"
+dialog.settingsTitle: "设置"
 dialog.helpPlaceholder: ""
 dialog.helpText: |
   快捷键
@@ -52,6 +53,11 @@ dialog.loadingSounds: "音频 {completed}/{total}"
 
 language.en: "English"
 language.zh: "中文"
+
+settings.soundVolume: "音量"
+settings.autoSwitchView: "自动切换视角"
+settings.travelAnimation: "穿越动画"
+settings.opponentMoveRange: "对手落子范围"
 
 player.white: "白方"
 player.black: "黑方"
