@@ -95,6 +95,7 @@ const query = new URLSearchParams(window.location.search)
 const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
 const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
 const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
+const DOCUMENT_TITLE = document.title
 const MATCH_REFRESH_INTERVAL_MS = 5000
 const ONLINE_RECONNECT_DELAY_MS = 1000
 
@@ -149,6 +150,13 @@ const onlineStatusText = computed(() => {
       return t.value('online.playingAs')
   }
 })
+const shouldMarkTitleForTurn = computed(() => (
+  gameStarted.value
+  && ! gameStatus.value.ended
+  && onlineSession.value !== null
+  && onlinePlayer.value !== null
+  && gameStatus.value.player === onlinePlayer.value
+))
 const languageOptions = computed(() => LANGUAGES.map(value => ({
   value,
   label: t.value(`language.${value}`),
@@ -1006,8 +1014,12 @@ function applyOnlineGameState(
   state: MatchGameState,
   { force = false }: { force?: boolean } = {},
 ) {
+  const wasReady = onlineRoomReady.value
   onlineRoomStatus.value = state.room.status
   onlineRoomReady.value = state.room.status === 'playing'
+  if (gameStarted.value && ! wasReady && onlineRoomReady.value) {
+    soundManager?.play('bell.ogg')
+  }
   if (state.session) onlinePlayer.value = state.session.player
   onlinePresence.value = state.presence
   onlineError.value = ''
@@ -1324,24 +1336,41 @@ function stopAmbience() {
   ambienceLoop = null
 }
 
+function syncDocumentTitle() {
+  document.title = shouldMarkTitleForTurn.value
+    ? `* ${DOCUMENT_TITLE}`
+    : DOCUMENT_TITLE
+}
+
+async function loadOptionalSounds() {
+  if (! soundManager) return
+
+  try {
+    soundLoadProgress.value = { completed: 0, total: 0 }
+    await soundManager.load(logger, progress => {
+      soundLoadProgress.value = progress
+    }, { optional: true })
+    if (! gameStarted.value) startAmbience()
+  }
+  catch (err) {
+    logger.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
 async function init() {
   try {
     loading.value = true
     loadingError.value = ''
     textureLoadProgress.value = { completed: 0, total: 0 }
     soundLoadProgress.value = { completed: 0, total: 0 }
-    const [renderer, loadedSoundManager] = await Promise.all([
-      CanvasRenderer.create(canvas.value!, logger, progress => {
-        textureLoadProgress.value = progress
-      }),
-      SoundManager.create(logger, progress => {
-        soundLoadProgress.value = progress
-      }),
-    ])
-    soundManager = loadedSoundManager
+    soundManager = SoundManager.createSilent()
+    const renderer = await CanvasRenderer.create(canvas.value!, logger, progress => {
+      textureLoadProgress.value = progress
+    })
     canvasRenderer = renderer
     refreshSavedGameState()
     loading.value = false
+    void loadOptionalSounds()
   }
   catch (err) {
     loadingError.value = t.value('error.loadFailed')
@@ -1365,11 +1394,13 @@ onUnmounted(() => {
   game?.dispose()
   canvasRenderer?.dispose()
   soundManager?.dispose()
+  document.title = DOCUMENT_TITLE
 })
 
 watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
 watch(matchNickname, storeMatchNickname)
+watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
 </script>
 
 <template>
