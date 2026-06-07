@@ -80,7 +80,7 @@ export function createBackendServer(options: BackendServerOptions) {
   void app.register(cors, {
     origin: true,
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'ngrok-skip-browser-warning'],
+    allowedHeaders: ['Content-Type'],
   })
   void app.register(websocket)
 

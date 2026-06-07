@@ -1,11 +1,9 @@
 import { createBackendServer } from './server.ts'
 
-const port = Number(process.env.PORT ?? 5161)
-const host = process.env.HOST
-
 const server = createBackendServer({
-  port,
-  host,
+  port: Number(process.env.PORT) || 5161,
+  host: process.env.HOST,
+  name: process.env.NAME?.trim(),
 })
 
 const SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM']

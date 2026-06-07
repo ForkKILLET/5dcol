@@ -50,21 +50,26 @@ const hasSavedGame = ref(false)
 const mainMenuMode = ref<'home' | 'match'>('home')
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
-const DEFAULT_MATCH_SERVER_ID = 'localhost:5161'
-const expandedMatchServerIds = reactive(new Set<string>([DEFAULT_MATCH_SERVER_ID]))
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
 const matchNickname = ref(getStoredMatchNickname())
-const matchServers = reactive<MatchServerState[]>([
-  {
-    id: DEFAULT_MATCH_SERVER_ID,
-    address: 'http://localhost:5161',
+const DEFAULT_SERVERS: Record<string, { name: string }> = {
+  'http://localhost:5161': { name: 'Debug Server' },
+  'https://genshin.asm.ms:5161': { name: 'Server (China)' },
+}
+const DEFAULT_SERVER_IDS = new Set(Object.keys(DEFAULT_SERVERS))
+const expandedMatchServerIds = reactive(new Set(DEFAULT_SERVER_IDS))
+const matchServers = reactive<MatchServerState[]>(Object
+  .entries(DEFAULT_SERVERS)
+  .map(([address, { name }]) => ({
+    id: address,
+    address,
+    name,
     status: 'idle',
-    name: '',
     rooms: [],
     error: '',
-  },
-])
+  }))
+)
 const onlineSession = ref<StoredOnlineSession | null>(getStoredOnlineSession())
 const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
 const onlineRoomReady = ref(false)
@@ -501,7 +506,7 @@ function getMatchServerDisplayAddress(server: MatchServerState) {
 }
 
 function isManualMatchServer(server: MatchServerState) {
-  return server.id !== DEFAULT_MATCH_SERVER_ID
+  return ! DEFAULT_SERVER_IDS.has(server.id)
 }
 
 function isMatchServerExpanded(server: MatchServerState) {
