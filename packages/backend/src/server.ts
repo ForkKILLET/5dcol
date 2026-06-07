@@ -20,6 +20,7 @@ import {
   type LeaveMatchRoomResponse,
   type MatchErrorResponse,
   type MatchGameState,
+  type MatchClock,
   type MatchRoom,
   type MatchRoomCreatorPlayer,
   type MatchRoomFinishReason,
@@ -54,9 +55,15 @@ export interface RoomState {
   finishReason: MatchRoomFinishReason | null
   settings: MatchRoomSettings
   password: string | null
+  clock: RoomClockState
   createdAt: number
   startedAt: number | null
   updatedAt: number
+}
+
+export interface RoomClockState {
+  playerTotalsMs: [number, number]
+  turnStartedAt: number | null
 }
 
 interface RoomSubscriber {
@@ -117,6 +124,7 @@ export function createBackendServer(options: BackendServerOptions) {
       finishReason: null,
       settings,
       password: normalizePassword(body?.password),
+      clock: createInitialClock(),
       createdAt: Date.now(),
       startedAt: null,
       updatedAt: Date.now(),
@@ -257,18 +265,22 @@ export function createBackendServer(options: BackendServerOptions) {
       if (state.player !== session.player) return sendError(reply, 409, 'Not your turn')
 
       let nextState: GameState
+      const action = sanitizeAction(request.body.action)
       try {
         // This replays the full authoritative action list and validates every move
         // in the submitted action against core rules before mutating room state.
-        nextState = GameState.create([...room.actions, request.body.action])
+        nextState = GameState.create([...room.actions, action])
       }
       catch (err) {
         return sendError(reply, 400, err instanceof Error ? err.message : 'Illegal action')
       }
 
-      room.actions.push(request.body.action)
+      const now = Date.now()
+      room.actions.push(applyClockToAction(room, action, session.player, now))
       finishRoomIfGameEnded(room, nextState, session.player)
-      room.updatedAt = Date.now()
+      if (room.finishReason === null) room.clock.turnStartedAt = now
+      else room.clock.turnStartedAt = null
+      room.updatedAt = now
       storage.save(rooms)
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
@@ -305,6 +317,7 @@ function forfeitRoom(room: RoomState, session: SessionState) {
   if (toRoomView(room).status !== 'finished') {
     room.winner = getOpponentPlayer(session.player)
     room.finishReason = 'forfeit'
+    room.clock.turnStartedAt = null
   }
   session.lastSeenAt = 0
   room.updatedAt = Date.now()
@@ -320,10 +333,37 @@ function createSession(room: RoomState, player: Player, nickname: string | null 
   }
   room.sessions.push(session)
   if (room.startedAt === null && room.sessions.length >= room.maxPlayers) {
-    room.startedAt = Date.now()
+    const now = Date.now()
+    room.startedAt = now
+    room.clock.turnStartedAt = now
   }
   room.updatedAt = Date.now()
   return session
+}
+
+function createInitialClock(): RoomClockState {
+  return {
+    playerTotalsMs: [0, 0],
+    turnStartedAt: null,
+  }
+}
+
+function sanitizeAction(action: Action): Action {
+  return {
+    moves: action.moves,
+  }
+}
+
+function applyClockToAction(room: RoomState, action: Action, player: Player, now: number): Action {
+  const elapsedMs = Math.max(0, now - (room.clock.turnStartedAt ?? room.startedAt ?? now))
+  room.clock.playerTotalsMs[player] += elapsedMs
+  return {
+    ...action,
+    clock: {
+      elapsedMs,
+      totalMs: room.clock.playerTotalsMs[player],
+    },
+  }
 }
 
 function normalizeNickname(nickname: string | null | undefined): string | null {
@@ -468,7 +508,16 @@ function toGameStateView(
     presence: getMatchPresence(room, session, onlineSessionCounts),
     actions: room.actions,
     currentPlayer: state.player,
+    clock: getClockView(room, state),
     updatedAt: room.updatedAt,
+  }
+}
+
+function getClockView(room: RoomState, state: GameState): MatchClock {
+  return {
+    playerTotalsMs: [...room.clock.playerTotalsMs],
+    turnStartedAt: room.clock.turnStartedAt,
+    currentPlayer: getRoomStatus(room) === 'playing' ? state.player : null,
   }
 }
 
@@ -500,6 +549,7 @@ function finishRoomIfGameEnded(room: RoomState, state: GameState, actingPlayer: 
 
   room.winner = status === 'checkmate' ? actingPlayer : null
   room.finishReason = status
+  room.clock.turnStartedAt = null
 }
 
 function subscribeRoomState(

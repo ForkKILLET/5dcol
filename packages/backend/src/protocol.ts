@@ -50,6 +50,12 @@ export interface MatchRoom {
   actionCount: number
 }
 
+export interface MatchClock {
+  playerTotalsMs: [number, number]
+  turnStartedAt: number | null
+  currentPlayer: Player | null
+}
+
 export interface MatchSession {
   id: string
   roomId: string
@@ -68,6 +74,7 @@ export interface MatchGameState {
   presence: MatchPresence | null
   actions: Action[]
   currentPlayer: Player
+  clock: MatchClock
   updatedAt: number
 }
 

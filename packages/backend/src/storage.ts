@@ -76,6 +76,7 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
     : null
   room.createdAt ??= room.updatedAt
   room.startedAt ??= null
+  room.clock = getValidRoomClock(room)
   if (room.winner !== null && room.winner !== 0 && room.winner !== 1) return false
   if (typeof room.createdAt !== 'number') return false
   if (room.startedAt !== null && typeof room.startedAt !== 'number') return false
@@ -93,6 +94,43 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
   catch {
     return false
   }
+}
+
+function getValidRoomClock(room: Partial<RoomState>): RoomState['clock'] {
+  const totals = getValidPlayerTotals(room.clock?.playerTotalsMs)
+  const inferredTotals = inferPlayerTotals(room.actions ?? [])
+  const playerTotalsMs: [number, number] = [
+    Math.max(totals[0], inferredTotals[0]),
+    Math.max(totals[1], inferredTotals[1]),
+  ]
+  const isPlaying = room.finishReason === null
+    && room.sessions?.length === room.maxPlayers
+    && room.startedAt !== null
+  const turnStartedAt = typeof room.clock?.turnStartedAt === 'number'
+    ? room.clock.turnStartedAt
+    : isPlaying ? room.updatedAt! : null
+  return { playerTotalsMs, turnStartedAt }
+}
+
+function getValidPlayerTotals(value: unknown): [number, number] {
+  if (! Array.isArray(value)) return [0, 0]
+  return [
+    getValidDuration(value[0]),
+    getValidDuration(value[1]),
+  ]
+}
+
+function inferPlayerTotals(actions: RoomState['actions']): [number, number] {
+  return actions.reduce<[number, number]>((totals, action, index) => {
+    totals[index % 2] += getValidDuration(action.clock?.elapsedMs)
+    return totals
+  }, [0, 0])
+}
+
+function getValidDuration(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : 0
 }
 
 function getValidRoomSettings(value: unknown): RoomState['settings'] {

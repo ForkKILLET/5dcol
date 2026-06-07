@@ -71,6 +71,7 @@ status.stalemate: "Game ended - Draw"
 record.title: "Record"
 record.pendingNotRecorded: "Pending moves are not recorded."
 record.empty: "No moves recorded."
+record.clock: "{elapsed} / {total}"
 
 match.title: "Match"
 match.connect: "Connect"

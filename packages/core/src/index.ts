@@ -432,6 +432,12 @@ export interface Move {
 
 export interface Action {
   moves: Move[]
+  clock?: ActionClock
+}
+
+export interface ActionClock {
+  elapsedMs: number
+  totalMs: number
 }
 
 export namespace Board {

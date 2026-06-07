@@ -2016,6 +2016,15 @@ watch(gameSettings, () => {
               <span class="record-serial">{{ row.serial }}</span>
               <span class="record-action">
                 <span
+                  v-if="row.clock"
+                  class="record-clock"
+                >
+                  {{ t('record.clock', {
+                    elapsed: row.clock.elapsed,
+                    total: row.clock.total,
+                  }) }}
+                </span>
+                <span
                   v-for="(move, moveIndex) in row.moves"
                   :key="`${row.serial}-${moveIndex}`"
                   class="record-move"
@@ -2848,6 +2857,13 @@ canvas {
   display: grid;
   row-gap: calc(var(--button-content-gap) * 0.35);
   min-width: 0;
+}
+
+.record-clock {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.68;
+  white-space: nowrap;
 }
 
 .record-move {

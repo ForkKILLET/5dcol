@@ -6,7 +6,13 @@ export interface GameRecordAction {
   index: number
   serial: string
   player: 'w' | 'b'
+  clock: GameRecordClock | null
   moves: GameRecordMove[]
+}
+
+export interface GameRecordClock {
+  elapsed: string
+  total: string
 }
 
 export interface GameRecordMove {
@@ -26,6 +32,12 @@ export const buildGameRecordActions = (actions: Action[]): GameRecordAction[] =>
       index,
       serial: getActionSerial(index),
       player: player === Player.W ? 'w' : 'b',
+      clock: action.clock
+        ? {
+            elapsed: formatDuration(action.clock.elapsedMs),
+            total: formatDuration(action.clock.totalMs),
+          }
+        : null,
       moves: action.moves.map(move => toGameRecordMove(move, player)),
     }
   })
@@ -77,3 +89,10 @@ const formatBoard = ({ l, t }: Pick<Move['from'], 'l' | 't'>): string => (
 const formatSquare = ({ x, y }: CoordSpacelike): string => (
   `${FILES[x]}${8 - y}`
 )
+
+const formatDuration = (durationMs: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
