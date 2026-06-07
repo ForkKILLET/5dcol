@@ -1,5 +1,5 @@
 import { type Logger } from '@engine/logger'
-import type { AssetLoadProgressCallback } from '@engine/assets'
+import { getAssetUrl, type AssetLoadProgressCallback } from '@engine/assets'
 
 export const SOUND_NAME_LIST = [
   'ambience.ogg',
@@ -28,7 +28,7 @@ export const SOUND_NAME_LIST = [
 
 export type SoundName = typeof SOUND_NAME_LIST[number]
 
-const SOUND_PATH = './assets/sounds'
+const SOUND_PATH = 'assets/sounds'
 
 export interface SoundPlayOptions {
   when?: number
@@ -192,7 +192,7 @@ const clamp = (value: number, min: number, max: number): number => (
 
 const fetchSound = async (context: BaseAudioContext, name: SoundName): Promise<AudioBuffer> => {
   try {
-    const res = await fetch(`${SOUND_PATH}/${name}`)
+    const res = await fetch(getAssetUrl(`${SOUND_PATH}/${name}`))
     if (! res.ok) throw Error(`${res.status} ${res.statusText}`)
 
     return await context.decodeAudioData(await res.arrayBuffer())

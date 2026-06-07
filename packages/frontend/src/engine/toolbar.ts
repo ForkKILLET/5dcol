@@ -1,4 +1,5 @@
 import { Player, type Piece } from '@5dcol/core'
+import { getAssetUrl } from '@engine/assets'
 import { Color4 } from '@engine/basic'
 import { ButtonColors, type ButtonColorPreset } from '@engine/constant'
 import { PIECE_TO_TEXTURE_ID, TEXTURE_ID_TO_NAME } from '@engine/texture'
@@ -79,5 +80,5 @@ export const toToolbarButtonColors = (
 const getPieceImageUrl = (piece: Piece): string => {
   const textureId = PIECE_TO_TEXTURE_ID.get(piece)
   if (textureId === undefined) return ''
-  return `./assets/canvas/textures/${TEXTURE_ID_TO_NAME.get(textureId)!}`
+  return getAssetUrl(`assets/canvas/textures/${TEXTURE_ID_TO_NAME.get(textureId)!}`)
 }

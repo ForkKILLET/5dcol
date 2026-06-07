@@ -1,5 +1,5 @@
 import { isElem } from '@/utils'
-import type { AssetLoadProgressCallback } from '@engine/assets'
+import { getAssetUrl, type AssetLoadProgressCallback } from '@engine/assets'
 import { getTextureLabel, TEXTURE_ID_TO_NAME, type TextureID, TextureManager, type TextureName } from '@engine/texture'
 
 export const enum CanvasTextureType {
@@ -39,7 +39,7 @@ export type CanvasTexture =
   | CanvasBitmapTexture
   | CanvasSVGTexture
 
-export const CANVAS_TEXTURE_PATH = './assets/canvas/textures'
+export const CANVAS_TEXTURE_PATH = 'assets/canvas/textures'
 
 export namespace SVGParser {
   const IGNORED_TAGS = new Set([
@@ -189,7 +189,7 @@ export class CanvasTextureManager extends TextureManager<CanvasTexture> {
   fetchBitmap(id: TextureID, name: TextureName): Promise<CanvasBitmapTexture> {
     return new Promise<CanvasBitmapTexture>((resolve, reject) => {
       const image = new Image()
-      image.src = `${CANVAS_TEXTURE_PATH}/${name}`
+      image.src = getAssetUrl(`${CANVAS_TEXTURE_PATH}/${name}`)
       image.onload = () => resolve({
         type: CanvasTextureType.Bitmap,
         image,
@@ -202,7 +202,7 @@ export class CanvasTextureManager extends TextureManager<CanvasTexture> {
 
   async fetchSVG(id: TextureID, name: TextureName): Promise<CanvasSVGTexture> {
     try {
-      const res = await fetch(`${CANVAS_TEXTURE_PATH}/${name}`)
+      const res = await fetch(getAssetUrl(`${CANVAS_TEXTURE_PATH}/${name}`))
 
       if (! res.ok) throw res.status
       const svgText = await res.text()
