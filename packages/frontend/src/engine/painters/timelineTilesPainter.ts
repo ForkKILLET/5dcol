@@ -1,6 +1,7 @@
-import { type Multiverse } from '@5dcol/core'
+import { Line, Multiverse } from '@5dcol/core'
 import { Color4, Mat3, Scalar, Vec2 } from '@engine/basic'
-import { Colors, RenderLayer, Sizes } from '@engine/constant'
+import { Colors, LabelVisibility, RenderLayer, Sizes } from '@engine/constant'
+import { Easing } from '@engine/easing'
 import { type GameLayout } from '@engine/layout'
 import { type Renderer, RenderItemType } from '@engine/renderer'
 
@@ -47,11 +48,142 @@ export class TimelineTilesPainter {
             Vec2.sub(turnPos, [tileOverdraw / 2, tileOverdraw / 2]),
             Vec2.add(turnSize, [tileOverdraw, tileOverdraw]),
           ),
-          color: (t + l) % 2 === 0
-            ? Color4.mix(Colors.BoardTimeWhite, endedWhite, endedProgress)
-            : Color4.mix(Colors.BoardTimeBlack, endedBlack, endedProgress),
+          color: this.getTileColor(t, l, endedProgress, endedWhite, endedBlack),
         })
       }
     }
+
+    this.renderLabels(multiverse, {
+      t0,
+      t1,
+      l0,
+      l1,
+      endedProgress,
+      endedWhite,
+      endedBlack,
+    })
+  }
+
+  private renderLabels(
+    multiverse: Multiverse,
+    {
+      t0,
+      t1,
+      l0,
+      l1,
+      endedProgress,
+      endedWhite,
+      endedBlack,
+    }: {
+      t0: number
+      t1: number
+      l0: number
+      l1: number
+      endedProgress: number
+      endedWhite: Color4
+      endedBlack: Color4
+    },
+  ) {
+    const alpha = this.getLabelAlpha()
+    if (alpha <= 0) return
+
+    const bounds = this.getBoardGridBounds(multiverse)
+    if (! bounds) return
+
+    const bottomLabelLine = bounds.lMax + 1
+    if (bottomLabelLine >= l0 && bottomLabelLine < l1) {
+      for (let t = Math.max(0, t0); t < t1; t ++) {
+        const [pos, size] = this.layout.getTurnRect(bottomLabelLine, t)
+        this.renderer.submit({
+          type: RenderItemType.Text,
+          layer: RenderLayer.BoardTime,
+          order: 1,
+          pos: [
+            pos[0] + size[0] / 2,
+            pos[1] + size[1] - Sizes.TimelikeLabelInset,
+          ],
+          angle: 0,
+          text: `T${t}`,
+          fontSize: Sizes.TimelikeLabelFontSize,
+          fontStyle: 'bold',
+          color: Color4.withAlpha(
+            this.getTileColor(t + 1, bottomLabelLine, endedProgress, endedWhite, endedBlack),
+            alpha,
+          ),
+          align: 'center',
+          baseline: 'bottom',
+        })
+      }
+    }
+
+    const rightLabelTurn = Math.floor((bounds.mMax + 1) / 2)
+    if (rightLabelTurn >= t0 && rightLabelTurn < t1) {
+      for (let l = l0; l < l1; l ++) {
+        const [pos, size] = this.layout.getTurnRect(l, rightLabelTurn)
+        this.renderer.submit({
+          type: RenderItemType.Text,
+          layer: RenderLayer.BoardTime,
+          order: 1,
+          pos: [
+            pos[0] + size[0] - Sizes.TimelikeLabelInset,
+            pos[1] + size[1] / 2,
+          ],
+          angle: 0,
+          text: this.formatLineLabel(l),
+          fontSize: Sizes.TimelikeLabelFontSize,
+          fontStyle: 'bold',
+          color: Color4.withAlpha(
+            this.getTileColor(rightLabelTurn + 1, l, endedProgress, endedWhite, endedBlack),
+            alpha,
+          ),
+          align: 'right',
+          baseline: 'middle',
+        })
+      }
+    }
+  }
+
+  private getBoardGridBounds(multiverse: Multiverse): { lMax: number, mMax: number } | null {
+    let lMax = -Infinity
+    let mMax = -Infinity
+
+    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
+      if (! line) continue
+      for (const [m, board] of Line.getBoardEntries(line)) {
+        if (! board) continue
+        lMax = Math.max(lMax, l)
+        mMax = Math.max(mMax, m)
+      }
+    }
+
+    if (! Number.isFinite(lMax) || ! Number.isFinite(mMax)) return null
+    return { lMax, mMax }
+  }
+
+  private getTileColor(
+    t: number,
+    l: number,
+    endedProgress: number,
+    endedWhite: Color4,
+    endedBlack: Color4,
+  ): Color4 {
+    return (t + l) % 2 === 0
+      ? Color4.mix(Colors.BoardTimeWhite, endedWhite, endedProgress)
+      : Color4.mix(Colors.BoardTimeBlack, endedBlack, endedProgress)
+  }
+
+  private getLabelAlpha(): number {
+    const scale = this.renderer.getCamera().scale
+    const progress = Scalar.clamp(
+      (scale - LabelVisibility.TimelikeScaleStart)
+      / (LabelVisibility.TimelikeScaleEnd - LabelVisibility.TimelikeScaleStart),
+      0,
+      1,
+    )
+    return Easing.easeInOut(progress)
+  }
+
+  private formatLineLabel(l: number): string {
+    return `${l > 0 ? '+' : ''}${l}L`
   }
 }

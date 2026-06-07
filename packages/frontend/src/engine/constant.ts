@@ -55,6 +55,10 @@ export namespace Sizes {
   export const TurnWidth = BoardMarginWidth * 2
   export const TurnSize: Vec2 = [TurnWidth, TurnHeight]
   export const BoardTimeOverdrawDevicePixels = 1
+  export const TimelikeLabelFontSize = 30
+  export const TimelikeLabelInset = 9
+  export const SpacelikeLabelFontSize = 4
+  export const SpacelikeLabelInset = 0.5
 
   export const LineArrowRadius = 20
   export const LineArrowShaftLength = 20
@@ -99,6 +103,13 @@ export namespace Sizes {
   export const PresentArrowStrokeWidth = 2.5
   export const PresentArrowTailInset = 2
   export const PresentArrowTailFillInset = 0.5
+}
+
+export namespace LabelVisibility {
+  export const TimelikeScaleStart = 0.45
+  export const TimelikeScaleEnd = 0.65
+  export const SpacelikeScaleStart = 1.8
+  export const SpacelikeScaleEnd = 2
 }
 
 export namespace CameraControl {

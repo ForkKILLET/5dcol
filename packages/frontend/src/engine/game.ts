@@ -2,7 +2,7 @@ import { Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as Co
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
-import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, RenderLayer, Sizes, Animations } from '@engine/constant'
+import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, LabelVisibility, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { Easing } from '@engine/easing'
 import { isModifierKeyEvent, isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove, type StoredGameState } from '@engine/gameState'
@@ -2508,9 +2508,72 @@ export class Game extends Disposable(Empty) {
       if (this.shouldRenderPieceGhost(l, m, coord)) this.renderPieceGhost(this.selectedPiece!.piece, pos)
     }
 
+    this.renderSpacelikeLabels(x0, y0, layers.board, alpha)
     this.renderBoardFocusMask(l, m, boardPlayer, [x0, y0], alpha)
     this.renderMoveFormationArrow(board, alpha)
     this.renderCheckBadge(l, m, [x0, y0], alpha)
+  }
+
+  private renderSpacelikeLabels(x0: number, y0: number, layer: RenderLayer, alpha: number) {
+    const labelAlpha = this.getSpacelikeLabelAlpha() * alpha
+    if (labelAlpha <= 0) return
+
+    for (let x = 0; x < 8; x ++) {
+      const y = 7
+      const isWhiteSquare = (x + y) % 2 === 0
+      this.renderer.submit({
+        type: RenderItemType.Text,
+        layer,
+        order: 1,
+        pos: [
+          x0 + x * Sizes.PieceWidth + Sizes.SpacelikeLabelInset,
+          y0 + (y + 1) * Sizes.PieceWidth - Sizes.SpacelikeLabelInset,
+        ],
+        angle: 0,
+        text: 'abcdefgh'[x],
+        fontSize: Sizes.SpacelikeLabelFontSize,
+        color: Color4.withAlpha(
+          isWhiteSquare ? Colors.BoardBlack : Colors.BoardWhite,
+          labelAlpha,
+        ),
+        align: 'left',
+        baseline: 'bottom',
+      })
+    }
+
+    for (let y = 0; y < 8; y ++) {
+      const x = 7
+      const isWhiteSquare = (x + y) % 2 === 0
+      this.renderer.submit({
+        type: RenderItemType.Text,
+        layer,
+        order: 1,
+        pos: [
+          x0 + (x + 1) * Sizes.PieceWidth - Sizes.SpacelikeLabelInset,
+          y0 + y * Sizes.PieceWidth + Sizes.SpacelikeLabelInset,
+        ],
+        angle: 0,
+        text: String(8 - y),
+        fontSize: Sizes.SpacelikeLabelFontSize,
+        color: Color4.withAlpha(
+          isWhiteSquare ? Colors.BoardBlack : Colors.BoardWhite,
+          labelAlpha,
+        ),
+        align: 'right',
+        baseline: 'top',
+      })
+    }
+  }
+
+  private getSpacelikeLabelAlpha(): number {
+    const scale = this.renderer.getCamera().scale
+    const progress = Scalar.clamp(
+      (scale - LabelVisibility.SpacelikeScaleStart)
+      / (LabelVisibility.SpacelikeScaleEnd - LabelVisibility.SpacelikeScaleStart),
+      0,
+      1,
+    )
+    return Easing.easeInOut(progress)
   }
 
   private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number) {
