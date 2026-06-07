@@ -1,0 +1,14 @@
+services:
+  5dcol-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    environment:
+      - PORT=5161
+    networks:
+      - caddy_network
+
+networks:
+  caddy_network:
+    external: true

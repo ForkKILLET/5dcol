@@ -16,6 +16,6 @@ RUN pnpm -r run build
 ENV HOST=0.0.0.0
 ENV PORT=5161
 
-EXPOSE 5161
+EXPOSE $PORT
 
 CMD ["node", "./packages/backend/dist/index.js"]
