@@ -98,6 +98,7 @@ interface ViewportFocusOptions {
 interface PieceSelection {
   l: number
   m: number
+  player: Player
   from: Coord
   targets: Coord[]
   piece: Piece
@@ -720,6 +721,9 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = this.selectedPiece || ! playableHit || ! canControlTurn
       ? null
       : this.getPieceSelectionFromHit(playableHit)
+    if (! this.selectedPiece && ! this.hoverPiece && canControlTurn) {
+      this.hoverPiece = this.getPendingOpponentPiecePreviewAtScreen(this.pointer.screen)
+    }
     this.syncToolbarButtons()
   }
 
@@ -1011,7 +1015,7 @@ export class Game extends Disposable(Empty) {
     if (! hit) return false
     const target = this.selectedPiece.targets.find(target => (
       target.l === hit.l
-      && Coord.boardIndex(target, this.player) === hit.m
+      && Coord.boardIndex(target, this.selectedPiece!.player) === hit.m
       && Coord.isSameSpace(target, hit.coord)
     ))
     if (! target) return false
@@ -1666,23 +1670,41 @@ export class Game extends Disposable(Empty) {
     return this.getPieceSelectionFromHit(hit)
   }
 
-  private getPieceSelectionFromHit(hit: BoardSquareHit): PieceSelection | null {
+  private getPieceSelectionFromHit(hit: BoardSquareHit, player = this.player): PieceSelection | null {
     const piece = Board.getPiece(hit.coord, hit.board)
-    if (Pieces.getPlayer(piece) !== this.player) return null
+    if (Pieces.getPlayer(piece) !== player) return null
 
     const from: Coord = {
       ...hit.coord,
       l: hit.l,
-      t: Coord.turn(hit.m, this.player),
+      t: Coord.turn(hit.m, player),
     }
 
     return {
       l: hit.l,
       m: hit.m,
+      player,
       from,
-      targets: Multiverse.getMoveTargets(this.multiverse, from, this.player),
+      targets: Multiverse.getMoveTargets(this.multiverse, from, player),
       piece,
     }
+  }
+
+  private getPendingOpponentPiecePreviewAtScreen(screen: Vec2): PieceSelection | null {
+    if (this.pendingMoves.length === 0) return null
+
+    const hit = this.getBoardSquareAtScreen(screen)
+    if (! hit) return null
+    if (! this.isTemporaryBoard(hit.l, hit.m)) return null
+
+    const previewPlayer = CorePlayers.opponent(this.player)
+    if (hit.m % 2 !== previewPlayer) return null
+    if (! Multiverse.isPlayableBoard(this.multiverse, previewPlayer, {
+      l: hit.l,
+      t: Coord.turn(hit.m, previewPlayer),
+    })) return null
+
+    return this.getPieceSelectionFromHit(hit, previewPlayer)
   }
 
   private getPlayableBoardSquareAtScreen(screen: Vec2): BoardSquareHit | null {
@@ -2734,18 +2756,20 @@ export class Game extends Disposable(Empty) {
     const selection = this.selectedPiece ?? this.hoverPiece
     if (! selection) return false
     if (selection.l === l && selection.m === m && Coord.isSameSpace(selection.from, coord)) return true
-    return selection.targets.some(target => this.isTargetAt(target, l, m, coord))
+    return selection.targets.some(target => this.isTargetAt(target, l, m, coord, selection.player))
   }
 
   private shouldRenderPieceGhost(l: number, m: number, coord: CoordSpacelike): boolean {
     if (! this.selectedPiece || ! this.hoverSquare) return false
     if (! isSameLocatedSquare(this.hoverSquare, l, m, coord)) return false
-    return this.selectedPiece.targets.some(target => this.isTargetAt(target, l, m, coord))
+    return this.selectedPiece.targets.some(target => (
+      this.isTargetAt(target, l, m, coord, this.selectedPiece!.player)
+    ))
   }
 
-  private isTargetAt(target: Coord, l: number, m: number, coord: CoordSpacelike): boolean {
+  private isTargetAt(target: Coord, l: number, m: number, coord: CoordSpacelike, player: Player): boolean {
     return target.l === l
-      && Coord.boardIndex(target, this.player) === m
+      && Coord.boardIndex(target, player) === m
       && Coord.isSameSpace(target, coord)
   }
 
