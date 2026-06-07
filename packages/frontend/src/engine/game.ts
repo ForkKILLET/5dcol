@@ -1478,6 +1478,11 @@ export class Game extends Disposable(Empty) {
     return Line.getLatestBoardIndex(line) === m
   }
 
+  private isActiveBoard(line: Line | null, m: number): boolean {
+    if (! line) return false
+    return Line.getLatestBoardIndex(line) === m && m % 2 === this.player
+  }
+
   private getBoardKey(l: number, m: number): string {
     return `${l}:${m}`
   }
@@ -1941,11 +1946,10 @@ export class Game extends Disposable(Empty) {
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
       this.linePainter.render(line, l, 1, multiverse)
-      const activeM = Line.getLatestBoardIndex(line)
 
       for (const [m, board] of Line.getBoardEntries(line)) {
         if (! board) continue
-        this.renderBoard(board, l, m, m === activeM, this.isTemporaryBoard(l, m), {
+        this.renderBoard(board, l, m, this.isActiveBoard(line, m), this.isTemporaryBoard(l, m), {
           temporaryPreset: this.getTemporaryBoardPreset(l, m),
         })
       }
@@ -1996,9 +2000,8 @@ export class Game extends Disposable(Empty) {
       const linePreview = Multiverse.getLine(this.multiverse, l)
       const isPendingLine = l === pendingMove.from.l
       const isTargetLine = l === pendingMove.move.to.l
-      const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
-      if (isPendingLine && activeCommitted !== null) {
+      if (isPendingLine && Line.getLatestBoardIndex(lineCommitted) !== null) {
         this.linePainter.renderDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
@@ -2009,17 +2012,17 @@ export class Game extends Disposable(Empty) {
         if (! board) continue
         if (isPendingLine && m === pendingMove.from.m) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: 1 - progress,
+            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
         if (isTargetLine && m === targetBoardIndex) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: 1 - progress,
+            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
-        this.renderBoard(board, l, m, m === activeCommitted, false)
+        this.renderBoard(board, l, m, this.isActiveBoard(lineCommitted, m), false)
       }
 
       if (l === pendingMove.created.l) {
@@ -2040,9 +2043,8 @@ export class Game extends Disposable(Empty) {
       if (! lineCommitted) continue
 
       const isSourceLine = l === pendingMove.from.l
-      const activeCommitted = Line.getLatestBoardIndex(lineCommitted)
 
-      if (isSourceLine && activeCommitted !== null) {
+      if (isSourceLine && Line.getLatestBoardIndex(lineCommitted) !== null) {
         this.linePainter.renderDuringMoveAnimation(lineCommitted, l, progress, pendingMove.multiverseBefore)
       }
       else {
@@ -2053,11 +2055,11 @@ export class Game extends Disposable(Empty) {
         if (! board) continue
         if (isSourceLine && m === pendingMove.from.m) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: 1 - progress,
+            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
-        this.renderBoard(board, l, m, m === activeCommitted, false)
+        this.renderBoard(board, l, m, this.isActiveBoard(lineCommitted, m), false)
       }
 
       if (isSourceLine) this.renderSourceCreatedBoard(pendingMove, progress)
@@ -2103,11 +2105,11 @@ export class Game extends Disposable(Empty) {
         }
         if (isTargetLine && m === targetBoardIndex) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: 1 - progress,
+            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
-        this.renderBoard(board, l, m, m === activeCommitted, false)
+        this.renderBoard(board, l, m, this.isActiveBoard(lineCommitted, m), false)
       }
 
       if (isSourceLine) this.renderSourceCreatedBoard(pendingMove, 1)

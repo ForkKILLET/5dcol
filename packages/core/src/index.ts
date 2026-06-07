@@ -805,7 +805,9 @@ export namespace Multiverse {
     if (! line) return false
 
     const m = Coord.boardIndex(coord, player)
-    return Line.getLatestBoardIndex(line) === m
+    return Number.isInteger(coord.t)
+      && m % 2 === player
+      && Line.getLatestBoardIndex(line) === m
   }
 
   export const getPreviousBoard = (
