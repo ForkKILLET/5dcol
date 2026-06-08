@@ -6,6 +6,7 @@ button.restart: "Forfeit game"
 button.import: "Import"
 button.export: "Export"
 button.record: "Record"
+button.clock: "Clock"
 button.cancel: "Cancel"
 button.copy: "Copy"
 button.close: "Close"
@@ -35,6 +36,7 @@ dialog.helpText: |
   WASD: Pan viewport
   Q / E: Zoom out / in
   R: Toggle Record panel
+  C: Toggle clock
   U: Flip view
   Esc: Open or close the in-game menu
 

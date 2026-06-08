@@ -90,7 +90,7 @@ const formatSquare = ({ x, y }: CoordSpacelike): string => (
   `${FILES[x]}${8 - y}`
 )
 
-const formatDuration = (durationMs: number): string => {
+export const formatDuration = (durationMs: number): string => {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60

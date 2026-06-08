@@ -6,6 +6,7 @@ button.restart: "放弃对局"
 button.import: "导入"
 button.export: "导出"
 button.record: "记谱"
+button.clock: "棋钟"
 button.cancel: "取消"
 button.copy: "复制"
 button.close: "关闭"
@@ -35,6 +36,7 @@ dialog.helpText: |
   WASD：平移视口
   Q / E：缩小 / 放大
   R：显示或隐藏记谱面板
+  C：显示或隐藏棋钟
   U：翻转视角
   Esc：打开或关闭局内菜单
 

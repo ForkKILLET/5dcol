@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
 import { Player } from '@5dcol/core'
 import type { Action } from '@5dcol/core'
-import { DEFAULT_MATCH_ROOM_SETTINGS, type MatchGameState, type MatchPresence, type MatchRoomSettings, type MatchRoomStatus } from '@5dcol/backend/protocol'
+import { DEFAULT_MATCH_ROOM_SETTINGS, type MatchClock, type MatchGameState, type MatchPresence, type MatchRoomSettings, type MatchRoomStatus } from '@5dcol/backend/protocol'
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
@@ -11,6 +11,7 @@ import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
 import { MatchClient, type MatchRoomStateSubscription, type MatchServerState } from '@engine/matchClient'
+import { formatDuration } from '@engine/record'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 import { type LoopingSound, SoundManager } from '@engine/sound'
 import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
@@ -26,6 +27,7 @@ const MATCH_ROOM_SETTINGS_STORAGE_KEY = '5dcol.matchRoomSettings'
 const DEFAULT_GAME_SETTINGS: GameSettings = {
   soundVolume: 1,
   autoSwitchViewPlayer: true,
+  showClock: true,
   showMoveTravelAnimation: true,
   showOpponentMoveRange: true,
 }
@@ -93,6 +95,8 @@ const onlineRoomSettings = ref<MatchRoomSettings | null>(null)
 const onlineRoomReady = ref(false)
 const onlinePlayer = ref<Player | null>(null)
 const onlinePresence = ref<MatchPresence | null>(null)
+const onlineClock = ref<MatchClock | null>(null)
+const clockNow = ref(Date.now())
 const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
 const onlineError = ref('')
 const onlineRecoveryError = ref('')
@@ -106,6 +110,7 @@ let ambienceLoop: LoopingSound | null = null
 let matchRefreshTimer: number | null = null
 let onlinePollTimer: number | null = null
 let onlineReconnectTimer: number | null = null
+let clockTimer: number | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
@@ -128,6 +133,7 @@ type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnec
 interface GameSettings {
   soundVolume: number
   autoSwitchViewPlayer: boolean
+  showClock: boolean
   showMoveTravelAnimation: boolean
   showOpponentMoveRange: boolean
 }
@@ -174,6 +180,21 @@ const onlineStatusText = computed(() => {
     case 'connected':
       return t.value('online.playingAs')
   }
+})
+const clockRows = computed(() => {
+  if (! gameStarted.value || ! onlineSession.value || ! gameSettings.showClock || ! onlineClock.value) return []
+
+  return [Player.W, Player.B].map((player) => {
+    const stepMs = getClockStepMs(onlineClock.value!, player, clockNow.value)
+    const totalMs = onlineClock.value!.playerTotalsMs[player] + stepMs
+    return {
+      player,
+      label: player === Player.W ? t.value('player.white') : t.value('player.black'),
+      step: formatDuration(stepMs),
+      total: formatDuration(totalMs),
+      active: onlineClock.value!.currentPlayer === player,
+    }
+  })
 })
 const shouldMarkTitleForTurn = computed(() => (
   gameStarted.value
@@ -652,6 +673,12 @@ function clickRecordMenuButton() {
   secondaryMenuOpen.value = false
 }
 
+function toggleClockPanel() {
+  if (! gameStarted.value) return
+  playUISound()
+  gameSettings.showClock = ! gameSettings.showClock
+}
+
 function focusRecordSegment(segment: GameRecordMoveSegment) {
   if (! gameStarted.value) return
   playUISound()
@@ -985,6 +1012,10 @@ function handleWindowKeyDown(e: KeyboardEvent) {
       e.preventDefault()
       toggleRecordPanel()
       break
+    case 'c':
+      e.preventDefault()
+      toggleClockPanel()
+      break
   }
 }
 
@@ -1047,6 +1078,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   onlineRoomStatus.value = state.room.status
   onlineRoomSettings.value = state.room.settings
   onlineRoomReady.value = state.room.status === 'playing'
+  onlineClock.value = state.clock
   onlinePlayer.value = state.session.player
   updateViewPlayer(state.session.player)
   onlinePresence.value = state.presence
@@ -1101,6 +1133,7 @@ function applyOnlineGameState(
   onlineRoomStatus.value = state.room.status
   onlineRoomSettings.value = state.room.settings
   onlineRoomReady.value = state.room.status === 'playing'
+  onlineClock.value = state.clock
   if (gameStarted.value && ! wasReady && onlineRoomReady.value) {
     soundManager?.play('bell.ogg')
   }
@@ -1331,6 +1364,7 @@ function getStoredGameSettings(): GameSettings {
     return {
       soundVolume: getValidVolume(value.soundVolume),
       autoSwitchViewPlayer: getValidBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
+      showClock: getValidBoolean(value.showClock, DEFAULT_GAME_SETTINGS.showClock),
       showMoveTravelAnimation: getValidBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
       showOpponentMoveRange: getValidBoolean(value.showOpponentMoveRange, DEFAULT_GAME_SETTINGS.showOpponentMoveRange),
     }
@@ -1408,6 +1442,11 @@ function syncGameSettings() {
   game?.setAutoSwitchViewPlayer(onlineSession.value ? false : gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
   game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange())
+}
+
+function getClockStepMs(clock: MatchClock, player: Player, now: number): number {
+  if (clock.currentPlayer !== player || clock.turnStartedAt === null) return 0
+  return Math.max(0, now - clock.turnStartedAt)
 }
 
 function getEffectiveShowOpponentMoveRange(settings = onlineRoomSettings.value): boolean {
@@ -1512,6 +1551,7 @@ function returnToMainMenu(
   onlineConnectionStatus.value = 'offline'
   onlineError.value = ''
   onlineRecoveryError.value = ''
+  onlineClock.value = null
   game?.dispose()
   game = null
   toolbarButtons.value = []
@@ -1593,6 +1633,9 @@ async function init() {
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeyDown)
   window.addEventListener('resize', handleWindowResize)
+  clockTimer = window.setInterval(() => {
+    clockNow.value = Date.now()
+  }, 1000)
   void init()
 })
 onUnmounted(() => {
@@ -1602,6 +1645,7 @@ onUnmounted(() => {
   stopOnlinePolling()
   stopOnlineRoomStateSubscription()
   stopAmbience()
+  if (clockTimer !== null) window.clearInterval(clockTimer)
   game?.dispose()
   canvasRenderer?.dispose()
   soundManager?.dispose()
@@ -2077,6 +2121,24 @@ watch(gameSettings, () => {
       </div>
 
       <div
+        v-if="clockRows.length > 0"
+        class="clock-card"
+        :style="menuButtonStyle"
+      >
+        <div
+          v-for="row in clockRows"
+          :key="row.player"
+          class="clock-row"
+          :class="{ 'clock-row--active': row.active }"
+        >
+          <span class="clock-player">{{ row.label }}</span>
+          <span class="clock-time">{{ row.step }}</span>
+          <span class="clock-separator">/</span>
+          <span class="clock-time">{{ row.total }}</span>
+        </div>
+      </div>
+
+      <div
         v-if="gameStarted"
         class="game-status-stack"
       >
@@ -2209,6 +2271,15 @@ watch(gameSettings, () => {
             @click="clickRecordMenuButton"
           >
             <span>{{ t('button.record') }}</span>
+          </GameButton>
+          <GameButton
+            size="secondary"
+            :style="menuButtonStyle"
+            :open="gameSettings.showClock"
+            :aria-expanded="gameSettings.showClock"
+            @click="toggleClockPanel"
+          >
+            <span>{{ t('button.clock') }}</span>
           </GameButton>
           <GameButton
             size="secondary"
@@ -2786,6 +2857,52 @@ canvas {
 .toolbar-secondary {
   right: var(--button-top);
   bottom: var(--button-top);
+}
+
+.clock-card {
+  position: absolute;
+  left: var(--button-top);
+  top: var(--button-top);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 0.75);
+  min-width: 260px;
+  padding: calc(var(--button-content-gap) * 1.25) calc(var(--button-content-gap) * 1.75);
+  border: var(--button-border) solid var(--button-border-color);
+  border-radius: 8px;
+  background: var(--button-fill-color);
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
+  color: var(--button-text-color);
+  font-size: 20px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.clock-row {
+  display: grid;
+  grid-template-columns: minmax(64px, 1fr) 64px auto 64px;
+  gap: calc(var(--button-content-gap) * 0.75);
+  align-items: baseline;
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
+.clock-row--active {
+  opacity: 1;
+}
+
+.clock-player {
+  transform: translateY(var(--ui-text-y));
+}
+
+.clock-time {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.clock-separator {
+  opacity: 0.65;
 }
 
 .game-status-stack {
