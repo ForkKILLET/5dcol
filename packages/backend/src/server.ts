@@ -21,7 +21,10 @@ import {
   type MatchErrorResponse,
   type MatchGameState,
   type MatchClock,
+  type MatchClearPendingActionEvent,
+  type MatchPendingActionEvent,
   type MatchRoom,
+  type MatchRoomClientEvent,
   type MatchRoomCreatorPlayer,
   type MatchRoomFinishReason,
   type MatchRoomSettings,
@@ -75,6 +78,7 @@ interface WebSocketLike {
   send(data: string): void
   close(): void
   on(event: 'close', listener: () => void): void
+  on(event: 'message', listener: (data: unknown) => void): void
 }
 
 const DEFAULT_SERVER_NAME = '5DC OL Debug Server'
@@ -385,7 +389,7 @@ function normalizeRoomSettings(settings: Partial<MatchRoomSettings> | null | und
     canSpectate: getBooleanSetting(settings?.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
     creatorPlayer: getCreatorPlayerSetting(settings?.creatorPlayer),
     saveRecordToServer: getBooleanSetting(settings?.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
-    showOpponentSmallMoves: getBooleanSetting(settings?.showOpponentSmallMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentSmallMoves),
+    showOpponentMoves: getBooleanSetting(settings?.showOpponentMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves),
     showOpponentMoveRange: getBooleanSetting(settings?.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
   }
 }
@@ -572,6 +576,9 @@ function subscribeRoomState(
   if (session) {
     onlineSessionCounts.set(session.id, (onlineSessionCounts.get(session.id) ?? 0) + 1)
     broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
+    socket.on('message', (data) => {
+      handleRoomClientEvent(roomSubscribers, room, session, data)
+    })
   }
   else {
     writeRoomStateEvent(subscriber, room, onlineSessionCounts)
@@ -589,8 +596,50 @@ function subscribeRoomState(
         room,
         session,
       )
+      broadcastClearPendingAction(roomSubscribers, room, session)
     }
   })
+}
+
+function handleRoomClientEvent(
+  roomSubscribers: Map<string, Set<RoomSubscriber>>,
+  room: RoomState,
+  session: SessionState,
+  data: unknown,
+) {
+  const event = parseRoomClientEvent(data)
+  if (! event) return
+
+  switch (event.type) {
+    case 'pending-action':
+      broadcastPendingAction(roomSubscribers, room, session, event.moves)
+      break
+    case 'clear-pending-action':
+      broadcastClearPendingAction(roomSubscribers, room, session)
+      break
+  }
+}
+
+function parseRoomClientEvent(data: unknown): MatchRoomClientEvent | null {
+  try {
+    const text = typeof data === 'string'
+      ? data
+      : data instanceof Buffer
+        ? data.toString('utf8')
+        : String(data)
+    const event = JSON.parse(text) as Partial<MatchRoomClientEvent>
+    if (event.type === 'pending-action' && Array.isArray(event.moves)) {
+      return { type: event.type, moves: event.moves }
+    }
+    if (event.type === 'clear-pending-action') {
+      return { type: event.type }
+    }
+  }
+  catch {
+    return null
+  }
+
+  return null
 }
 
 function disconnectSession(
@@ -634,6 +683,49 @@ function broadcastRoomState(
   }
 }
 
+function broadcastPendingAction(
+  roomSubscribers: Map<string, Set<RoomSubscriber>>,
+  room: RoomState,
+  session: SessionState,
+  moves: MatchPendingActionEvent['moves'],
+) {
+  const event: MatchPendingActionEvent = {
+    type: 'pending-action',
+    sessionId: session.id,
+    player: session.player,
+    moves,
+  }
+  broadcastRoomEventToOpponents(roomSubscribers, room, session, event)
+}
+
+function broadcastClearPendingAction(
+  roomSubscribers: Map<string, Set<RoomSubscriber>>,
+  room: RoomState,
+  session: SessionState,
+) {
+  const event: MatchClearPendingActionEvent = {
+    type: 'clear-pending-action',
+    sessionId: session.id,
+    player: session.player,
+  }
+  broadcastRoomEventToOpponents(roomSubscribers, room, session, event)
+}
+
+function broadcastRoomEventToOpponents(
+  roomSubscribers: Map<string, Set<RoomSubscriber>>,
+  room: RoomState,
+  session: SessionState,
+  event: MatchPendingActionEvent | MatchClearPendingActionEvent,
+) {
+  const subscribers = roomSubscribers.get(room.id)
+  if (! subscribers) return
+
+  for (const subscriber of subscribers) {
+    if (subscriber.sessionId === session.id) continue
+    subscriber.socket.send(JSON.stringify(event))
+  }
+}
+
 function writeRoomStateEvent(
   subscriber: RoomSubscriber,
   room: RoomState,
@@ -643,6 +735,7 @@ function writeRoomStateEvent(
     ? room.sessions.find(session => session.id === subscriber.sessionId) ?? null
     : null
   const event: MatchRoomStateEvent = {
+    type: 'state',
     state: toGameStateView(room, session, onlineSessionCounts),
   }
   subscriber.socket.send(JSON.stringify(event))

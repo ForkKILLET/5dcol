@@ -10,6 +10,8 @@ import type {
   LeaveMatchRoomRequest,
   LeaveMatchRoomResponse,
   MatchGameState,
+  MatchRoomClientEvent,
+  MatchRoomEvent,
   MatchRoomStateEvent,
   MatchRoom,
   MatchRoomsResponse,
@@ -17,6 +19,7 @@ import type {
   SubmitMatchActionRequest,
   SubmitMatchActionResponse,
 } from '@5dcol/backend/protocol'
+import type { Move } from '@5dcol/core'
 
 export type MatchServerConnectionStatus = 'idle' | 'connecting' | 'connected' | 'failed'
 
@@ -29,10 +32,15 @@ export interface MatchServerState {
   error: string
 }
 
-export type MatchRoomStateListener = (state: MatchGameState) => void
+export type MatchRoomEventListener = (event: MatchRoomEvent) => void
 export interface MatchRoomStateSubscriptionOptions {
   onOpen?: () => void
   onError?: () => void
+}
+export interface MatchRoomStateSubscription {
+  clearPendingAction(): void
+  sendPendingAction(moves: Move[]): void
+  unsubscribe(): void
 }
 
 export class MatchClient {
@@ -121,15 +129,14 @@ export class MatchClient {
   subscribeRoomState(
     roomId: string,
     sessionId: string,
-    listener: MatchRoomStateListener,
+    listener: MatchRoomEventListener,
     options: MatchRoomStateSubscriptionOptions = {},
-  ): () => void {
+  ): MatchRoomStateSubscription {
     const socket = new WebSocket(
       this.getWebSocketUrl(`/rooms/${encodeURIComponent(roomId)}/events?sessionId=${encodeURIComponent(sessionId)}`),
     )
     socket.addEventListener('message', (event) => {
-      const data = JSON.parse(event.data as string) as MatchRoomStateEvent
-      listener(data.state)
+      listener(parseMatchRoomEvent(event.data as string))
     })
     socket.addEventListener('open', () => {
       options.onOpen?.()
@@ -140,8 +147,16 @@ export class MatchClient {
     socket.addEventListener('error', () => {
       options.onError?.()
     })
-    return () => {
-      socket.close()
+    return {
+      clearPendingAction() {
+        sendRoomClientEvent(socket, { type: 'clear-pending-action' })
+      },
+      sendPendingAction(moves) {
+        sendRoomClientEvent(socket, { type: 'pending-action', moves })
+      },
+      unsubscribe() {
+        socket.close()
+      },
     }
   }
 
@@ -169,6 +184,17 @@ export class MatchClient {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     return url.toString()
   }
+}
+
+function parseMatchRoomEvent(text: string): MatchRoomEvent {
+  const data = JSON.parse(text) as MatchRoomEvent | Partial<MatchRoomStateEvent>
+  if ('type' in data && data.type) return data as MatchRoomEvent
+  return { type: 'state', state: data.state! }
+}
+
+function sendRoomClientEvent(socket: WebSocket, event: MatchRoomClientEvent) {
+  if (socket.readyState !== WebSocket.OPEN) return
+  socket.send(JSON.stringify(event))
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

@@ -10,7 +10,7 @@ import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMov
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
-import { MatchClient, type MatchServerState } from '@engine/matchClient'
+import { MatchClient, type MatchRoomStateSubscription, type MatchServerState } from '@engine/matchClient'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 import { type LoopingSound, SoundManager } from '@engine/sound'
 import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
@@ -106,14 +106,15 @@ let ambienceLoop: LoopingSound | null = null
 let matchRefreshTimer: number | null = null
 let onlinePollTimer: number | null = null
 let onlineReconnectTimer: number | null = null
-let unsubscribeOnlineRoomState: (() => void) | null = null
+let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineRoomStateSubscriptionActive = false
+let onlineActionsSignature = ''
 
 const query = new URLSearchParams(window.location.search)
 const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
 const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
 const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
-const DOCUMENT_TITLE = document.title
+const DOCUMENT_TITLE = '5D Chess Online'
 const MATCH_REFRESH_INTERVAL_MS = 5000
 const ONLINE_RECONNECT_DELAY_MS = 1000
 
@@ -1051,6 +1052,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   onlinePresence.value = state.presence
   onlineConnectionStatus.value = 'connecting'
   onlineError.value = ''
+  onlineActionsSignature = JSON.stringify(state.actions)
   game = new Game({
     renderer: canvasRenderer,
     soundManager,
@@ -1059,7 +1061,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     initialActions: state.actions,
     localPlayer: state.session.player,
     viewPlayer: viewPlayer.value,
-    autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
+    autoSwitchViewPlayer: false,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     showOpponentMoveRange: getEffectiveShowOpponentMoveRange(state.room.settings),
     canControlOnlineGame: () => onlineRoomReady.value,
@@ -1075,6 +1077,9 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     onReturnToMainMenuRequest: returnToMainMenu,
     onActionSubmitted: action => {
       void submitOnlineAction(serverAddress, state.session!.roomId, state.session!.id, action)
+    },
+    onPendingActionChange: action => {
+      syncOnlinePendingAction(action)
     },
   })
   gameStarted.value = true
@@ -1104,11 +1109,17 @@ function applyOnlineGameState(
   onlineError.value = ''
   if (state.session) storeOnlineSession(serverAddress, state)
   game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange(state.room.settings))
-  game?.loadActions(state.actions, {
-    focus: false,
-    force,
-    animate: state.room.settings.showOpponentMoves,
-  })
+  const actionsSignature = JSON.stringify(state.actions)
+  if (force || actionsSignature !== onlineActionsSignature) {
+    const committedCurrentPreview = ! force && game?.isCurrentPendingActionCommitted(state.actions)
+    onlineActionsSignature = actionsSignature
+    game?.clearRemotePendingMoves()
+    game?.loadActions(state.actions, {
+      focus: false,
+      force,
+      animate: state.room.settings.showOpponentMoves && ! committedCurrentPreview,
+    })
+  }
 }
 
 async function submitOnlineAction(
@@ -1133,10 +1144,24 @@ function startOnlineRoomStateSubscription(serverAddress: string, roomId: string,
   stopOnlineRoomStateSubscription()
   onlineRoomStateSubscriptionActive = true
   const client = new MatchClient(serverAddress)
-  unsubscribeOnlineRoomState = client.subscribeRoomState(
+  onlineRoomStateSubscription = client.subscribeRoomState(
     roomId,
     sessionId,
-    state => applyOnlineGameState(serverAddress, state),
+    event => {
+      switch (event.type) {
+        case 'state':
+          applyOnlineGameState(serverAddress, event.state)
+          break
+        case 'pending-action':
+          if (event.sessionId !== sessionId && onlineRoomSettings.value?.showOpponentMoves) {
+            game?.setRemotePendingMoves(event.moves)
+          }
+          break
+        case 'clear-pending-action':
+          if (event.sessionId !== sessionId) game?.clearRemotePendingMoves()
+          break
+      }
+    },
     {
       onOpen: () => {
         onlineConnectionStatus.value = 'connected'
@@ -1153,8 +1178,15 @@ function startOnlineRoomStateSubscription(serverAddress: string, roomId: string,
 function stopOnlineRoomStateSubscription() {
   onlineRoomStateSubscriptionActive = false
   stopOnlineReconnect()
-  unsubscribeOnlineRoomState?.()
-  unsubscribeOnlineRoomState = null
+  onlineRoomStateSubscription?.unsubscribe()
+  onlineRoomStateSubscription = null
+}
+
+function syncOnlinePendingAction(action: Action | null) {
+  if (! onlineSession.value) return
+  if (! onlineRoomSettings.value?.showOpponentMoves) return
+  if (action && action.moves.length > 0) onlineRoomStateSubscription?.sendPendingAction(action.moves)
+  else onlineRoomStateSubscription?.clearPendingAction()
 }
 
 function scheduleOnlineRoomStateReconnect(serverAddress: string, roomId: string, sessionId: string) {
@@ -1373,7 +1405,7 @@ function storeGameSettings() {
 
 function syncGameSettings() {
   soundManager?.setVolume(gameSettings.soundVolume)
-  game?.setAutoSwitchViewPlayer(gameSettings.autoSwitchViewPlayer)
+  game?.setAutoSwitchViewPlayer(onlineSession.value ? false : gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
   game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange())
 }

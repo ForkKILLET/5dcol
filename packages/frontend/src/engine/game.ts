@@ -1,4 +1,4 @@
-import { Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Multiverse, Piece, Pieces, type Action, type CheckmateStatus, type CoordSpacelike, type Move } from '@5dcol/core'
+import { Action, Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
@@ -49,6 +49,7 @@ export interface GameConfig {
   onExportRequest?: (request: GameExportRequest) => void
   onReturnToMainMenuRequest?: (request?: GameReturnToMainMenuRequest) => void
   onActionSubmitted?: (action: Action, actions: Action[]) => void
+  onPendingActionChange?: (action: Action | null) => void
   onViewPlayerChange?: (player: Player) => void
 }
 
@@ -328,6 +329,51 @@ export class Game extends Disposable(Empty) {
   public setShowOpponentMoveRange(enabled: boolean) {
     this.showOpponentMoveRange = enabled
     if (! enabled) this.hoverPiece = null
+  }
+
+  public setRemotePendingMoves(moves: Move[], { animate = true }: { animate?: boolean } = {}) {
+    if (this.canControlTurn()) return
+    if (Move.isSameList(moves, this.getPendingMoves())) return
+
+    if (
+      animate
+      && moves.length === this.pendingMoves.length + 1
+      && Move.isSameList(moves.slice(0, -1), this.getPendingMoves())
+    ) {
+      this.createAnimatedPendingMove(moves.at(-1)!, { playSound: true, persist: false, notify: false })
+      return
+    }
+
+    const { pendingMoves, multiverse } = this.createPendingMoves(moves)
+    this.pendingMoves = pendingMoves
+    this.pendingMove = pendingMoves.at(-1) ?? null
+    this.multiverse = multiverse
+    this.gameEndStatus = null
+    this.clearMoveAnimation()
+    this.submitRequestedDuringMoveAnimation = false
+    this.deselectPiece()
+    this.syncCheckState()
+    this.syncToolbarButtons()
+  }
+
+  public isCurrentPendingActionCommitted(actions: Action[]): boolean {
+    if (actions.length !== this.actions.length + 1) return false
+    const pendingMoves = this.getPendingMoves()
+    if (pendingMoves.length === 0) return false
+    return Move.isSameList(actions.at(-1)?.moves ?? [], pendingMoves)
+  }
+
+  public clearRemotePendingMoves() {
+    if (this.canControlTurn()) return
+    if (this.pendingMoves.length === 0) return
+    this.pendingMoves = []
+    this.pendingMove = null
+    this.multiverse = this.multiverseCommitted
+    this.clearMoveAnimation()
+    this.submitRequestedDuringMoveAnimation = false
+    this.deselectPiece()
+    this.syncCheckState()
+    this.syncToolbarButtons()
   }
 
   private applyViewPlayer(player: Player) {
@@ -1143,6 +1189,7 @@ export class Game extends Disposable(Empty) {
     this.deselectPiece()
     this.playUISound()
     this.persistGameState()
+    this.notifyPendingActionChange()
     return true
   }
 
@@ -1164,7 +1211,7 @@ export class Game extends Disposable(Empty) {
       from: this.selectedPiece.from,
       to: target,
     }
-    this.createAnimatedPendingMove(move, { playSound: true, persist: true })
+    this.createAnimatedPendingMove(move, { playSound: true, persist: true, notify: true })
     this.gameEndTrial ||= wasGameEnded
     if (wasGameEndStatus) this.gameEndTrialStatus = wasGameEndStatus
     this.selectedPiece = null
@@ -1173,7 +1220,7 @@ export class Game extends Disposable(Empty) {
 
   private createAnimatedPendingMove(
     move: Move,
-    { playSound, persist }: { playSound: boolean, persist: boolean },
+    { playSound, persist, notify = false }: { playSound: boolean, persist: boolean, notify?: boolean },
   ): PendingMove {
     const multiverseBefore = this.multiverse
     const order = this.getMoveOrder(this.pendingMoves.length)
@@ -1203,6 +1250,7 @@ export class Game extends Disposable(Empty) {
     this.submitRequestedDuringMoveAnimation = false
     if (playSound) this.playUISound()
     if (persist) this.persistGameState()
+    if (notify) this.notifyPendingActionChange()
     return pendingMove
   }
 
@@ -1227,6 +1275,7 @@ export class Game extends Disposable(Empty) {
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
     this.persistGameState()
+    this.notifyPendingActionChange()
   }
 
   private submitMoves() {
@@ -1660,6 +1709,17 @@ export class Game extends Disposable(Empty) {
         ),
       this.multiverseCommitted,
     )
+  }
+
+  private getPendingMoves(): Move[] {
+    return this.pendingMoves
+      .filter(pendingMove => ! pendingMove.isPass)
+      .map(pendingMove => pendingMove.move)
+  }
+
+  private notifyPendingActionChange() {
+    const moves = this.getPendingMoves()
+    this.config.onPendingActionChange?.(moves.length > 0 ? { moves } : null)
   }
 
   private createPendingMoves(moves: Move[]): { pendingMoves: PendingMove[], multiverse: Multiverse } {

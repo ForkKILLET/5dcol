@@ -1,4 +1,4 @@
-import type { Action, Player } from '@5dcol/core'
+import type { Action, Move, Player } from '@5dcol/core'
 
 export const MATCH_PROTOCOL_VERSION = 1
 
@@ -16,15 +16,15 @@ export interface MatchRoomSettings {
   canSpectate: boolean
   creatorPlayer: MatchRoomCreatorPlayer
   saveRecordToServer: boolean
-  showOpponentSmallMoves: boolean
+  showOpponentMoves: boolean
   showOpponentMoveRange: boolean
 }
 
 export const DEFAULT_MATCH_ROOM_SETTINGS: MatchRoomSettings = {
   canSpectate: true,
-  creatorPlayer: 'white',
+  creatorPlayer: 'random',
   saveRecordToServer: true,
-  showOpponentSmallMoves: true,
+  showOpponentMoves: false,
   showOpponentMoveRange: true,
 }
 
@@ -140,8 +140,31 @@ export interface ForfeitMatchRoomResponse {
 }
 
 export interface MatchRoomStateEvent {
+  type: 'state'
   state: MatchGameState
 }
+
+export interface MatchPendingActionEvent {
+  type: 'pending-action'
+  sessionId: string
+  player: Player
+  moves: Move[]
+}
+
+export interface MatchClearPendingActionEvent {
+  type: 'clear-pending-action'
+  sessionId: string
+  player: Player
+}
+
+export type MatchRoomEvent =
+  | MatchRoomStateEvent
+  | MatchPendingActionEvent
+  | MatchClearPendingActionEvent
+
+export type MatchRoomClientEvent =
+  | { type: 'pending-action', moves: Move[] }
+  | { type: 'clear-pending-action' }
 
 export interface MatchErrorResponse {
   error: string

@@ -327,6 +327,10 @@ export namespace Coord {
 
   export const isSameSpace = (p: CoordSpacelike, q: CoordSpacelike) => p.x === q.x && p.y === q.y
 
+  export const isSame = (p: Coord, q: Coord) => (
+    Coord.isSameBoard(p, q) && Coord.isSameSpace(p, q)
+  )
+
   export const isInBoard = ({ x, y }: CoordSpacelike): boolean => (
     x >= 0 && x < 8 && y >= 0 && y < 8
   )
@@ -438,6 +442,20 @@ export interface Action {
 export interface ActionClock {
   elapsedMs: number
   totalMs: number
+}
+
+export namespace Move {
+  export const isSame = (p: Move, q: Move) => (
+    Coord.isSame(p.from, q.from) && Coord.isSame(p.to, q.to)
+  )
+
+  export const isSameList = (p: readonly Move[], q: readonly Move[]) => (
+    p.length === q.length && p.every((move, index) => Move.isSame(move, q[index]!))
+  )
+}
+
+export namespace Action {
+  export const isSame = (p: Action, q: Action) => Move.isSameList(p.moves, q.moves)
 }
 
 export namespace Board {

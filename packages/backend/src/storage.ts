@@ -141,7 +141,7 @@ function getValidRoomSettings(value: unknown): RoomState['settings'] {
     canSpectate: getBooleanSetting(settings.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
     creatorPlayer: getCreatorPlayerSetting(settings.creatorPlayer),
     saveRecordToServer: getBooleanSetting(settings.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
-    showOpponentSmallMoves: getBooleanSetting(settings.showOpponentSmallMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentSmallMoves),
+    showOpponentMoves: getBooleanSetting(settings.showOpponentMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves),
     showOpponentMoveRange: getBooleanSetting(settings.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
   }
 }
