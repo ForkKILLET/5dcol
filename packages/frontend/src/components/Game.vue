@@ -16,6 +16,8 @@ import { type LoopingSound, SoundManager } from '@engine/sound'
 import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
+import GameTextInput from './GameTextInput.vue'
+import GameToggle from './GameToggle.vue'
 
 const canvas = useTemplateRef('canvas')
 
@@ -59,12 +61,14 @@ const soundLoadProgress = ref({ completed: 0, total: 0 })
 const gameStarted = ref(false)
 const hasSavedGame = ref(false)
 const mainMenuMode = ref<'home' | 'match'>('home')
+const matchPanelMode = ref<'servers' | 'room-settings'>('servers')
 const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
 const matchNickname = ref(getStoredMatchNickname())
 const matchPrivateRoomPassword = ref('')
+const customRoomServerId = ref<string | null>(null)
 const matchRoomSettings = reactive<MatchRoomSettings>(getStoredMatchRoomSettings())
 const DEFAULT_SERVERS: Record<string, { name: string }> = {
   'http://localhost:5161': { name: 'Debug Server' },
@@ -204,8 +208,13 @@ const recordHeaders = computed(() => (
     .filter(line => line.startsWith('['))
 ))
 const recordRows = computed(() => recordActions.value)
+const customRoomServer = computed(() => (
+  customRoomServerId.value === null
+    ? null
+    : matchServers.find(server => server.id === customRoomServerId.value) ?? null
+))
 const viewButtonPreset = computed(() => (
-  gameStarted.value && viewPlayer.value === Player.B
+  viewPlayer.value === Player.B
     ? ButtonColors.Black
     : ButtonColors.White
 ))
@@ -601,6 +610,7 @@ function removeManualMatchServer(server: MatchServerState) {
   const index = matchServers.findIndex(item => item.id === server.id)
   if (index >= 0) matchServers.splice(index, 1)
   expandedMatchServerIds.delete(server.id)
+  if (customRoomServerId.value === server.id) customRoomServerId.value = null
 }
 
 function normalizeMatchServerAddress(address: string) {
@@ -687,6 +697,11 @@ function openSettingsDialog() {
   dialogMode.value = 'settings'
 }
 
+function openMatchRoomSettingsDialog() {
+  playUISound()
+  matchPanelMode.value = 'room-settings'
+}
+
 function openGitHub() {
   playUISound()
   window.open('https://github.com/ForkKILLET/5dcol', '_blank', 'noopener,noreferrer')
@@ -695,6 +710,7 @@ function openGitHub() {
 function openMatchPage() {
   playUISound()
   mainMenuMode.value = 'match'
+  matchPanelMode.value = 'servers'
   onlineRecoveryError.value = ''
   void connectMatchServers()
   startMatchServerRefresh()
@@ -714,7 +730,13 @@ function forgetOnlineSession() {
 function closeMatchPage() {
   playUISound()
   stopMatchServerRefresh()
+  matchPanelMode.value = 'servers'
   mainMenuMode.value = 'home'
+}
+
+function closeMatchRoomSettingsPanel() {
+  playUISound()
+  matchPanelMode.value = 'servers'
 }
 
 async function connectMatchServers() {
@@ -788,8 +810,16 @@ function clickRefreshMatchServers() {
   void connectMatchServers()
 }
 
-async function createMatchRoom(server: MatchServerState) {
+function openCustomRoomForm(server: MatchServerState) {
   playUISound()
+  if (server.status !== 'connected') return
+  customRoomServerId.value = server.id
+  expandedMatchServerIds.add(server.id)
+}
+
+async function createMatchRoom(server: MatchServerState | null = customRoomServer.value) {
+  playUISound()
+  if (! server) return
   if (server.status !== 'connected' || ! canvasRenderer || ! soundManager) return
 
   try {
@@ -933,6 +963,10 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     if (dialogMode.value !== 'none') closeDialog()
+    else if (! gameStarted.value && mainMenuMode.value === 'match') {
+      if (matchPanelMode.value === 'room-settings') closeMatchRoomSettingsPanel()
+      else closeMatchPage()
+    }
     else if (gameStarted.value) toggleSecondaryMenu()
     return
   }
@@ -1073,7 +1107,7 @@ function applyOnlineGameState(
   game?.loadActions(state.actions, {
     focus: false,
     force,
-    animate: state.room.settings.showOpponentSmallMoves,
+    animate: state.room.settings.showOpponentMoves,
   })
 }
 
@@ -1302,7 +1336,7 @@ function getValidMatchRoomSettings(value: Partial<MatchRoomSettings>): MatchRoom
     canSpectate: getValidBoolean(value.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
     creatorPlayer: getValidCreatorPlayer(value.creatorPlayer),
     saveRecordToServer: getValidBoolean(value.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
-    showOpponentSmallMoves: getValidBoolean(value.showOpponentSmallMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentSmallMoves),
+    showOpponentMoves: getValidBoolean(value.showOpponentMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves),
     showOpponentMoveRange: getValidBoolean(value.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
   }
 }
@@ -1593,14 +1627,14 @@ watch(gameSettings, () => {
           </h1>
           <div class="main-menu-buttons">
             <GameButton
-              class="main-menu-button"
+              size="main"
               :style="menuButtonStyle"
               @click="startLocalGame"
             >
               <span>{{ mainMenuStartText }}</span>
             </GameButton>
             <GameButton
-              class="main-menu-button"
+              size="main"
               :style="menuButtonStyle"
               :badge="onlineSession ? '!' : ''"
               @click="openMatchPage"
@@ -1608,21 +1642,21 @@ watch(gameSettings, () => {
               <span>{{ t('main.match') }}</span>
             </GameButton>
             <GameButton
-              class="main-menu-button"
+              size="main"
               :style="menuButtonStyle"
               @click="openHelpDialog"
             >
               <span>{{ t('main.help') }}</span>
             </GameButton>
             <GameButton
-              class="main-menu-button"
+              size="main"
               :style="menuButtonStyle"
               @click="openSettingsDialog"
             >
               <span>{{ t('main.settings') }}</span>
             </GameButton>
             <GameButton
-              class="main-menu-button"
+              size="main"
               :style="menuButtonStyle"
               @click="openGitHub"
             >
@@ -1636,44 +1670,52 @@ watch(gameSettings, () => {
           :style="menuButtonStyle"
         >
           <div class="match-card-header">
-            <h2 class="dialog-title">{{ t('match.title') }}</h2>
-            <div class="match-card-actions">
+            <h2 class="dialog-title">
+              {{ matchPanelMode === 'room-settings' ? t('dialog.matchRoomSettingsTitle') : t('match.title') }}
+            </h2>
+            <div
+              v-if="matchPanelMode === 'servers'"
+              class="match-card-actions"
+            >
               <div class="match-control-slot match-control-slot--input match-nickname-slot">
-                <input
+                <GameTextInput
                   v-model="matchNickname"
-                  class="match-server-input"
                   :placeholder="t('match.nicknamePlaceholder')"
-                  type="text"
                   spellcheck="false"
-                >
-              </div>
-              <div class="match-control-slot match-control-slot--input match-private-password-slot">
-                <input
-                  v-model="matchPrivateRoomPassword"
-                  class="match-server-input"
-                  :placeholder="t('match.privatePasswordPlaceholder')"
-                  type="password"
-                  autocomplete="off"
-                  @keydown.enter.prevent="clickRefreshMatchServers"
-                >
+                />
               </div>
               <GameButton
-                class="match-small-button"
+                size="small"
                 :style="menuButtonStyle"
                 @click="clickRefreshMatchServers"
               >
                 <span>{{ t('match.refresh') }}</span>
               </GameButton>
               <GameButton
-                class="match-small-button"
+                size="small"
                 :style="menuButtonStyle"
                 @click="closeMatchPage"
               >
                 <span>{{ t('button.back') }}</span>
               </GameButton>
             </div>
+            <div
+              v-else
+              class="match-card-actions"
+            >
+              <GameButton
+                size="small"
+                :style="menuButtonStyle"
+                @click="closeMatchRoomSettingsPanel"
+              >
+                <span>{{ t('button.back') }}</span>
+              </GameButton>
+            </div>
           </div>
-          <div class="match-server-list">
+          <div
+            v-if="matchPanelMode === 'servers'"
+            class="match-server-list"
+          >
             <section
               v-if="onlineSession"
               class="match-server match-server--saved"
@@ -1693,14 +1735,14 @@ watch(gameSettings, () => {
                 </div>
                 <div class="match-server-actions">
                   <GameButton
-                    class="match-small-button"
+                    size="small"
                     :style="menuButtonStyle"
                     @click="clickRecoverOnlineSession"
                   >
                     <span>{{ t('match.continueGame') }}</span>
                   </GameButton>
                   <GameButton
-                    class="match-small-button"
+                    size="small"
                     :style="menuButtonStyle"
                     @click="forgetOnlineSession"
                   >
@@ -1712,17 +1754,15 @@ watch(gameSettings, () => {
             <section class="match-server match-server--manual">
               <div class="match-manual-row">
                 <div class="match-control-slot match-control-slot--input">
-                  <input
+                  <GameTextInput
                     v-model="manualMatchServerAddress"
-                    class="match-server-input"
                     :placeholder="t('match.serverAddressPlaceholder')"
-                    type="text"
                     spellcheck="false"
                     @keydown.enter.prevent="addManualMatchServer"
-                  >
+                  />
                 </div>
                 <GameButton
-                  class="match-small-button"
+                  size="small"
                   :style="menuButtonStyle"
                   :disabled="manualMatchServerAddress.trim().length === 0"
                   @click="addManualMatchServer"
@@ -1732,19 +1772,59 @@ watch(gameSettings, () => {
               </div>
             </section>
             <section
+              v-if="customRoomServer"
+              class="match-server match-server--custom-room"
+            >
+              <div class="match-room">
+                <div class="match-room-main">
+                  <div class="match-room-name">
+                    {{ t('match.customRoom') }}
+                  </div>
+                  <div class="match-room-meta">
+                    {{ getMatchServerDisplayAddress(customRoomServer) }}
+                  </div>
+                </div>
+                <div class="match-room-fields">
+                  <div class="match-control-slot match-control-slot--input">
+                    <GameTextInput
+                      v-model="matchRoomName"
+                      :placeholder="t('match.roomNamePlaceholder')"
+                      spellcheck="false"
+                      @keydown.enter.prevent="createMatchRoom()"
+                    />
+                  </div>
+                  <GameButton
+                    size="small"
+                    :style="menuButtonStyle"
+                    @click="openMatchRoomSettingsDialog"
+                  >
+                    <span>{{ t('main.settings') }}</span>
+                  </GameButton>
+                  <GameButton
+                    size="small"
+                    :style="menuButtonStyle"
+                    @click="createMatchRoom()"
+                  >
+                    <span>{{ t('match.createRoom') }}</span>
+                  </GameButton>
+                </div>
+              </div>
+            </section>
+            <section
               v-for="server in matchServers"
               :key="server.id"
               class="match-server"
             >
               <div class="match-server-header">
                 <GameButton
-                  class="match-toggle-button"
+                  size="small"
+                  shape="circle"
                   :style="menuButtonStyle"
                   :aria-label="isMatchServerExpanded(server) ? t('match.collapseServer') : t('match.expandServer')"
                   :aria-expanded="isMatchServerExpanded(server)"
                   @click="toggleMatchServerExpanded(server)"
                 >
-                  <span>{{ isMatchServerExpanded(server) ? 'v' : '>' }}</span>
+                  <GameIcon :name="isMatchServerExpanded(server) ? 'chevron-down' : 'chevron-right'" />
                 </GameButton>
                 <div class="match-server-main">
                   <div class="match-server-address">{{ getMatchServerDisplayAddress(server) }}</div>
@@ -1760,8 +1840,16 @@ watch(gameSettings, () => {
                 </div>
                 <div class="match-server-actions">
                   <GameButton
+                    v-if="server.status === 'connected'"
+                    size="small"
+                    :style="menuButtonStyle"
+                    @click="openCustomRoomForm(server)"
+                  >
+                    <span>{{ t('match.createRoom') }}</span>
+                  </GameButton>
+                  <GameButton
                     v-if="server.status !== 'connected' && server.status !== 'connecting'"
-                    class="match-small-button"
+                    size="small"
                     :style="menuButtonStyle"
                     @click="clickConnectMatchServer(server)"
                   >
@@ -1769,7 +1857,7 @@ watch(gameSettings, () => {
                   </GameButton>
                   <GameButton
                     v-if="isManualMatchServer(server)"
-                    class="match-small-button"
+                    size="small"
                     :style="menuButtonStyle"
                     @click="removeManualMatchServer(server)"
                   >
@@ -1781,70 +1869,6 @@ watch(gameSettings, () => {
                 v-if="server.status === 'connected' && isMatchServerExpanded(server)"
                 class="match-room-list"
               >
-                <div class="match-room match-room--create">
-                  <div class="match-room-main">
-                    <div class="match-room-fields">
-                      <div class="match-control-slot match-control-slot--input">
-                        <input
-                          v-model="matchRoomName"
-                          class="match-server-input"
-                          :placeholder="t('match.roomNamePlaceholder')"
-                          type="text"
-                          spellcheck="false"
-                          @keydown.enter.prevent="createMatchRoom(server)"
-                        >
-                      </div>
-                    </div>
-                    <div class="match-room-settings">
-                      <label class="match-room-setting match-room-setting--select">
-                        <span>{{ t('match.setting.creatorPlayer') }}</span>
-                        <select
-                          v-model="matchRoomSettings.creatorPlayer"
-                          class="match-server-input match-server-select"
-                        >
-                          <option value="white">{{ t('match.setting.creatorWhite') }}</option>
-                          <option value="black">{{ t('match.setting.creatorBlack') }}</option>
-                          <option value="random">{{ t('match.setting.creatorRandom') }}</option>
-                        </select>
-                      </label>
-                      <label class="match-room-setting">
-                        <input
-                          v-model="matchRoomSettings.canSpectate"
-                          type="checkbox"
-                        >
-                        <span>{{ t('match.setting.canSpectate') }}</span>
-                      </label>
-                      <label class="match-room-setting">
-                        <input
-                          v-model="matchRoomSettings.saveRecordToServer"
-                          type="checkbox"
-                        >
-                        <span>{{ t('match.setting.saveRecord') }}</span>
-                      </label>
-                      <label class="match-room-setting">
-                        <input
-                          v-model="matchRoomSettings.showOpponentSmallMoves"
-                          type="checkbox"
-                        >
-                        <span>{{ t('match.setting.showOpponentSmallMoves') }}</span>
-                      </label>
-                      <label class="match-room-setting">
-                        <input
-                          v-model="matchRoomSettings.showOpponentMoveRange"
-                          type="checkbox"
-                        >
-                        <span>{{ t('match.setting.showOpponentMoveRange') }}</span>
-                      </label>
-                    </div>
-                  </div>
-                  <GameButton
-                    class="match-small-button"
-                    :style="menuButtonStyle"
-                    @click="createMatchRoom(server)"
-                  >
-                    <span>{{ t('match.createRoom') }}</span>
-                  </GameButton>
-                </div>
                 <div
                   v-if="server.rooms.length === 0"
                   class="match-empty"
@@ -1870,7 +1894,7 @@ watch(gameSettings, () => {
                   </div>
                   <GameButton
                     v-if="room.status === 'waiting'"
-                    class="match-small-button"
+                    size="small"
                     :style="menuButtonStyle"
                     @click="joinMatchRoom(server, room.id)"
                   >
@@ -1885,6 +1909,79 @@ watch(gameSettings, () => {
                 {{ server.error || t('match.failedMessage') }}
               </div>
             </section>
+          </div>
+          <div
+            v-else
+            class="match-settings-panel"
+          >
+            <div class="settings-list match-settings-list">
+              <label class="settings-row">
+                <span>{{ t('match.privatePasswordPlaceholder') }}</span>
+                <GameTextInput
+                  v-model="matchPrivateRoomPassword"
+                  size="setting"
+                  type="password"
+                  autocomplete="off"
+                />
+              </label>
+              <div class="settings-row settings-row--stacked">
+                <span>{{ t('match.setting.creatorPlayer') }}</span>
+                <div class="match-radio-group">
+                  <GameToggle
+                    v-model="matchRoomSettings.creatorPlayer"
+                    type="radio"
+                    value="white"
+                    :style="menuButtonStyle"
+                  >
+                    <span>{{ t('match.setting.creatorWhite') }}</span>
+                  </GameToggle>
+                  <GameToggle
+                    v-model="matchRoomSettings.creatorPlayer"
+                    type="radio"
+                    value="black"
+                    :style="menuButtonStyle"
+                  >
+                    <span>{{ t('match.setting.creatorBlack') }}</span>
+                  </GameToggle>
+                  <GameToggle
+                    v-model="matchRoomSettings.creatorPlayer"
+                    type="radio"
+                    value="random"
+                    :style="menuButtonStyle"
+                  >
+                    <span>{{ t('match.setting.creatorRandom') }}</span>
+                  </GameToggle>
+                </div>
+              </div>
+              <div class="settings-row">
+                <span>{{ t('match.setting.canSpectate') }}</span>
+                <GameToggle
+                  v-model="matchRoomSettings.canSpectate"
+                  :style="menuButtonStyle"
+                />
+              </div>
+              <div class="settings-row">
+                <span>{{ t('match.setting.saveRecord') }}</span>
+                <GameToggle
+                  v-model="matchRoomSettings.saveRecordToServer"
+                  :style="menuButtonStyle"
+                />
+              </div>
+              <div class="settings-row">
+                <span>{{ t('match.setting.showOpponentMoves') }}</span>
+                <GameToggle
+                  v-model="matchRoomSettings.showOpponentMoves"
+                  :style="menuButtonStyle"
+                />
+              </div>
+              <div class="settings-row">
+                <span>{{ t('match.setting.showOpponentMoveRange') }}</span>
+                <GameToggle
+                  v-model="matchRoomSettings.showOpponentMoveRange"
+                  :style="menuButtonStyle"
+                />
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1916,7 +2013,8 @@ watch(gameSettings, () => {
         class="toolbar toolbar-secondary"
       >
         <GameButton
-          class="game-button--circle"
+          size="icon"
+          shape="circle"
           :style="menuButtonStyle"
           :aria-label="t('dialog.languageTitle')"
           @click="openLanguageDialog"
@@ -1925,7 +2023,8 @@ watch(gameSettings, () => {
         </GameButton>
         <GameButton
           v-if="gameStarted"
-          class="game-button--circle"
+          size="icon"
+          shape="circle"
           :style="menuButtonStyle"
           :aria-label="t('button.flipView')"
           @click="toggleViewPlayer"
@@ -1934,7 +2033,8 @@ watch(gameSettings, () => {
         </GameButton>
         <GameButton
           v-if="gameStarted"
-          class="game-button--circle"
+          size="icon"
+          shape="circle"
           :style="menuButtonStyle"
           :aria-label="t('button.menu')"
           :aria-expanded="secondaryMenuOpen"
@@ -1974,7 +2074,7 @@ watch(gameSettings, () => {
             <GameButton
               v-for="button in recordActionButtons"
               :key="button.id"
-              class="record-header-button"
+              size="tiny"
               :style="menuButtonStyle"
               :disabled="button.disabled"
               :pulsing="button.effect === 'pulse'"
@@ -2070,6 +2170,7 @@ watch(gameSettings, () => {
           @click.stop
         >
           <GameButton
+            size="secondary"
             :style="menuButtonStyle"
             :open="recordPanelOpen"
             :aria-expanded="recordPanelOpen"
@@ -2078,12 +2179,14 @@ watch(gameSettings, () => {
             <span>{{ t('button.record') }}</span>
           </GameButton>
           <GameButton
+            size="secondary"
             :style="menuButtonStyle"
             @click="openSettingsDialog"
           >
             <span>{{ t('main.settings') }}</span>
           </GameButton>
           <GameButton
+            size="secondary"
             :style="menuButtonStyle"
             @click="clickReturnToMainMenuButton"
           >
@@ -2092,6 +2195,7 @@ watch(gameSettings, () => {
           <GameButton
             v-for="button in menuButtons"
             :key="button.id"
+            size="secondary"
             :style="menuButtonStyle"
             :disabled="button.disabled"
             :pulsing="button.effect === 'pulse'"
@@ -2125,7 +2229,7 @@ watch(gameSettings, () => {
             <GameButton
               v-for="option in languageOptions"
               :key="option.value"
-              class="language-button"
+              size="secondary"
               :style="getPresetButtonStyle(option.value === language ? viewHoverButtonPreset : viewButtonPreset)"
               :open="option.value === language"
               @click="selectLanguage(option.value)"
@@ -2154,34 +2258,31 @@ watch(gameSettings, () => {
                 step="0.01"
               >
             </label>
-            <label class="settings-row">
+            <div class="settings-row">
               <span>{{ t('settings.autoSwitchView') }}</span>
-              <input
+              <GameToggle
                 v-model="gameSettings.autoSwitchViewPlayer"
-                class="settings-checkbox"
-                type="checkbox"
-              >
-            </label>
-            <label class="settings-row">
+                :style="menuButtonStyle"
+              />
+            </div>
+            <div class="settings-row">
               <span>{{ t('settings.travelAnimation') }}</span>
-              <input
+              <GameToggle
                 v-model="gameSettings.showMoveTravelAnimation"
-                class="settings-checkbox"
-                type="checkbox"
-              >
-            </label>
-            <label class="settings-row">
+                :style="menuButtonStyle"
+              />
+            </div>
+            <div class="settings-row">
               <span>{{ t('settings.opponentMoveRange') }}</span>
-              <input
+              <GameToggle
                 v-model="gameSettings.showOpponentMoveRange"
-                class="settings-checkbox"
-                type="checkbox"
-              >
-            </label>
+                :style="menuButtonStyle"
+              />
+            </div>
           </div>
           <div class="dialog-actions">
             <GameButton
-              class="dialog-button"
+              size="secondary"
               :style="menuButtonStyle"
               @click="closeDialog()"
             >
@@ -2212,14 +2313,14 @@ watch(gameSettings, () => {
           </p>
           <div class="dialog-actions">
             <GameButton
-              class="dialog-button"
+              size="secondary"
               :style="menuButtonStyle"
               @click="closeDialog()"
             >
               <span>{{ t('button.cancel') }}</span>
             </GameButton>
             <GameButton
-              class="dialog-button"
+              size="secondary"
               :style="menuButtonStyle"
               :disabled="importText.trim().length === 0"
               @click="submitImportDialog"
@@ -2257,14 +2358,14 @@ watch(gameSettings, () => {
           </p>
           <div class="dialog-actions">
             <GameButton
-              class="dialog-button"
+              size="secondary"
               :style="menuButtonStyle"
               @click="copyExportText"
             >
               <span>{{ t('button.copy') }}</span>
             </GameButton>
             <GameButton
-              class="dialog-button"
+              size="secondary"
               :style="menuButtonStyle"
               @click="closeDialog()"
             >
@@ -2283,7 +2384,7 @@ watch(gameSettings, () => {
           <div class="help-content">{{ t('dialog.helpText') }}</div>
           <div class="dialog-actions">
             <GameButton
-              class="dialog-button"
+              size="secondary"
               :style="menuButtonStyle"
               @click="closeDialog()"
             >
@@ -2332,7 +2433,7 @@ watch(gameSettings, () => {
             class="dialog-actions"
           >
             <GameButton
-              class="dialog-button"
+              size="secondary"
               :style="menuButtonStyle"
               @click="enterAfterLoading"
             >
@@ -2461,13 +2562,6 @@ canvas {
   transform: translateX(-50%);
 }
 
-.game-button.main-menu-button {
-  width: var(--main-menu-button-width);
-  height: var(--main-menu-button-height);
-  border-radius: calc(var(--main-menu-button-height) / 2);
-  font-size: var(--main-menu-button-font-size);
-}
-
 .match-card {
   position: absolute;
   left: 50%;
@@ -2516,6 +2610,18 @@ canvas {
   overflow: auto;
 }
 
+.match-settings-panel {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+
+.match-settings-list {
+  width: min(680px, 100%);
+}
+
 .match-server {
   display: flex;
   flex-direction: column;
@@ -2549,10 +2655,6 @@ canvas {
 
 .match-nickname-slot {
   flex: 0 1 190px;
-}
-
-.match-private-password-slot {
-  flex: 0 1 170px;
 }
 
 .match-server-main,
@@ -2620,98 +2722,27 @@ canvas {
   border-top: 1px solid color-mix(in srgb, var(--button-border-color) 55%, transparent);
 }
 
-.match-room--create {
-  align-items: baseline;
-}
-
 .match-room-fields {
   display: flex;
+  align-items: baseline;
   gap: var(--button-content-gap);
 }
 
-.match-room-settings {
+.match-server--custom-room .match-room {
+  padding-top: 0;
+}
+
+.match-server--custom-room .match-room-fields {
+  flex: 0 1 440px;
+  min-width: 0;
+}
+
+.match-radio-group {
   display: flex;
   flex-wrap: wrap;
-  gap: calc(var(--button-content-gap) * 0.75) calc(var(--button-content-gap) * 1.5);
-  margin-top: calc(var(--button-content-gap) * 0.75);
-  font-size: 13px;
-  line-height: 1.1;
-  opacity: 0.9;
-}
-
-.match-room-setting {
-  display: inline-flex;
   align-items: center;
-  gap: calc(var(--button-content-gap) * 0.5);
-  white-space: nowrap;
-}
-
-.match-room-setting input[type='checkbox'] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--button-hover-fill-color);
-}
-
-.match-room-setting--select {
-  flex: 1 1 160px;
-}
-
-.game-button.match-small-button {
-  --button-shadow-offset: var(--small-button-shadow-offset);
-  flex: 0 0 auto;
-  width: auto;
-  min-width: 96px;
-  height: 32px;
-  padding: 0 12px;
-  border-width: 2px;
-  border-radius: 16px;
-  font-size: 16px;
-}
-
-.game-button.match-toggle-button {
-  --button-shadow-offset: var(--small-button-shadow-offset);
-  flex: 0 0 auto;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  padding: 0;
-  border-width: 2px;
-  border-radius: 50%;
-  font-size: 18px;
-}
-
-.match-server-input {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  padding: 0 10px;
-  border: 2px solid var(--button-border-color);
-  border-radius: 16px;
-  background: var(--button-fill-color);
-  color: var(--button-text-color);
-  font: inherit;
-  font-size: 16px;
-  line-height: 1;
-  outline: none;
-  box-shadow: var(--small-button-shadow-offset) var(--small-button-shadow-offset) 0 var(--button-shadow-color);
-}
-
-.match-server-input:focus {
-  border-color: var(--button-hover-border-color);
-  background: var(--button-hover-fill-color);
-  color: var(--button-hover-text-color);
-}
-
-.match-server-select {
-  flex: 0 0 110px;
-  height: 24px;
-  padding: 0 8px;
-  border-width: 1px;
-  border-radius: 12px;
-  font-size: 13px;
-  box-shadow: none;
+  justify-content: flex-end;
+  gap: calc(var(--button-content-gap) * 1.5);
 }
 
 .toolbar-primary {
@@ -2800,10 +2831,6 @@ canvas {
   display: flex;
   flex: 0 0 auto;
   gap: calc(var(--button-content-gap) * 0.75);
-}
-
-.record-header-button {
-  flex: 0 0 auto;
 }
 
 .record-message {
@@ -3066,74 +3093,20 @@ canvas {
   color: var(--button-text-color);
   font-size: 20px;
   line-height: 1.1;
+  white-space: nowrap;
+}
+
+.settings-row--stacked {
+  align-items: center;
+}
+
+.settings-row--stacked > span {
+  transform: translateY(var(--ui-text-y));
 }
 
 .settings-range {
   width: 150px;
   accent-color: var(--button-hover-fill-color);
-}
-
-.settings-checkbox {
-  width: 22px;
-  height: 22px;
-  accent-color: var(--button-hover-fill-color);
-}
-
-.language-button {
-  width: var(--secondary-button-width);
-  max-width: calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10);
-}
-
-.toolbar-secondary .game-button {
-  width: var(--secondary-button-width);
-}
-
-.game-button.game-button--circle {
-  width: var(--button-circle-size);
-  min-width: var(--button-circle-size);
-  padding: 0;
-  border-radius: 50%;
-}
-
-.secondary-menu-card .game-button {
-  width: var(--secondary-button-width);
-}
-
-.dialog-button {
-  width: var(--secondary-button-width);
-}
-
-.record-header-actions .record-header-button {
-  width: auto;
-  min-width: 58px;
-  height: 28px;
-  padding: 0 8px;
-  border-width: 2px;
-  border-radius: 14px;
-  font-size: 14px;
-}
-
-.game-button:not(:disabled):hover,
-.game-button:not(:disabled):focus-visible,
-.game-button.is-open {
-  border-color: var(--button-hover-border-color);
-  background: var(--button-hover-fill-color);
-  color: var(--button-hover-text-color);
-}
-
-.game-button:not(:disabled):active {
-  box-shadow: none;
-  transform: translateY(var(--button-shadow-offset));
-}
-
-.game-button:disabled {
-  box-shadow: none;
-  transform: translateY(var(--button-shadow-offset));
-  cursor: default;
-}
-
-.game-button.is-pulsing:not(:hover):not(:focus-visible) {
-  animation: button-pulse var(--button-pulse-duration) ease-in-out infinite;
 }
 
 .piece-icon {
@@ -3142,21 +3115,6 @@ canvas {
   height: var(--button-icon-size);
   object-fit: contain;
   pointer-events: none;
-}
-
-@keyframes button-pulse {
-  0%,
-  100% {
-    border-color: var(--button-border-color);
-    background: var(--button-fill-color);
-    color: var(--button-text-color);
-  }
-
-  50% {
-    border-color: var(--button-pulse-border-color);
-    background: var(--button-pulse-fill-color);
-    color: var(--button-pulse-text-color);
-  }
 }
 
 .message-list {
