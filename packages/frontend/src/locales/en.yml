@@ -13,6 +13,7 @@ button.menu: "Menu"
 button.flipView: "Flip view"
 button.returnToMainMenu: "Main menu"
 button.back: "Back"
+button.enterGame: "Enter game"
 
 main.start: "Start"
 main.resume: "Resume"

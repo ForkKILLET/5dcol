@@ -53,6 +53,7 @@ const exportHasPendingMoves = ref(false)
 const exportCopyStatus = ref('')
 const loading = ref(true)
 const loadingError = ref('')
+const requiredAssetsReady = ref(false)
 const textureLoadProgress = ref({ completed: 0, total: 0 })
 const soundLoadProgress = ref({ completed: 0, total: 0 })
 const gameStarted = ref(false)
@@ -966,6 +967,13 @@ function playUISound() {
   if (! loading.value && ! gameStarted.value) startAmbience()
 }
 
+function enterAfterLoading() {
+  if (! requiredAssetsReady.value || loadingError.value) return
+  loading.value = false
+  playUISound()
+  if (! gameStarted.value) startAmbience()
+}
+
 function startLocalGame() {
   if (! canvasRenderer || ! soundManager || gameStarted.value) return
 
@@ -1496,6 +1504,7 @@ async function init() {
   try {
     loading.value = true
     loadingError.value = ''
+    requiredAssetsReady.value = false
     textureLoadProgress.value = { completed: 0, total: 0 }
     soundLoadProgress.value = { completed: 0, total: 0 }
     soundManager = SoundManager.createSilent()
@@ -1505,7 +1514,7 @@ async function init() {
     })
     canvasRenderer = renderer
     refreshSavedGameState()
-    loading.value = false
+    requiredAssetsReady.value = true
     void loadOptionalSounds()
   }
   catch (err) {
@@ -2317,6 +2326,18 @@ watch(gameSettings, () => {
                 total: String(soundLoadProgress.total),
               }) }}
             </div>
+          </div>
+          <div
+            v-if="requiredAssetsReady && !loadingError"
+            class="dialog-actions"
+          >
+            <GameButton
+              class="dialog-button"
+              :style="menuButtonStyle"
+              @click="enterAfterLoading"
+            >
+              <span>{{ t('button.enterGame') }}</span>
+            </GameButton>
           </div>
         </div>
       </div>

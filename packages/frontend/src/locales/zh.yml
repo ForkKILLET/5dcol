@@ -13,6 +13,7 @@ button.menu: "菜单"
 button.flipView: "翻转视角"
 button.returnToMainMenu: "主菜单"
 button.back: "返回"
+button.enterGame: "进入游戏"
 
 main.start: "开始"
 main.resume: "继续"
