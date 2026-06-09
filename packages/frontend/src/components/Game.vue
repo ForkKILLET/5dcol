@@ -29,6 +29,7 @@ import { createTranslator, getDefaultLanguage, isLanguage, LANGUAGES, type Langu
 import { readStorageJson, removeStorageValue, useStorageReactive, useStorageRef } from '@/composables/storage'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
+import GameSlider from './GameSlider.vue'
 import GameTextInput from './GameTextInput.vue'
 import GameToggle from './GameToggle.vue'
 
@@ -1238,6 +1239,19 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   }
 
   if (
+    e.key === ','
+    && ! e.repeat
+    && ! loading.value
+    && ! isModifierKeyEvent(e)
+    && ! isTextInputEvent(e)
+    && dialogMode.value === 'none'
+  ) {
+    e.preventDefault()
+    openSettingsDialog()
+    return
+  }
+
+  if (
     e.repeat
     || ! gameStarted.value
     || isModifierKeyEvent(e)
@@ -1267,21 +1281,20 @@ function updateViewPlayer(player: Player) {
 
 function playUISound() {
   soundManager?.play('lightswitch.ogg')
-  if (! loading.value && ! gameStarted.value) startAmbience()
+  if (! loading.value) startAmbience()
 }
 
 function enterAfterLoading() {
   if (! requiredAssetsReady.value || loadingError.value) return
   loading.value = false
   playUISound()
-  if (! gameStarted.value) startAmbience()
+  startAmbience()
 }
 
 function startLocalGame() {
   if (! canvasRenderer || ! soundManager || gameStarted.value) return
 
   playUISound()
-  stopAmbience()
   game = new Game({
     renderer: canvasRenderer,
     soundManager,
@@ -1310,7 +1323,6 @@ function startLocalGame() {
 function startOnlineGame(serverAddress: string, state: MatchGameState) {
   if (! canvasRenderer || ! soundManager || gameStarted.value) return
 
-  stopAmbience()
   stopOnlinePolling()
   onlineRoomRef.value = {
     serverAddress,
@@ -1742,8 +1754,9 @@ function clickReturnToMainMenuButton() {
 }
 
 function startAmbience() {
-  if (loading.value || gameStarted.value || ambienceLoop || ! soundManager) return
-  ambienceLoop = soundManager?.playLoop('ambience.ogg') ?? null
+  if (loading.value || ambienceLoop || ! soundManager) return
+  if (! soundManager.has('ambience.ogg')) return
+  ambienceLoop = soundManager?.playLoop('ambience.ogg', { volume: 0.35 }) ?? null
 }
 
 function stopAmbience() {
@@ -1773,7 +1786,7 @@ async function loadOptionalSounds() {
     await soundManager.load(logger, progress => {
       soundLoadProgress.value = progress
     }, { optional: true })
-    if (! gameStarted.value) startAmbience()
+    startAmbience()
   }
   catch (err) {
     logger.error(err instanceof Error ? err.message : String(err))
@@ -2535,14 +2548,15 @@ watch(gameSettings, () => {
           <div class="settings-list">
             <label class="settings-row">
               <span>{{ t('settings.soundVolume') }}</span>
-              <input
-                v-model.number="gameSettings.soundVolume"
-                class="settings-range"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-              >
+              <GameSlider
+                v-model="gameSettings.soundVolume"
+                :aria-label="t('settings.soundVolume')"
+                :style="menuButtonStyle"
+                :min="0"
+                :max="1"
+                :step="0.01"
+                @change="playUISound"
+              />
             </label>
             <div class="settings-row">
               <span>{{ t('settings.autoSwitchView') }}</span>
@@ -3605,11 +3619,6 @@ canvas {
 
 .settings-row--stacked > span {
   transform: translateY(var(--ui-text-y));
-}
-
-.settings-range {
-  width: 150px;
-  accent-color: var(--button-hover-fill-color);
 }
 
 .piece-icon {

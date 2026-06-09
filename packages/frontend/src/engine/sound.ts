@@ -31,12 +31,14 @@ export type SoundName = typeof SOUND_NAME_LIST[number]
 const SOUND_PATH = 'assets/sounds'
 
 export interface SoundPlayOptions {
+  volume?: number
   when?: number
 }
 
 export interface SoundSequenceItem {
   name: SoundName
   nextAfter?: number
+  volume?: number
 }
 
 export interface LoopingSound {
@@ -96,8 +98,12 @@ export class SoundManager {
     return buffer
   }
 
+  has(name: SoundName): boolean {
+    return this.buffers.has(name)
+  }
+
   play(name: SoundName, options: SoundPlayOptions = {}): AudioBufferSourceNode | null {
-    const source = this.createSource(name)
+    const source = this.createSource(name, options.volume)
     if (! source) return null
 
     const startTime = this.getStartTime(options.when ?? 0)
@@ -106,18 +112,19 @@ export class SoundManager {
     return source
   }
 
-  playSequence(items: Array<SoundName | SoundSequenceItem>): void {
+  playSequence(items: Array<SoundName | SoundSequenceItem>, options: SoundPlayOptions = {}): void {
     let offset = 0
     for (const item of items) {
       const name = typeof item === 'string' ? item : item.name
       const nextAfter = typeof item === 'string' ? undefined : item.nextAfter
-      this.play(name, { when: offset })
+      const volume = typeof item === 'string' ? options.volume : item.volume ?? options.volume
+      this.play(name, { volume, when: offset })
       offset += this.getNextOffset(name, nextAfter)
     }
   }
 
-  playLoop(name: SoundName): LoopingSound {
-    const source = this.createSource(name)
+  playLoop(name: SoundName, options: SoundPlayOptions = {}): LoopingSound {
+    const source = this.createSource(name, options.volume)
     if (! source) return { stop: () => {} }
 
     source.loop = true
@@ -144,14 +151,14 @@ export class SoundManager {
     if (this.gain) this.gain.gain.value = this.volume
   }
 
-  private createSource(name: SoundName): AudioBufferSourceNode | null {
+  private createSource(name: SoundName, volume = 1): AudioBufferSourceNode | null {
     const buffer = this.buffers.get(name)
     if (! buffer) return null
 
     const context = this.getContext()
     const source = context.createBufferSource()
     source.buffer = buffer
-    source.connect(this.getGain())
+    source.connect(this.getSourceGain(volume))
     return source
   }
 
@@ -183,6 +190,16 @@ export class SoundManager {
       this.gain.connect(this.getContext().destination)
     }
     return this.gain
+  }
+
+  private getSourceGain(volume: number): AudioNode {
+    const sourceVolume = clamp(volume, 0, 1)
+    if (sourceVolume === 1) return this.getGain()
+
+    const gain = this.getContext().createGain()
+    gain.gain.value = sourceVolume
+    gain.connect(this.getGain())
+    return gain
   }
 }
 
