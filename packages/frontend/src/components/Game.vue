@@ -521,14 +521,30 @@ function getMatchRoomSortRank(status: MatchRoomStatus) {
   }
 }
 
-function getMatchRoomMeta(room: MatchServerState['rooms'][number]) {
-  return t.value('match.roomMeta', {
-    id: getShortMatchRoomId(room.id),
+function getMatchRoomStatusMeta(room: MatchServerState['rooms'][number]) {
+  return t.value('match.roomStatusMeta', {
     date: getMatchRoomDate(room),
     actions: String(room.actionCount),
     players: getMatchRoomPlayerLabel(room),
     status: getMatchRoomStatusText(room.status),
   })
+}
+
+function getMatchRoomSettingsMeta(room: MatchServerState['rooms'][number]) {
+  return t.value('match.roomSettingsMeta', {
+    settings: getMatchRoomSettingsLabel(room),
+  })
+}
+
+function getMatchRoomSettingsLabel(room: MatchServerState['rooms'][number]) {
+  const enabled = [
+    room.private ? t.value('match.setting.private') : '',
+    room.settings.showOpponentMoves ? t.value('match.setting.liveMoves') : '',
+    room.settings.showOpponentMoveRange ? t.value('match.setting.moveRange') : '',
+    room.settings.canSpectate ? t.value('match.setting.spectate') : '',
+  ].filter(Boolean)
+
+  return enabled.length > 0 ? enabled.join(', ') : t.value('match.setting.default')
 }
 
 function getSavedOnlineGameMeta(session: StoredOnlineSession) {
@@ -571,10 +587,6 @@ function getMatchRoomPlayerLabel(room: MatchServerState['rooms'][number]) {
 
 function getMatchRoomSeatLabel(seat: MatchServerState['rooms'][number]['seats'][number]) {
   return seat?.nickname || t.value('match.anonymous')
-}
-
-function getShortMatchRoomId(id: string) {
-  return id.length > 8 ? id.slice(0, 8) : id
 }
 
 function getMatchServerDisplayAddress(server: MatchServerState) {
@@ -1881,7 +1893,7 @@ watch(gameSettings, () => {
                     :style="menuButtonStyle"
                     @click="createMatchRoom()"
                   >
-                    <span>{{ t('match.createRoom') }}</span>
+                    <span>{{ t('match.create') }}</span>
                   </GameButton>
                 </div>
               </div>
@@ -1966,16 +1978,21 @@ watch(gameSettings, () => {
                         {{ t('match.privateRoom') }}
                       </span>
                     </div>
-                    <div class="match-room-meta">{{ getMatchRoomMeta(room) }}</div>
+                    <div class="match-room-meta-stack">
+                      <div class="match-room-meta">{{ getMatchRoomStatusMeta(room) }}</div>
+                      <div class="match-room-meta">{{ getMatchRoomSettingsMeta(room) }}</div>
+                    </div>
                   </div>
-                  <GameButton
-                    v-if="room.status === 'waiting'"
-                    size="small"
-                    :style="menuButtonStyle"
-                    @click="joinMatchRoom(server, room.id)"
-                  >
-                    <span>{{ t('match.join') }}</span>
-                  </GameButton>
+                  <div class="match-room-side">
+                    <GameButton
+                      v-if="room.status === 'waiting'"
+                      size="small"
+                      :style="menuButtonStyle"
+                      @click="joinMatchRoom(server, room.id)"
+                    >
+                      <span>{{ t('match.join') }}</span>
+                    </GameButton>
+                  </div>
                 </div>
               </div>
               <div
@@ -2044,7 +2061,7 @@ watch(gameSettings, () => {
                 />
               </div>
               <div class="settings-row">
-                <span>{{ t('match.setting.showOpponentMoves') }}</span>
+                <span>{{ t('match.setting.liveMoves') }}</span>
                 <GameToggle
                   v-model="matchRoomSettings.showOpponentMoves"
                   :style="menuButtonStyle"
@@ -2766,6 +2783,13 @@ canvas {
   min-width: 0;
 }
 
+.match-room-main {
+  display: grid;
+  grid-template-columns: minmax(max-content, 100px) minmax(0, 1fr);
+  column-gap: calc(var(--button-content-gap) * 0.75);
+  align-items: center;
+}
+
 .match-server-address,
 .match-room-name {
   overflow: hidden;
@@ -2781,6 +2805,18 @@ canvas {
   opacity: 0.72;
 }
 
+.match-room-side {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.match-room-meta-stack {
+  min-width: 0;
+  text-align: left;
+}
+
 .match-server-meta,
 .match-room-meta,
 .match-error,
@@ -2788,6 +2824,12 @@ canvas {
   font-size: 14px;
   line-height: 1.25;
   opacity: 0.78;
+}
+
+.match-room-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .match-server-meta {

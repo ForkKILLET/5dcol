@@ -138,22 +138,12 @@ function getValidRoomSettings(value: unknown): RoomState['settings'] {
 
   const settings = value as Partial<RoomState['settings']>
   return {
-    canSpectate: getBooleanSetting(settings.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
-    creatorPlayer: getCreatorPlayerSetting(settings.creatorPlayer),
-    saveRecordToServer: getBooleanSetting(settings.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
-    showOpponentMoves: getBooleanSetting(settings.showOpponentMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves),
-    showOpponentMoveRange: getBooleanSetting(settings.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
+    canSpectate: settings.canSpectate ?? DEFAULT_MATCH_ROOM_SETTINGS.canSpectate,
+    creatorPlayer: settings.creatorPlayer ?? 'random',
+    saveRecordToServer: settings.saveRecordToServer ?? DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer,
+    showOpponentMoves: settings.showOpponentMoves ?? DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves,
+    showOpponentMoveRange: settings.showOpponentMoveRange ?? DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange,
   }
-}
-
-function getBooleanSetting(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback
-}
-
-function getCreatorPlayerSetting(value: unknown): RoomState['settings']['creatorPlayer'] {
-  return value === 'white' || value === 'black' || value === 'random'
-    ? value
-    : DEFAULT_MATCH_ROOM_SETTINGS.creatorPlayer
 }
 
 function isNotFoundError(err: unknown): boolean {
