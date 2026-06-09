@@ -52,6 +52,7 @@ export type MatchServerInfo = z.infer<typeof MatchServerInfoSchema>
 export const MatchRoomSeatSchema = z.object({
   player: PlayerSchema,
   nickname: z.string().nullable(),
+  online: z.boolean(),
 })
 
 export type MatchRoomSeat = z.infer<typeof MatchRoomSeatSchema>

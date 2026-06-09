@@ -123,7 +123,7 @@ export function createBackendServer(options: BackendServerOptions) {
   }))
 
   app.get<{ Querystring: MatchRoomsRequestQuery }>('/rooms', async (request): Promise<MatchRoomsResponse> => ({
-    rooms: getListedRooms(rooms, normalizePassword(request.query.password), request.query.userId),
+    rooms: getListedRooms(rooms, normalizePassword(request.query.password), request.query.userId, onlineSessionCounts),
   }))
 
   app.post<{ Body: CreateMatchRoomRequest }>('/rooms', async (request, reply): Promise<CreateMatchRoomResponse> => {
@@ -503,14 +503,18 @@ function findSession(
   return null
 }
 
-function toRoomView(room: RoomState, userId: string | null = null): MatchRoom {
+function toRoomView(
+  room: RoomState,
+  userId: string | null = null,
+  onlineSessionCounts = new Map<string, number>(),
+): MatchRoom {
   const players = room.sessions.length
   return {
     id: room.id,
     name: room.name,
     players,
     maxPlayers: room.maxPlayers,
-    seats: getRoomSeats(room),
+    seats: getRoomSeats(room, onlineSessionCounts),
     status: getRoomStatus(room),
     winner: room.winner,
     finishReason: room.finishReason,
@@ -526,22 +530,27 @@ function toRoomView(room: RoomState, userId: string | null = null): MatchRoom {
   }
 }
 
-function getRoomSeats(room: RoomState): MatchRoom['seats'] {
+function getRoomSeats(room: RoomState, onlineSessionCounts: Map<string, number>): MatchRoom['seats'] {
   const white = room.sessions.find(session => session.player === Player.W) ?? null
   const black = room.sessions.find(session => session.player === Player.B) ?? null
   return [
-    white ? { player: white.player, nickname: white.nickname } : null,
-    black ? { player: black.player, nickname: black.nickname } : null,
+    white ? { player: white.player, nickname: white.nickname, online: isSessionOnline(white, onlineSessionCounts) } : null,
+    black ? { player: black.player, nickname: black.nickname, online: isSessionOnline(black, onlineSessionCounts) } : null,
   ]
 }
 
-function getListedRooms(rooms: RoomState[], password: string | null, userId: string | null | undefined): MatchRoom[] {
+function getListedRooms(
+  rooms: RoomState[],
+  password: string | null,
+  userId: string | null | undefined,
+  onlineSessionCounts: Map<string, number>,
+): MatchRoom[] {
   const now = Date.now()
   const ownUserId = userId ?? null
   const activeRooms = rooms
     .filter(room => canAccessListedRoom(room, password, ownUserId))
     .filter(room => getRoomStatus(room) !== 'finished')
-    .map(room => toRoomView(room, ownUserId))
+    .map(room => toRoomView(room, ownUserId, onlineSessionCounts))
   const finishedRooms = rooms
     .filter(room => canAccessListedRoom(room, password, ownUserId))
     .filter(room => getRoomStatus(room) === 'finished')
@@ -550,7 +559,7 @@ function getListedRooms(rooms: RoomState[], password: string | null, userId: str
     .filter(room => now - room.updatedAt <= FINISHED_ROOM_HISTORY_MS)
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, FINISHED_ROOM_HISTORY_LIMIT)
-    .map(room => toRoomView(room, ownUserId))
+    .map(room => toRoomView(room, ownUserId, onlineSessionCounts))
 
   return [...activeRooms, ...finishedRooms]
 }
@@ -582,7 +591,7 @@ function toGameStateView(
 ): MatchGameState {
   const state = GameState.create(room.actions)
   return {
-    room: toRoomView(room),
+    room: toRoomView(room, null, onlineSessionCounts),
     session,
     presence: getMatchPresence(room, session, onlineSessionCounts),
     actions: room.actions,

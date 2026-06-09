@@ -591,11 +591,10 @@ function getMatchRoomSortRank(status: MatchRoomStatus) {
   }
 }
 
-function getMatchRoomStatusMeta(room: MatchServerState['rooms'][number]) {
-  return t.value('match.roomStatusMeta', {
+function getMatchRoomStatusSuffix(room: MatchServerState['rooms'][number]) {
+  return t.value('match.roomStatusSuffix', {
     date: getMatchRoomDate(room),
     actions: String(room.actionCount),
-    players: getMatchRoomPlayerLabel(room),
     status: getMatchRoomStatusText(room.status),
   })
 }
@@ -633,13 +632,6 @@ function getViewMatchRoomLabel(room: MatchServerState['rooms'][number]) {
 
 function getMatchRoomDate(room: MatchServerState['rooms'][number]) {
   return new Date(room.startedAt ?? room.createdAt).toLocaleDateString()
-}
-
-function getMatchRoomPlayerLabel(room: MatchServerState['rooms'][number]) {
-  const [player1, player2] = room.seats
-  const left = getMatchRoomSeatLabel(player1)
-  const right = player2 ? getMatchRoomSeatLabel(player2) : '?'
-  return t.value('match.playersVersus', { player1: left, player2: right })
 }
 
 function getMatchRoomSeatLabel(seat: MatchServerState['rooms'][number]['seats'][number]) {
@@ -1951,7 +1943,18 @@ watch(gameSettings, () => {
                       </span>
                     </div>
                     <div class="match-room-meta-stack">
-                      <div class="match-room-meta">{{ getMatchRoomStatusMeta(room) }}</div>
+                      <div class="match-room-meta">
+                        <span
+                          class="match-room-player"
+                          :class="{ 'match-room-player--online': room.seats[0]?.online }"
+                        >{{ getMatchRoomSeatLabel(room.seats[0]) }}</span>
+                        <span>{{ t('match.playersVersusSeparator') }}</span>
+                        <span
+                          class="match-room-player"
+                          :class="{ 'match-room-player--online': room.seats[1]?.online }"
+                        >{{ room.seats[1] ? getMatchRoomSeatLabel(room.seats[1]) : '?' }}</span>
+                        <span>{{ getMatchRoomStatusSuffix(room) }}</span>
+                      </div>
                       <div class="match-room-meta">{{ getMatchRoomSettingsMeta(room) }}</div>
                     </div>
                   </div>
@@ -2815,6 +2818,11 @@ canvas {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.match-room-player--online {
+  color: rgb(92 135 95);
+  opacity: 1;
 }
 
 .match-server-meta {
