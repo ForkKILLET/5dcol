@@ -123,7 +123,7 @@ export function createBackendServer(options: BackendServerOptions) {
   }))
 
   app.get<{ Querystring: MatchRoomsRequestQuery }>('/rooms', async (request): Promise<MatchRoomsResponse> => ({
-    rooms: getListedRooms(rooms, normalizePassword(request.query.password)),
+    rooms: getListedRooms(rooms, normalizePassword(request.query.password), request.query.userId),
   }))
 
   app.post<{ Body: CreateMatchRoomRequest }>('/rooms', async (request, reply): Promise<CreateMatchRoomResponse> => {
@@ -213,7 +213,7 @@ export function createBackendServer(options: BackendServerOptions) {
           roomSubscribers,
           onlineSessionCounts,
           rooms,
-          storage.save,
+          rooms => storage.saveState({ rooms, users }),
           room,
           session,
         )
@@ -503,7 +503,7 @@ function findSession(
   return null
 }
 
-function toRoomView(room: RoomState): MatchRoom {
+function toRoomView(room: RoomState, userId: string | null = null): MatchRoom {
   const players = room.sessions.length
   return {
     id: room.id,
@@ -520,6 +520,9 @@ function toRoomView(room: RoomState): MatchRoom {
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
     actionCount: room.actions.length,
+    ownSession: userId
+      ? room.sessions.find(session => session.userId === userId) ?? null
+      : null,
   }
 }
 
@@ -532,23 +535,29 @@ function getRoomSeats(room: RoomState): MatchRoom['seats'] {
   ]
 }
 
-function getListedRooms(rooms: RoomState[], password: string | null): MatchRoom[] {
+function getListedRooms(rooms: RoomState[], password: string | null, userId: string | null | undefined): MatchRoom[] {
   const now = Date.now()
+  const ownUserId = userId ?? null
   const activeRooms = rooms
-    .filter(room => canAccessRoom(room, password))
+    .filter(room => canAccessListedRoom(room, password, ownUserId))
     .filter(room => getRoomStatus(room) !== 'finished')
-    .map(toRoomView)
+    .map(room => toRoomView(room, ownUserId))
   const finishedRooms = rooms
-    .filter(room => canAccessRoom(room, password))
+    .filter(room => canAccessListedRoom(room, password, ownUserId))
     .filter(room => getRoomStatus(room) === 'finished')
     .filter(room => room.actions.length > 0)
     .filter(room => room.settings.saveRecordToServer)
     .filter(room => now - room.updatedAt <= FINISHED_ROOM_HISTORY_MS)
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, FINISHED_ROOM_HISTORY_LIMIT)
-    .map(toRoomView)
+    .map(room => toRoomView(room, ownUserId))
 
   return [...activeRooms, ...finishedRooms]
+}
+
+function canAccessListedRoom(room: RoomState, password: string | null, userId: string | null): boolean {
+  return canAccessRoom(room, password)
+    || (userId !== null && room.sessions.some(session => session.userId === userId))
 }
 
 function pruneUnrecordedRooms(rooms: RoomState[]) {

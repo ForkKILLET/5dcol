@@ -57,11 +57,12 @@ export class MatchClient {
     return MatchServerInfoSchema.parse(await this.request('/health'))
   }
 
-  async getRooms(password = ''): Promise<MatchRoom[]> {
-    const query = password.trim()
-      ? `?password=${encodeURIComponent(password.trim())}`
-      : ''
-    const response = MatchRoomsResponseSchema.parse(await this.request(`/rooms${query}`))
+  async getRooms(options: { password?: string, userId?: string | null } = {}): Promise<MatchRoom[]> {
+    const query = new URLSearchParams()
+    if (options.password?.trim()) query.set('password', options.password.trim())
+    if (options.userId) query.set('userId', options.userId)
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    const response = MatchRoomsResponseSchema.parse(await this.request(`/rooms${suffix}`))
     return response.rooms
   }
 

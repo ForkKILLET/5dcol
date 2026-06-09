@@ -35,8 +35,8 @@ const canvas = useTemplateRef('canvas')
 
 const SETTINGS_STORAGE_KEY = '5dcol.settings'
 const MATCH_ROOM_SETTINGS_STORAGE_KEY = '5dcol.matchRoomSettings'
-const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
 const MATCH_USER_ID_STORAGE_KEY = '5dcol.matchUserId'
+const LAST_ONLINE_GAME_STORAGE_KEY = '5dcol.lastOnlineGame'
 const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
 const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
 const LANGUAGE_STORAGE_KEY = '5dcol.language'
@@ -98,6 +98,14 @@ const matchUserId = useStorageRef<string | null>(MATCH_USER_ID_STORAGE_KEY, null
   parse: raw => raw || null,
   serialize: value => value,
 })
+const lastOnlineGame = useStorageRef<StoredOnlineGame | null>(
+  LAST_ONLINE_GAME_STORAGE_KEY,
+  null,
+  {
+    parse: raw => parseStoredOnlineGame(JSON.parse(raw) as unknown),
+    serialize: game => game ? JSON.stringify(game) : null,
+  },
+)
 const matchPrivateRoomPassword = ref('')
 const customRoomServerId = ref<string | null>(null)
 const matchRoomSettings = useStorageReactive<MatchRoomSettings>(
@@ -128,14 +136,7 @@ const matchServers = reactive<MatchServerState[]>(Object
     error: '',
   }))
 )
-const onlineSession = useStorageRef<StoredOnlineSession | null>(
-  ONLINE_SESSION_STORAGE_KEY,
-  null,
-  {
-    parse: raw => parseStoredOnlineSession(JSON.parse(raw) as unknown),
-    serialize: session => session ? JSON.stringify(session) : null,
-  },
-)
+const onlineSession = ref<StoredOnlineSession | null>(null)
 const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
 const onlineRoomSettings = ref<MatchRoomSettings | null>(null)
 const onlineRoomReady = ref(false)
@@ -145,7 +146,7 @@ const onlineClock = ref<MatchClock | null>(null)
 const clockNow = ref(Date.now())
 const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
 const onlineError = ref('')
-const onlineRecoveryError = ref('')
+const documentFocused = ref(document.hasFocus())
 const viewPlayer = useStorageRef<Player>(VIEW_PLAYER_STORAGE_KEY, Player.W, {
   parse: raw => raw === 'black' ? Player.B : Player.W,
   serialize: player => player === Player.W ? 'white' : 'black',
@@ -181,6 +182,14 @@ interface StoredOnlineSession {
   roomName: string
   sessionId: string
   userId: string
+}
+interface StoredOnlineGame {
+  serverAddress: string
+  roomId: string
+  roomName: string
+  userId: string
+  status: MatchRoomStatus
+  updatedAt: number
 }
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 interface GameSettings {
@@ -258,6 +267,11 @@ const shouldMarkTitleForTurn = computed(() => (
   && onlineSession.value !== null
   && onlinePlayer.value !== null
   && gameStatus.value.player === onlinePlayer.value
+  && ! documentFocused.value
+))
+const hasUnfinishedOnlineGame = computed(() => (
+  lastOnlineGame.value !== null
+  || matchServers.some(server => server.rooms.some(room => room.status !== 'finished' && room.ownSession !== null))
 ))
 const languageOptions = computed(() => LANGUAGES.map(value => ({
   value,
@@ -617,33 +631,6 @@ function getViewMatchRoomLabel(room: MatchServerState['rooms'][number]) {
     : t.value('match.spectate')
 }
 
-function getSavedOnlineGameMeta(session: StoredOnlineSession) {
-  const room = getStoredOnlineSessionRoom(session)
-  return t.value('match.savedGameMeta', {
-    players: room
-      ? getMatchRoomPlayerLabel(room)
-      : t.value('match.playersVersus', {
-          player1: t.value('match.anonymous'),
-          player2: '?',
-        }),
-    date: room ? getMatchRoomDate(room) : '-',
-    actions: room ? String(room.actionCount) : '-',
-  })
-}
-
-function getSavedOnlineGameTitle(session: StoredOnlineSession) {
-  return t.value('match.savedGame', {
-    room: session.roomName,
-  })
-}
-
-function getStoredOnlineSessionRoom(session: StoredOnlineSession) {
-  return matchServers
-    .find(server => server.address === session.serverAddress)
-    ?.rooms.find(room => room.id === session.roomId)
-    ?? null
-}
-
 function getMatchRoomDate(room: MatchServerState['rooms'][number]) {
   return new Date(room.startedAt ?? room.createdAt).toLocaleDateString()
 }
@@ -821,20 +808,8 @@ function openMatchPage() {
   playUISound()
   mainMenuMode.value = 'match'
   matchPanelMode.value = 'servers'
-  onlineRecoveryError.value = ''
   void connectMatchServers()
   startMatchServerRefresh()
-}
-
-function clickRecoverOnlineSession() {
-  playUISound()
-  void recoverOnlineSession()
-}
-
-function forgetOnlineSession() {
-  playUISound()
-  onlineRecoveryError.value = ''
-  clearStoredOnlineSession()
 }
 
 function closeMatchPage() {
@@ -862,11 +837,15 @@ async function connectMatchServer(server: MatchServerState) {
     const client = new MatchClient(server.address)
     const [info, rooms] = await Promise.all([
       client.getInfo(),
-      client.getRooms(matchPrivateRoomPassword.value),
+      client.getRooms({
+        password: matchPrivateRoomPassword.value,
+        userId: matchUserId.value,
+      }),
     ])
     server.name = info.name
     server.rooms = rooms
     server.status = 'connected'
+    syncLastOnlineGameFromServer(server)
   }
   catch (err) {
     server.rooms = []
@@ -886,8 +865,12 @@ async function refreshConnectedMatchServers() {
 async function refreshMatchServerRooms(server: MatchServerState) {
   try {
     const client = new MatchClient(server.address)
-    server.rooms = await client.getRooms(matchPrivateRoomPassword.value)
+    server.rooms = await client.getRooms({
+      password: matchPrivateRoomPassword.value,
+      userId: matchUserId.value,
+    })
     server.error = ''
+    syncLastOnlineGameFromServer(server)
   }
   catch (err) {
     server.rooms = []
@@ -989,19 +972,19 @@ async function viewMatchRoom(server: MatchServerState, room: MatchServerState['r
   }
 }
 
-async function recoverOnlineSession() {
-  const session = onlineSession.value
-  if (! session || gameStarted.value || ! canvasRenderer || ! soundManager) return
+async function returnToMatchRoom(server: MatchServerState, room: MatchServerState['rooms'][number]) {
+  playUISound()
+  if (! room.ownSession || gameStarted.value || ! canvasRenderer || ! soundManager) return
 
-    onlineRecoveryError.value = ''
   try {
-    const client = new MatchClient(session.serverAddress)
-    const state = await client.getSession(session.sessionId, session.userId)
-    storeOnlineSession(session.serverAddress, state)
-    startOnlineGame(session.serverAddress, state)
+    const client = new MatchClient(server.address)
+    const state = await client.getSession(room.ownSession.id, room.ownSession.userId)
+    storeOnlineSession(server.address, state)
+    startOnlineGame(server.address, state)
   }
   catch (err) {
-    onlineRecoveryError.value = err instanceof Error ? err.message : String(err)
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
   }
 }
 
@@ -1419,24 +1402,26 @@ function getHasSavedGame() {
   )
 }
 
-function parseStoredOnlineSession(value: unknown): StoredOnlineSession | null {
+function parseStoredOnlineGame(value: unknown): StoredOnlineGame | null {
   if (! value || typeof value !== 'object') return null
 
-  const session = value as Partial<StoredOnlineSession>
+  const game = value as Partial<StoredOnlineGame>
   if (
-    typeof session.serverAddress !== 'string'
-    || typeof session.roomId !== 'string'
-    || typeof session.roomName !== 'string'
-    || typeof session.sessionId !== 'string'
-    || typeof session.userId !== 'string'
+    typeof game.serverAddress !== 'string'
+    || typeof game.roomId !== 'string'
+    || typeof game.roomName !== 'string'
+    || typeof game.userId !== 'string'
+    || typeof game.updatedAt !== 'number'
+    || (game.status !== 'waiting' && game.status !== 'playing')
   ) return null
 
   return {
-    serverAddress: session.serverAddress,
-    roomId: session.roomId,
-    roomName: session.roomName,
-    sessionId: session.sessionId,
-    userId: session.userId,
+    serverAddress: game.serverAddress,
+    roomId: game.roomId,
+    roomName: game.roomName,
+    userId: game.userId,
+    status: game.status,
+    updatedAt: game.updatedAt,
   }
 }
 
@@ -1488,10 +1473,60 @@ function storeOnlineSession(serverAddress: string, state: MatchGameState) {
   }
   matchUserId.value = state.session.userId
   onlineSession.value = session
+  storeLastOnlineGame(serverAddress, state)
 }
 
 function clearStoredOnlineSession() {
   onlineSession.value = null
+}
+
+function storeLastOnlineGame(serverAddress: string, state: MatchGameState) {
+  if (! state.session) return
+  if (state.room.status === 'finished') {
+    clearLastOnlineGame(state.session)
+    return
+  }
+
+  lastOnlineGame.value = {
+    serverAddress,
+    roomId: state.room.id,
+    roomName: state.room.name,
+    userId: state.session.userId,
+    status: state.room.status,
+    updatedAt: state.room.updatedAt,
+  }
+}
+
+function clearLastOnlineGame(session: Pick<StoredOnlineSession, 'roomId' | 'userId'> | null = null) {
+  if (! session || (
+    lastOnlineGame.value?.roomId === session.roomId
+    && lastOnlineGame.value.userId === session.userId
+  )) {
+    lastOnlineGame.value = null
+  }
+}
+
+function syncLastOnlineGameFromServer(server: MatchServerState) {
+  const saved = lastOnlineGame.value
+  if (! saved || saved.serverAddress !== server.address) return
+
+  const room = server.rooms.find(room => (
+    room.id === saved.roomId
+    && room.ownSession?.userId === saved.userId
+  ))
+  if (! room || room.status === 'finished') {
+    lastOnlineGame.value = null
+    return
+  }
+
+  lastOnlineGame.value = {
+    serverAddress: server.address,
+    roomId: room.id,
+    roomName: room.name,
+    userId: saved.userId,
+    status: room.status,
+    updatedAt: room.updatedAt,
+  }
 }
 
 function clearSavedGameState() {
@@ -1505,12 +1540,17 @@ function returnToMainMenu(
   if (currentOnlineSession && onlineRoomStatus.value === 'waiting') {
     void leaveWaitingOnlineRoom(currentOnlineSession)
     clearStoredOnlineSession()
+    clearLastOnlineGame(currentOnlineSession)
   }
   else if (clearSave && forfeit && currentOnlineSession && onlineRoomStatus.value !== 'finished') {
     void forfeitOnlineRoom(currentOnlineSession)
+    clearLastOnlineGame(currentOnlineSession)
   }
   if (clearSave) clearSavedGameState()
-  if (clearSave) clearStoredOnlineSession()
+  if (clearSave) {
+    clearLastOnlineGame(currentOnlineSession)
+    clearStoredOnlineSession()
+  }
   stopMatchServerRefresh()
   stopOnlinePolling()
   stopOnlineRoomStateSubscription()
@@ -1521,7 +1561,6 @@ function returnToMainMenu(
   onlinePresence.value = null
   onlineConnectionStatus.value = 'offline'
   onlineError.value = ''
-  onlineRecoveryError.value = ''
   onlineClock.value = null
   game?.dispose()
   game = null
@@ -1560,6 +1599,14 @@ function syncDocumentTitle() {
   document.title = shouldMarkTitleForTurn.value
     ? `* ${DOCUMENT_TITLE}`
     : DOCUMENT_TITLE
+}
+
+function handleWindowFocus() {
+  documentFocused.value = true
+}
+
+function handleWindowBlur() {
+  documentFocused.value = false
 }
 
 async function loadOptionalSounds() {
@@ -1604,6 +1651,8 @@ async function init() {
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeyDown)
   window.addEventListener('resize', handleWindowResize)
+  window.addEventListener('focus', handleWindowFocus)
+  window.addEventListener('blur', handleWindowBlur)
   clockTimer = window.setInterval(() => {
     clockNow.value = Date.now()
   }, 1000)
@@ -1612,6 +1661,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleWindowKeyDown)
   window.removeEventListener('resize', handleWindowResize)
+  window.removeEventListener('focus', handleWindowFocus)
+  window.removeEventListener('blur', handleWindowBlur)
   stopMatchServerRefresh()
   stopOnlinePolling()
   stopOnlineRoomStateSubscription()
@@ -1680,7 +1731,7 @@ watch(gameSettings, () => {
             <GameButton
               size="main"
               :style="menuButtonStyle"
-              :badge="onlineSession ? '!' : ''"
+              :badge="hasUnfinishedOnlineGame ? '!' : ''"
               @click="openMatchPage"
             >
               <span>{{ t('main.match') }}</span>
@@ -1760,41 +1811,6 @@ watch(gameSettings, () => {
             v-if="matchPanelMode === 'servers'"
             class="match-server-list"
           >
-            <section
-              v-if="onlineSession"
-              class="match-server match-server--saved"
-            >
-              <div class="match-room">
-                <div class="match-room-main">
-                  <div class="match-room-name">{{ getSavedOnlineGameTitle(onlineSession) }}</div>
-                  <div class="match-room-meta">
-                    {{ getSavedOnlineGameMeta(onlineSession) }}
-                  </div>
-                  <div
-                    v-if="onlineRecoveryError"
-                    class="match-error"
-                  >
-                    {{ onlineRecoveryError }}
-                  </div>
-                </div>
-                <div class="match-server-actions">
-                  <GameButton
-                    size="small"
-                    :style="menuButtonStyle"
-                    @click="clickRecoverOnlineSession"
-                  >
-                    <span>{{ t('match.continueGame') }}</span>
-                  </GameButton>
-                  <GameButton
-                    size="small"
-                    :style="menuButtonStyle"
-                    @click="forgetOnlineSession"
-                  >
-                    <span>{{ t('match.forgetSavedGame') }}</span>
-                  </GameButton>
-                </div>
-              </div>
-            </section>
             <section class="match-server match-server--manual">
               <div class="match-manual-row">
                 <div class="match-control-slot match-control-slot--input">
@@ -1941,7 +1957,16 @@ watch(gameSettings, () => {
                   </div>
                   <div class="match-room-side">
                     <GameButton
-                      v-if="room.status === 'waiting'"
+                      v-if="room.ownSession && room.status !== 'finished'"
+                      size="small"
+                      :style="menuButtonStyle"
+                      badge="!"
+                      @click="returnToMatchRoom(server, room)"
+                    >
+                      <span>{{ t('match.returnToGame') }}</span>
+                    </GameButton>
+                    <GameButton
+                      v-else-if="room.status === 'waiting'"
                       size="small"
                       :style="menuButtonStyle"
                       @click="joinMatchRoom(server, room.id)"
@@ -2714,10 +2739,6 @@ canvas {
   border: var(--button-border) solid var(--button-border-color);
   border-radius: 8px;
   background: var(--button-fill-color);
-}
-
-.match-server--saved {
-  flex: 0 0 auto;
 }
 
 .match-manual-row {

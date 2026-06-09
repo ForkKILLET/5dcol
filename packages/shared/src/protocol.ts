@@ -56,33 +56,6 @@ export const MatchRoomSeatSchema = z.object({
 
 export type MatchRoomSeat = z.infer<typeof MatchRoomSeatSchema>
 
-export const MatchRoomSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  players: z.number(),
-  maxPlayers: z.number(),
-  seats: z.tuple([MatchRoomSeatSchema.nullable(), MatchRoomSeatSchema.nullable()]),
-  status: MatchRoomStatusSchema,
-  winner: NullablePlayerSchema,
-  finishReason: MatchRoomFinishReasonSchema.nullable(),
-  settings: MatchRoomSettingsSchema,
-  private: z.boolean(),
-  createdAt: z.number(),
-  startedAt: z.number().nullable(),
-  updatedAt: z.number(),
-  actionCount: z.number(),
-})
-
-export type MatchRoom = z.infer<typeof MatchRoomSchema>
-
-export const MatchClockSchema = z.object({
-  playerTotalsMs: z.tuple([z.number(), z.number()]),
-  turnStartedAt: z.number().nullable(),
-  currentPlayer: NullablePlayerSchema,
-})
-
-export type MatchClock = z.infer<typeof MatchClockSchema>
-
 export const MatchUserSchema = z.object({
   id: z.string(),
   nickname: z.string().nullable(),
@@ -99,6 +72,34 @@ export const MatchSessionSchema = z.object({
 })
 
 export type MatchSession = z.infer<typeof MatchSessionSchema>
+
+export const MatchRoomSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  players: z.number(),
+  maxPlayers: z.number(),
+  seats: z.tuple([MatchRoomSeatSchema.nullable(), MatchRoomSeatSchema.nullable()]),
+  status: MatchRoomStatusSchema,
+  winner: NullablePlayerSchema,
+  finishReason: MatchRoomFinishReasonSchema.nullable(),
+  settings: MatchRoomSettingsSchema,
+  private: z.boolean(),
+  createdAt: z.number(),
+  startedAt: z.number().nullable(),
+  updatedAt: z.number(),
+  actionCount: z.number(),
+  ownSession: MatchSessionSchema.nullable(),
+})
+
+export type MatchRoom = z.infer<typeof MatchRoomSchema>
+
+export const MatchClockSchema = z.object({
+  playerTotalsMs: z.tuple([z.number(), z.number()]),
+  turnStartedAt: z.number().nullable(),
+  currentPlayer: NullablePlayerSchema,
+})
+
+export type MatchClock = z.infer<typeof MatchClockSchema>
 
 export const MatchPresenceSchema = z.object({
   self: z.enum(['online', 'offline']),
@@ -127,6 +128,7 @@ export type MatchRoomsResponse = z.infer<typeof MatchRoomsResponseSchema>
 
 export const MatchRoomsRequestQuerySchema = z.object({
   password: z.string().optional(),
+  userId: z.string().optional(),
 })
 
 export type MatchRoomsRequestQuery = z.infer<typeof MatchRoomsRequestQuerySchema>
