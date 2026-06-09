@@ -36,6 +36,7 @@ const canvas = useTemplateRef('canvas')
 const SETTINGS_STORAGE_KEY = '5dcol.settings'
 const MATCH_ROOM_SETTINGS_STORAGE_KEY = '5dcol.matchRoomSettings'
 const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
+const MATCH_USER_ID_STORAGE_KEY = '5dcol.matchUserId'
 const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
 const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
 const LANGUAGE_STORAGE_KEY = '5dcol.language'
@@ -92,6 +93,10 @@ const matchNickname = useStorageRef(MATCH_NICKNAME_STORAGE_KEY, '', {
     const trimmed = value.trim()
     return trimmed || null
   },
+})
+const matchUserId = useStorageRef<string | null>(MATCH_USER_ID_STORAGE_KEY, null, {
+  parse: raw => raw || null,
+  serialize: value => value,
 })
 const matchPrivateRoomPassword = ref('')
 const customRoomServerId = ref<string | null>(null)
@@ -175,6 +180,7 @@ interface StoredOnlineSession {
   roomId: string
   roomName: string
   sessionId: string
+  userId: string
 }
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 interface GameSettings {
@@ -928,14 +934,16 @@ async function createMatchRoom(server: MatchServerState | null = customRoomServe
 
   try {
     const client = new MatchClient(server.address)
-    const state = await client.createRoom({
+    const response = await client.createRoom({
+      userId: matchUserId.value ?? undefined,
       name: matchRoomName.value,
       nickname: matchNickname.value,
       password: matchPrivateRoomPassword.value,
       settings: matchRoomSettings,
     })
-    storeOnlineSession(server.address, state)
-    startOnlineGame(server.address, state)
+    matchUserId.value = response.user.id
+    storeOnlineSession(server.address, response.state)
+    startOnlineGame(server.address, response.state)
   }
   catch (err) {
     server.status = 'failed'
@@ -949,12 +957,14 @@ async function joinMatchRoom(server: MatchServerState, roomId: string) {
 
   try {
     const client = new MatchClient(server.address)
-    const state = await client.joinRoom(roomId, {
+    const response = await client.joinRoom(roomId, {
+      userId: matchUserId.value ?? undefined,
       nickname: matchNickname.value,
       password: matchPrivateRoomPassword.value,
     })
-    storeOnlineSession(server.address, state)
-    startOnlineGame(server.address, state)
+    matchUserId.value = response.user.id
+    storeOnlineSession(server.address, response.state)
+    startOnlineGame(server.address, response.state)
   }
   catch (err) {
     server.status = 'failed'
@@ -983,10 +993,10 @@ async function recoverOnlineSession() {
   const session = onlineSession.value
   if (! session || gameStarted.value || ! canvasRenderer || ! soundManager) return
 
-  onlineRecoveryError.value = ''
+    onlineRecoveryError.value = ''
   try {
     const client = new MatchClient(session.serverAddress)
-    const state = await client.getSession(session.sessionId)
+    const state = await client.getSession(session.sessionId, session.userId)
     storeOnlineSession(session.serverAddress, state)
     startOnlineGame(session.serverAddress, state)
   }
@@ -1200,7 +1210,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState, password 
     onReturnToMainMenuRequest: returnToMainMenu,
     onActionSubmitted: action => {
       if (! state.session) return
-      void submitOnlineAction(serverAddress, state.session.roomId, state.session.id, action)
+      void submitOnlineAction(serverAddress, state.session.roomId, state.session.id, state.session.userId, action)
     },
     onPendingActionChange: action => {
       syncOnlinePendingAction(action)
@@ -1212,8 +1222,8 @@ function startOnlineGame(serverAddress: string, state: MatchGameState, password 
   syncGameInputState()
   game.start()
   syncGameViewportInsets()
-  startOnlineRoomStateSubscription(serverAddress, state.room.id, state.session?.id ?? null, password)
-  if (state.session) startOnlinePolling(serverAddress, state.session.roomId, state.session.id)
+  startOnlineRoomStateSubscription(serverAddress, state.room.id, state.session?.id ?? null, state.session?.userId ?? null, password)
+  if (state.session) startOnlinePolling(serverAddress, state.session.roomId, state.session.id, state.session.userId)
 }
 
 function applyOnlineGameState(
@@ -1251,27 +1261,35 @@ async function submitOnlineAction(
   serverAddress: string,
   roomId: string,
   sessionId: string,
+  userId: string,
   action: Action,
 ) {
   try {
     const client = new MatchClient(serverAddress)
-    const state = await client.submitAction(roomId, { sessionId, action })
+    const state = await client.submitAction(roomId, { sessionId, userId, action })
     applyOnlineGameState(serverAddress, state)
   }
   catch (err) {
     onlineError.value = err instanceof Error ? err.message : String(err)
     logger.error(onlineError.value)
-    await syncOnlineGameState(serverAddress, roomId, sessionId, { force: true })
+    await syncOnlineGameState(serverAddress, roomId, sessionId, userId, { force: true })
   }
 }
 
-function startOnlineRoomStateSubscription(serverAddress: string, roomId: string, sessionId: string | null, password = '') {
+function startOnlineRoomStateSubscription(
+  serverAddress: string,
+  roomId: string,
+  sessionId: string | null,
+  userId: string | null,
+  password = '',
+) {
   stopOnlineRoomStateSubscription()
   onlineRoomStateSubscriptionActive = true
   const client = new MatchClient(serverAddress)
   onlineRoomStateSubscription = client.subscribeRoomState(
     roomId,
     sessionId,
+    userId,
     event => {
       switch (event.type) {
         case 'state':
@@ -1294,7 +1312,7 @@ function startOnlineRoomStateSubscription(serverAddress: string, roomId: string,
       onError: () => {
         if (! onlineRoomStateSubscriptionActive) return
         onlineConnectionStatus.value = 'reconnecting'
-        scheduleOnlineRoomStateReconnect(serverAddress, roomId, sessionId, password)
+        scheduleOnlineRoomStateReconnect(serverAddress, roomId, sessionId, userId, password)
       },
     },
     password,
@@ -1315,12 +1333,18 @@ function syncOnlinePendingAction(action: Action | null) {
   else onlineRoomStateSubscription?.clearPendingAction()
 }
 
-function scheduleOnlineRoomStateReconnect(serverAddress: string, roomId: string, sessionId: string | null, password = '') {
+function scheduleOnlineRoomStateReconnect(
+  serverAddress: string,
+  roomId: string,
+  sessionId: string | null,
+  userId: string | null,
+  password = '',
+) {
   if (onlineReconnectTimer !== null) return
   onlineReconnectTimer = window.setTimeout(() => {
     onlineReconnectTimer = null
     if (! onlineRoomStateSubscriptionActive) return
-    startOnlineRoomStateSubscription(serverAddress, roomId, sessionId, password)
+    startOnlineRoomStateSubscription(serverAddress, roomId, sessionId, userId, password)
   }, ONLINE_RECONNECT_DELAY_MS)
 }
 
@@ -1330,10 +1354,10 @@ function stopOnlineReconnect() {
   onlineReconnectTimer = null
 }
 
-function startOnlinePolling(serverAddress: string, roomId: string, sessionId: string) {
+function startOnlinePolling(serverAddress: string, roomId: string, sessionId: string, userId: string) {
   stopOnlinePolling()
   onlinePollTimer = window.setInterval(() => {
-    void syncOnlineGameState(serverAddress, roomId, sessionId)
+    void syncOnlineGameState(serverAddress, roomId, sessionId, userId)
   }, 8000)
 }
 
@@ -1347,11 +1371,12 @@ async function syncOnlineGameState(
   serverAddress: string,
   roomId: string,
   sessionId: string,
+  userId: string,
   options: { force?: boolean } = {},
 ) {
   try {
     const client = new MatchClient(serverAddress)
-    const state = await client.getRoomState(roomId, { sessionId })
+    const state = await client.getRoomState(roomId, { sessionId, userId })
     applyOnlineGameState(serverAddress, state, options)
   }
   catch (err) {
@@ -1365,7 +1390,7 @@ async function syncOnlineGameState(
 async function forfeitOnlineRoom(session: StoredOnlineSession) {
   try {
     const client = new MatchClient(session.serverAddress)
-    await client.forfeitRoom(session.roomId, { sessionId: session.sessionId })
+    await client.forfeitRoom(session.roomId, { sessionId: session.sessionId, userId: session.userId })
   }
   catch (err) {
     logger.error(err instanceof Error ? err.message : String(err))
@@ -1375,7 +1400,7 @@ async function forfeitOnlineRoom(session: StoredOnlineSession) {
 async function leaveWaitingOnlineRoom(session: StoredOnlineSession) {
   try {
     const client = new MatchClient(session.serverAddress)
-    await client.leaveRoom(session.roomId, { sessionId: session.sessionId })
+    await client.leaveRoom(session.roomId, { sessionId: session.sessionId, userId: session.userId })
   }
   catch (err) {
     logger.error(err instanceof Error ? err.message : String(err))
@@ -1403,6 +1428,7 @@ function parseStoredOnlineSession(value: unknown): StoredOnlineSession | null {
     || typeof session.roomId !== 'string'
     || typeof session.roomName !== 'string'
     || typeof session.sessionId !== 'string'
+    || typeof session.userId !== 'string'
   ) return null
 
   return {
@@ -1410,6 +1436,7 @@ function parseStoredOnlineSession(value: unknown): StoredOnlineSession | null {
     roomId: session.roomId,
     roomName: session.roomName,
     sessionId: session.sessionId,
+    userId: session.userId,
   }
 }
 
@@ -1457,7 +1484,9 @@ function storeOnlineSession(serverAddress: string, state: MatchGameState) {
     roomId: state.session.roomId,
     roomName: state.room.name,
     sessionId: state.session.id,
+    userId: state.session.userId,
   }
+  matchUserId.value = state.session.userId
   onlineSession.value = session
 }
 

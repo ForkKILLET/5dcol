@@ -19,8 +19,16 @@ export const roomsTable = sqliteTable('rooms', {
   updatedAt: integer('updated_at').notNull(),
 })
 
+export const usersTable = sqliteTable('users', {
+  id: text('id').primaryKey(),
+  nickname: text('nickname'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
 export const sessionsTable = sqliteTable('sessions', {
   id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => usersTable.id, { onDelete: 'cascade' }),
   roomId: text('room_id').notNull().references(() => roomsTable.id, { onDelete: 'cascade' }),
   player: integer('player').notNull(),
   nickname: text('nickname'),
@@ -40,9 +48,11 @@ export const storageSchema = {
   metadataTable,
   roomsTable,
   sessionsTable,
+  usersTable,
 }
 
 export type RoomRow = typeof roomsTable.$inferSelect
 export type SessionRow = typeof sessionsTable.$inferSelect
 export type ActionRow = typeof actionsTable.$inferSelect
 export type MetadataRow = typeof metadataTable.$inferSelect
+export type UserRow = typeof usersTable.$inferSelect

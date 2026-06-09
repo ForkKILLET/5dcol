@@ -83,8 +83,16 @@ export const MatchClockSchema = z.object({
 
 export type MatchClock = z.infer<typeof MatchClockSchema>
 
+export const MatchUserSchema = z.object({
+  id: z.string(),
+  nickname: z.string().nullable(),
+})
+
+export type MatchUser = z.infer<typeof MatchUserSchema>
+
 export const MatchSessionSchema = z.object({
   id: z.string(),
+  userId: z.string(),
   roomId: z.string(),
   player: PlayerSchema,
   nickname: z.string().nullable(),
@@ -124,6 +132,7 @@ export const MatchRoomsRequestQuerySchema = z.object({
 export type MatchRoomsRequestQuery = z.infer<typeof MatchRoomsRequestQuerySchema>
 
 export const CreateMatchRoomRequestSchema = z.object({
+  userId: z.string().optional(),
   name: z.string().optional(),
   nickname: z.string().optional(),
   password: z.string().optional(),
@@ -133,12 +142,14 @@ export const CreateMatchRoomRequestSchema = z.object({
 export type CreateMatchRoomRequest = NonNullable<z.infer<typeof CreateMatchRoomRequestSchema>>
 
 export const CreateMatchRoomResponseSchema = z.object({
+  user: MatchUserSchema,
   state: MatchGameStateSchema,
 })
 
 export type CreateMatchRoomResponse = z.infer<typeof CreateMatchRoomResponseSchema>
 
 export const JoinMatchRoomRequestSchema = z.object({
+  userId: z.string().optional(),
   nickname: z.string().optional(),
   password: z.string().optional(),
 }).nullish()
@@ -146,6 +157,7 @@ export const JoinMatchRoomRequestSchema = z.object({
 export type JoinMatchRoomRequest = NonNullable<z.infer<typeof JoinMatchRoomRequestSchema>>
 
 export const JoinMatchRoomResponseSchema = z.object({
+  user: MatchUserSchema,
   state: MatchGameStateSchema,
 })
 
@@ -164,6 +176,7 @@ export const GetMatchRoomStateResponseSchema = z.object({
 export type GetMatchRoomStateResponse = z.infer<typeof GetMatchRoomStateResponseSchema>
 
 export const SubmitMatchActionRequestSchema = z.object({
+  userId: z.string(),
   sessionId: z.string(),
   action: ActionSchema,
 })
@@ -177,6 +190,7 @@ export const SubmitMatchActionResponseSchema = z.object({
 export type SubmitMatchActionResponse = z.infer<typeof SubmitMatchActionResponseSchema>
 
 export const LeaveMatchRoomRequestSchema = z.object({
+  userId: z.string(),
   sessionId: z.string(),
 })
 
@@ -189,6 +203,7 @@ export const LeaveMatchRoomResponseSchema = z.object({
 export type LeaveMatchRoomResponse = z.infer<typeof LeaveMatchRoomResponseSchema>
 
 export const ForfeitMatchRoomRequestSchema = z.object({
+  userId: z.string(),
   sessionId: z.string(),
 })
 

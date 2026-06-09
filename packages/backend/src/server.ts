@@ -39,10 +39,11 @@ import {
   type MatchRoomsResponse,
   type MatchServerInfo,
   type MatchSession,
+  type MatchUser,
   type SubmitMatchActionRequest,
   type SubmitMatchActionResponse,
 } from '@5dcol/shared/protocol'
-import { createRoomStorage } from './storage.ts'
+import { createRoomStorage, type UserState } from './storage.ts'
 
 export interface BackendServerOptions {
   port: number
@@ -93,7 +94,9 @@ const FINISHED_ROOM_HISTORY_LIMIT = 10
 
 export function createBackendServer(options: BackendServerOptions) {
   const storage = createRoomStorage()
-  const rooms: RoomState[] = storage.load()
+  const storageState = storage.loadState()
+  const rooms: RoomState[] = storageState.rooms
+  const users: UserState[] = storageState.users
   const roomSubscribers = new Map<string, Set<RoomSubscriber>>()
   const onlineSessionCounts = new Map<string, number>()
   const app = Fastify()
@@ -142,18 +145,22 @@ export function createBackendServer(options: BackendServerOptions) {
       updatedAt: Date.now(),
     }
     rooms.push(room)
-    const session = createSession(room, getCreatorPlayer(settings.creatorPlayer), body?.nickname)
-    storage.save(rooms)
+    const user = getOrCreateUser(users, body.userId, body?.nickname)
+    const session = createSession(room, user, getCreatorPlayer(settings.creatorPlayer), body?.nickname)
+    storage.saveState({ rooms, users })
     reply.code(201)
     return {
+      user: toUserView(user),
       state: toGameStateView(room, session, onlineSessionCounts),
     }
   })
 
-  app.get<{ Params: { sessionId: string } }>(
+  app.get<{ Params: { sessionId: string }, Querystring: { userId?: string } }>(
     '/sessions/:sessionId',
     async (request, reply): Promise<GetMatchSessionResponse | MatchErrorResponse> => {
-      const sessionLookup = findSession(rooms, request.params.sessionId)
+      const user = findUser(users, request.query.userId)
+      if (! user) return sendError(reply, 403, 'Invalid user')
+      const sessionLookup = findSession(rooms, request.params.sessionId, user.id)
       if (! sessionLookup) return sendError(reply, 404, 'Session not found')
       return {
         state: toGameStateView(sessionLookup.room, sessionLookup.session, onlineSessionCounts),
@@ -161,14 +168,15 @@ export function createBackendServer(options: BackendServerOptions) {
     },
   )
 
-  app.get<{ Params: { id: string }, Querystring: { sessionId?: string, password?: string } }>(
+  app.get<{ Params: { id: string }, Querystring: { sessionId?: string, userId?: string, password?: string } }>(
     '/rooms/:id/state',
     async (request, reply): Promise<GetMatchRoomStateResponse | MatchErrorResponse> => {
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
-      const session = request.query.sessionId
-        ? room.sessions.find(session => session.id === request.query.sessionId) ?? null
+      const session = request.query.sessionId && request.query.userId
+        ? room.sessions.find(session => session.id === request.query.sessionId && session.userId === request.query.userId) ?? null
         : null
+      if (request.query.sessionId && ! session) return sendError(reply, 403, 'Invalid session')
       if (! session && ! canViewRoom(room, normalizePassword(request.query.password))) {
         return sendError(reply, 403, 'Room is not viewable')
       }
@@ -179,7 +187,7 @@ export function createBackendServer(options: BackendServerOptions) {
   )
 
   void app.register(async routeApp => {
-    routeApp.get<{ Params: { id: string }, Querystring: { sessionId?: string, password?: string } }>(
+    routeApp.get<{ Params: { id: string }, Querystring: { sessionId?: string, userId?: string, password?: string } }>(
       '/rooms/:id/events',
       { websocket: true },
       (socket, request) => {
@@ -189,9 +197,13 @@ export function createBackendServer(options: BackendServerOptions) {
           return
         }
 
-        const session = request.query.sessionId
-          ? room.sessions.find(session => session.id === request.query.sessionId) ?? null
+        const session = request.query.sessionId && request.query.userId
+          ? room.sessions.find(session => session.id === request.query.sessionId && session.userId === request.query.userId) ?? null
           : null
+        if (request.query.sessionId && ! session) {
+          socket.close()
+          return
+        }
         if (! session && ! canViewRoom(room, normalizePassword(request.query.password))) {
           socket.close()
           return
@@ -223,10 +235,12 @@ export function createBackendServer(options: BackendServerOptions) {
       const player = getAvailablePlayer(room)
       if (player === null) return sendError(reply, 409, 'Room is full')
 
-      const session = createSession(room, player, body.nickname)
-      storage.save(rooms)
+      const user = getOrCreateUser(users, body.userId, body.nickname)
+      const session = createSession(room, user, player, body.nickname)
+      storage.saveState({ rooms, users })
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
+        user: toUserView(user),
         state: toGameStateView(room, session, onlineSessionCounts),
       }
     },
@@ -239,14 +253,14 @@ export function createBackendServer(options: BackendServerOptions) {
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
 
-      const session = room.sessions.find(session => session.id === body.sessionId)
+      const session = room.sessions.find(session => session.id === body.sessionId && session.userId === body.userId)
       if (! session) return sendError(reply, 403, 'Invalid session')
       if (toRoomView(room).status === 'playing') return sendError(reply, 409, 'Use forfeit to leave a playing room')
 
       leaveRoom(room, session)
       onlineSessionCounts.delete(session.id)
       pruneUnrecordedRooms(rooms)
-      storage.save(rooms)
+      storage.saveState({ rooms, users })
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         state: toGameStateView(room, null, onlineSessionCounts),
@@ -261,11 +275,11 @@ export function createBackendServer(options: BackendServerOptions) {
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
 
-      const session = room.sessions.find(session => session.id === body.sessionId)
+      const session = room.sessions.find(session => session.id === body.sessionId && session.userId === body.userId)
       if (! session) return sendError(reply, 403, 'Invalid session')
 
       forfeitRoom(room, session)
-      storage.save(rooms)
+      storage.saveState({ rooms, users })
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         state: toGameStateView(room, session, onlineSessionCounts),
@@ -280,7 +294,7 @@ export function createBackendServer(options: BackendServerOptions) {
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
 
-      const session = room.sessions.find(session => session.id === body.sessionId)
+      const session = room.sessions.find(session => session.id === body.sessionId && session.userId === body.userId)
       if (! session) return sendError(reply, 403, 'Invalid session')
       if (toRoomView(room).status !== 'playing') return sendError(reply, 409, 'Room is not ready')
 
@@ -304,7 +318,7 @@ export function createBackendServer(options: BackendServerOptions) {
       if (room.finishReason === null) room.clock.turnStartedAt = now
       else room.clock.turnStartedAt = null
       room.updatedAt = now
-      storage.save(rooms)
+      storage.saveState({ rooms, users })
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         state: toGameStateView(room, session, onlineSessionCounts),
@@ -346,14 +360,23 @@ function forfeitRoom(room: RoomState, session: SessionState) {
   room.updatedAt = Date.now()
 }
 
-function createSession(room: RoomState, player: Player, nickname: string | null | undefined): SessionState {
+function createSession(
+  room: RoomState,
+  user: UserState,
+  player: Player,
+  nickname: string | null | undefined,
+): SessionState {
+  const normalizedNickname = normalizeNickname(nickname) ?? user.nickname
   const session = {
     id: randomUUID(),
+    userId: user.id,
     roomId: room.id,
     player,
-    nickname: normalizeNickname(nickname),
+    nickname: normalizedNickname,
     lastSeenAt: Date.now(),
   }
+  user.nickname = normalizedNickname
+  user.updatedAt = session.lastSeenAt
   room.sessions.push(session)
   if (room.startedAt === null && room.sessions.length >= room.maxPlayers) {
     const now = Date.now()
@@ -362,6 +385,38 @@ function createSession(room: RoomState, player: Player, nickname: string | null 
   }
   room.updatedAt = Date.now()
   return session
+}
+
+function getOrCreateUser(users: UserState[], userId: string | null | undefined, nickname: string | null | undefined): UserState {
+  const normalizedNickname = normalizeNickname(nickname)
+  const existing = findUser(users, userId)
+  if (existing) {
+    if (normalizedNickname) existing.nickname = normalizedNickname
+    existing.updatedAt = Date.now()
+    return existing
+  }
+
+  const now = Date.now()
+  const user: UserState = {
+    id: randomUUID(),
+    nickname: normalizedNickname,
+    createdAt: now,
+    updatedAt: now,
+  }
+  users.push(user)
+  return user
+}
+
+function findUser(users: UserState[], userId: string | null | undefined): UserState | null {
+  if (! userId) return null
+  return users.find(user => user.id === userId) ?? null
+}
+
+function toUserView(user: UserState): MatchUser {
+  return {
+    id: user.id,
+    nickname: user.nickname,
+  }
 }
 
 function createInitialClock(): RoomClockState {
@@ -439,9 +494,10 @@ function getOpponentPlayer(player: Player): Player {
 function findSession(
   rooms: RoomState[],
   sessionId: string,
+  userId: string,
 ): { room: RoomState, session: SessionState } | null {
   for (const room of rooms) {
-    const session = room.sessions.find(session => session.id === sessionId)
+    const session = room.sessions.find(session => session.id === sessionId && session.userId === userId)
     if (session) return { room, session }
   }
   return null

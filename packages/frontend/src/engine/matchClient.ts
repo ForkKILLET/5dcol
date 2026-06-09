@@ -12,8 +12,10 @@ import {
 } from '@5dcol/shared/protocol'
 import type {
   CreateMatchRoomRequest,
+  CreateMatchRoomResponse,
   ForfeitMatchRoomRequest,
   JoinMatchRoomRequest,
+  JoinMatchRoomResponse,
   LeaveMatchRoomRequest,
   MatchGameState,
   MatchRoomClientEvent,
@@ -63,35 +65,35 @@ export class MatchClient {
     return response.rooms
   }
 
-  async createRoom(request: CreateMatchRoomRequest = {}): Promise<MatchGameState> {
-    const response = CreateMatchRoomResponseSchema.parse(await this.request('/rooms', {
+  async createRoom(request: CreateMatchRoomRequest = {}): Promise<CreateMatchRoomResponse> {
+    return CreateMatchRoomResponseSchema.parse(await this.request('/rooms', {
       method: 'POST',
       body: JSON.stringify(request),
     }))
-    return response.state
   }
 
-  async joinRoom(roomId: string, request: JoinMatchRoomRequest = {}): Promise<MatchGameState> {
-    const response = JoinMatchRoomResponseSchema.parse(await this.request(
+  async joinRoom(roomId: string, request: JoinMatchRoomRequest = {}): Promise<JoinMatchRoomResponse> {
+    return JoinMatchRoomResponseSchema.parse(await this.request(
       `/rooms/${encodeURIComponent(roomId)}/join`,
       {
         method: 'POST',
         body: JSON.stringify(request),
       },
     ))
-    return response.state
   }
 
-  async getSession(sessionId: string): Promise<MatchGameState> {
+  async getSession(sessionId: string, userId: string): Promise<MatchGameState> {
+    const query = new URLSearchParams({ userId })
     const response = GetMatchSessionResponseSchema.parse(await this.request(
-      `/sessions/${encodeURIComponent(sessionId)}`,
+      `/sessions/${encodeURIComponent(sessionId)}?${query.toString()}`,
     ))
     return response.state
   }
 
-  async getRoomState(roomId: string, options: { sessionId?: string, password?: string } = {}): Promise<MatchGameState> {
+  async getRoomState(roomId: string, options: { sessionId?: string, userId?: string, password?: string } = {}): Promise<MatchGameState> {
     const query = new URLSearchParams()
     if (options.sessionId) query.set('sessionId', options.sessionId)
+    if (options.userId) query.set('userId', options.userId)
     if (options.password?.trim()) query.set('password', options.password.trim())
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
     const response = GetMatchRoomStateResponseSchema.parse(await this.request(
@@ -136,12 +138,14 @@ export class MatchClient {
   subscribeRoomState(
     roomId: string,
     sessionId: string | null,
+    userId: string | null,
     listener: MatchRoomEventListener,
     options: MatchRoomStateSubscriptionOptions = {},
     password = '',
   ): MatchRoomStateSubscription {
     const query = new URLSearchParams()
     if (sessionId) query.set('sessionId', sessionId)
+    if (userId) query.set('userId', userId)
     if (password.trim()) query.set('password', password.trim())
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
     const socket = new WebSocket(
