@@ -24,6 +24,7 @@
     "@5dcol/shared": "workspace:*",
     "@fastify/cors": "^11.2.0",
     "@fastify/websocket": "^11.2.0",
+    "drizzle-orm": "1.0.0-rc.4-5d5b77c",
     "fastify": "^5.8.5"
   }
 }
