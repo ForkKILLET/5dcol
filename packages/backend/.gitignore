@@ -1,2 +1,6 @@
+# Dist
+node_modules
 dist/
+
+# Data
 data/

@@ -453,7 +453,7 @@ function getMainArrowGeometry(outerWidth: number, outerHeight: number, borderWid
   const width = Math.max(0, outerWidth - inset * 2)
   const height = Math.max(0, outerHeight - inset * 2)
   const center = inset + width / 2
-  const top = inset
+  const top = - inset
   const bottom = inset + height
   const headHeight = Math.min(width * 0.45, height)
   const headTop = bottom - headHeight

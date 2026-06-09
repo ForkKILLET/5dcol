@@ -13,6 +13,7 @@ export default defineConfig({
       '@': path.resolve(dirname, 'src'),
       '@5dcol/core': path.resolve(dirname, '../core/src'),
       '@5dcol/shared': path.resolve(dirname, '../shared/src'),
+      '@5dcol/shared/protocol': path.resolve(dirname, '../shared/src/protocol.ts'),
       '@comp': path.resolve(dirname, 'src/components'),
       '@engine': path.resolve(dirname, 'src/engine'),
     },

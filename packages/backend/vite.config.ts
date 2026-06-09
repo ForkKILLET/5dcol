@@ -8,6 +8,7 @@ export default defineConfig({
     alias: {
       '@5dcol/core': path.resolve(dirname, '../core/src'),
       '@5dcol/shared': path.resolve(dirname, '../shared/src'),
+      '@5dcol/shared/protocol': path.resolve(dirname, '../shared/src/protocol.ts'),
     },
   },
   build: {

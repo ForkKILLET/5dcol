@@ -1,11 +1,11 @@
 import { z } from 'zod'
-import { Player, type Action, type Move } from '@5dcol/core'
+import type { Action, Move, Player } from '@5dcol/core'
 
 export const MATCH_PROTOCOL_VERSION = 1
 export const MATCH_STORAGE_VERSION = 1
 export const MATCH_ROOM_SETTINGS_STORAGE_VERSION = 1
 
-const PlayerSchema = z.union([z.literal(Player.W), z.literal(Player.B)])
+const PlayerSchema: z.ZodType<Player> = z.union([z.literal(0), z.literal(1)])
 const NullablePlayerSchema = PlayerSchema.nullable()
 const ActionSchema = z.custom<Action>()
 const MoveSchema = z.custom<Move>()

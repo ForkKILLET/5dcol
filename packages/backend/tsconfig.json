@@ -12,9 +12,10 @@
     "allowImportingTsExtensions": true,
     "types": ["node"],
     "paths": {
-      "@5dcol/core": ["../core/src"],
-      "@5dcol/shared": ["../shared/src"],
+      "@5dcol/core": ["../core/src/index.ts"],
+      "@5dcol/shared": ["../shared/src/index.ts"],
+      "@5dcol/shared/protocol": ["../shared/src/protocol.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["./src"]
 }

@@ -6,13 +6,11 @@
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
-    "isolatedModules": true,
+    "isolatedModules": false,
     "moduleResolution": "bundler",
     "useDefineForClassFields": true,
     "allowImportingTsExtensions": true,
-    "paths": {
-      "@5dcol/core": ["../core/src/index.ts"]
-    }
+    "rootDir": "./src"
   },
-  "include": ["src"]
+  "include": ["./src"]
 }
