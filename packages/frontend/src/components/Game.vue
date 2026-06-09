@@ -9,6 +9,7 @@ import {
   type MatchClock,
   type MatchGameState,
   type MatchPresence,
+  type MatchRoom,
   type MatchRoomSettings,
   type MatchRoomStatus,
   type StoredMatchRoomSettings,
@@ -68,12 +69,15 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordHoveredActionIndex = ref<number | null>(null)
 const secondaryMenuOpen = ref(false)
-const dialogMode = ref<'none' | 'language' | 'help' | 'settings' | 'import' | 'export'>('none')
+const dialogMode = ref<'none' | 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'>('none')
 const importText = ref('')
 const importError = ref('')
 const exportText = ref('')
 const exportHasPendingMoves = ref(false)
 const exportCopyStatus = ref('')
+const shareLink = ref('')
+const shareCopyStatus = ref('')
+const sharedRoom = ref<SharedRoomState | null>(null)
 const loading = ref(true)
 const loadingError = ref('')
 const requiredAssetsReady = ref(false)
@@ -106,7 +110,6 @@ const lastOnlineGame = useStorageRef<StoredOnlineGame | null>(
     serialize: game => game ? JSON.stringify(game) : null,
   },
 )
-const matchPrivateRoomPassword = ref('')
 const customRoomServerId = ref<string | null>(null)
 const matchRoomSettings = useStorageReactive<MatchRoomSettings>(
   MATCH_ROOM_SETTINGS_STORAGE_KEY,
@@ -137,6 +140,7 @@ const matchServers = reactive<MatchServerState[]>(Object
   }))
 )
 const onlineSession = ref<StoredOnlineSession | null>(null)
+const onlineRoomRef = ref<StoredOnlineRoom | null>(null)
 const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
 const onlineRoomSettings = ref<MatchRoomSettings | null>(null)
 const onlineRoomReady = ref(false)
@@ -190,6 +194,22 @@ interface StoredOnlineGame {
   userId: string
   status: MatchRoomStatus
   updatedAt: number
+}
+interface StoredOnlineRoom {
+  serverAddress: string
+  roomId: string
+  roomName: string
+}
+interface SharedRoomState {
+  server: MatchServerState
+  room: MatchRoom | null
+  roomId: string
+  loading: boolean
+  error: string
+}
+interface SharedRoomHashPayload {
+  server: string
+  room: string
 }
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 interface GameSettings {
@@ -830,7 +850,6 @@ async function connectMatchServer(server: MatchServerState) {
     const [info, rooms] = await Promise.all([
       client.getInfo(),
       client.getRooms({
-        password: matchPrivateRoomPassword.value,
         userId: matchUserId.value,
       }),
     ])
@@ -858,7 +877,6 @@ async function refreshMatchServerRooms(server: MatchServerState) {
   try {
     const client = new MatchClient(server.address)
     server.rooms = await client.getRooms({
-      password: matchPrivateRoomPassword.value,
       userId: matchUserId.value,
     })
     server.error = ''
@@ -913,7 +931,6 @@ async function createMatchRoom(server: MatchServerState | null = customRoomServe
       userId: matchUserId.value ?? undefined,
       name: matchRoomName.value,
       nickname: matchNickname.value,
-      password: matchPrivateRoomPassword.value,
       settings: matchRoomSettings,
     })
     matchUserId.value = response.user.id
@@ -935,7 +952,6 @@ async function joinMatchRoom(server: MatchServerState, roomId: string) {
     const response = await client.joinRoom(roomId, {
       userId: matchUserId.value ?? undefined,
       nickname: matchNickname.value,
-      password: matchPrivateRoomPassword.value,
     })
     matchUserId.value = response.user.id
     storeOnlineSession(server.address, response.state)
@@ -953,10 +969,8 @@ async function viewMatchRoom(server: MatchServerState, room: MatchServerState['r
 
   try {
     const client = new MatchClient(server.address)
-    const state = await client.getRoomState(room.id, {
-      password: matchPrivateRoomPassword.value,
-    })
-    startOnlineGame(server.address, state, matchPrivateRoomPassword.value)
+    const state = await client.getRoomState(room.id)
+    startOnlineGame(server.address, state)
   }
   catch (err) {
     server.status = 'failed'
@@ -978,6 +992,27 @@ async function returnToMatchRoom(server: MatchServerState, room: MatchServerStat
     server.status = 'failed'
     server.error = err instanceof Error ? err.message : String(err)
   }
+}
+
+async function returnToSharedRoom() {
+  const state = sharedRoom.value
+  if (! state?.room) return
+  dialogMode.value = 'none'
+  await returnToMatchRoom(state.server, state.room)
+}
+
+async function joinSharedRoom() {
+  const state = sharedRoom.value
+  if (! state?.room) return
+  dialogMode.value = 'none'
+  await joinMatchRoom(state.server, state.room.id)
+}
+
+async function viewSharedRoom() {
+  const state = sharedRoom.value
+  if (! state?.room) return
+  dialogMode.value = 'none'
+  await viewMatchRoom(state.server, state.room)
 }
 
 function selectLanguage(nextLanguage: Language) {
@@ -1003,11 +1038,21 @@ function openExportDialog(request: GameExportRequest) {
   dialogMode.value = 'export'
 }
 
+async function openShareRoomDialog() {
+  playUISound()
+  secondaryMenuOpen.value = false
+  shareCopyStatus.value = ''
+  shareLink.value = getCurrentRoomShareLink()
+  dialogMode.value = 'share'
+  await copyShareLink(false)
+}
+
 function closeDialog(playSound = true) {
   if (playSound && dialogMode.value !== 'none') playUISound()
   dialogMode.value = 'none'
   importError.value = ''
   exportCopyStatus.value = ''
+  shareCopyStatus.value = ''
 }
 
 function syncGameInputState() {
@@ -1060,6 +1105,122 @@ async function copyExportText() {
   catch {
     exportCopyStatus.value = t.value('export.copyManual')
   }
+}
+
+async function copyShareLink(playSound = true) {
+  if (playSound) playUISound()
+  shareCopyStatus.value = ''
+  try {
+    await navigator.clipboard.writeText(shareLink.value)
+    shareCopyStatus.value = t.value('share.copied')
+  }
+  catch {
+    shareCopyStatus.value = t.value('share.copyManual')
+  }
+}
+
+function getCurrentRoomShareLink(): string {
+  const room = onlineRoomRef.value
+  const url = new URL(window.location.href)
+  url.hash = room
+    ? `match=${encodeURIComponent(JSON.stringify({
+        server: room.serverAddress,
+        room: room.roomId,
+      }))}`
+    : ''
+  return url.toString()
+}
+
+async function openSharedRoomFromHash() {
+  const payload = parseSharedRoomHash(window.location.hash)
+  if (! payload) return
+
+  const server = getOrAddMatchServer(payload.server)
+  sharedRoom.value = {
+    server,
+    room: null,
+    roomId: payload.room,
+    loading: true,
+    error: '',
+  }
+  dialogMode.value = 'shared-room'
+
+  try {
+    const client = new MatchClient(server.address)
+    const [info, state] = await Promise.all([
+      client.getInfo(),
+      client.getRoomState(payload.room, { userId: matchUserId.value ?? undefined }),
+    ])
+    server.name = info.name
+    server.rooms = upsertMatchRoom(server.rooms, state.room)
+    server.status = 'connected'
+    server.error = ''
+    syncLastOnlineGameFromServer(server)
+
+    sharedRoom.value = {
+      server,
+      room: state.room,
+      roomId: payload.room,
+      loading: false,
+      error: '',
+    }
+  }
+  catch (err) {
+    server.rooms = []
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+    sharedRoom.value = {
+      server,
+      room: null,
+      roomId: payload.room,
+      loading: false,
+      error: server.error || t.value('match.failedMessage'),
+    }
+  }
+}
+
+function upsertMatchRoom(rooms: MatchRoom[], room: MatchRoom): MatchRoom[] {
+  const next = rooms.filter(current => current.id !== room.id)
+  next.push(room)
+  return next
+}
+
+function parseSharedRoomHash(hash: string): SharedRoomHashPayload | null {
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash
+  const params = new URLSearchParams(raw)
+  const encoded = params.get('match')
+  if (! encoded) return null
+
+  try {
+    const value = JSON.parse(encoded) as Partial<SharedRoomHashPayload>
+    if (typeof value.server !== 'string' || typeof value.room !== 'string') return null
+    const server = normalizeMatchServerAddress(value.server)
+    if (! server) return null
+    return {
+      server,
+      room: value.room,
+    }
+  }
+  catch {
+    return null
+  }
+}
+
+function getOrAddMatchServer(address: string): MatchServerState {
+  const existing = matchServers.find(server => server.address === address)
+  if (existing) return existing
+
+  const server: MatchServerState = {
+    id: address,
+    address,
+    name: address.replace(/^https?:\/\//, ''),
+    status: 'idle',
+    rooms: [],
+    error: '',
+  }
+  matchServers.push(server)
+  expandedMatchServerIds.add(server.id)
+  return server
 }
 
 function handleWindowKeyDown(e: KeyboardEvent) {
@@ -1146,11 +1307,16 @@ function startLocalGame() {
   syncGameViewportInsets()
 }
 
-function startOnlineGame(serverAddress: string, state: MatchGameState, password = '') {
+function startOnlineGame(serverAddress: string, state: MatchGameState) {
   if (! canvasRenderer || ! soundManager || gameStarted.value) return
 
   stopAmbience()
   stopOnlinePolling()
+  onlineRoomRef.value = {
+    serverAddress,
+    roomId: state.room.id,
+    roomName: state.room.name,
+  }
   onlineRoomStatus.value = state.room.status
   onlineRoomSettings.value = state.room.settings
   onlineRoomReady.value = state.room.status === 'playing' && state.session !== null
@@ -1197,7 +1363,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState, password 
   syncGameInputState()
   game.start()
   syncGameViewportInsets()
-  startOnlineRoomStateSubscription(serverAddress, state.room.id, state.session?.id ?? null, state.session?.userId ?? null, password)
+  startOnlineRoomStateSubscription(serverAddress, state.room.id, state.session?.id ?? null, state.session?.userId ?? null)
   if (state.session) startOnlinePolling(serverAddress, state.session.roomId, state.session.id, state.session.userId)
 }
 
@@ -1256,7 +1422,6 @@ function startOnlineRoomStateSubscription(
   roomId: string,
   sessionId: string | null,
   userId: string | null,
-  password = '',
 ) {
   stopOnlineRoomStateSubscription()
   onlineRoomStateSubscriptionActive = true
@@ -1287,10 +1452,9 @@ function startOnlineRoomStateSubscription(
       onError: () => {
         if (! onlineRoomStateSubscriptionActive) return
         onlineConnectionStatus.value = 'reconnecting'
-        scheduleOnlineRoomStateReconnect(serverAddress, roomId, sessionId, userId, password)
+        scheduleOnlineRoomStateReconnect(serverAddress, roomId, sessionId, userId)
       },
     },
-    password,
   )
 }
 
@@ -1313,13 +1477,12 @@ function scheduleOnlineRoomStateReconnect(
   roomId: string,
   sessionId: string | null,
   userId: string | null,
-  password = '',
 ) {
   if (onlineReconnectTimer !== null) return
   onlineReconnectTimer = window.setTimeout(() => {
     onlineReconnectTimer = null
     if (! onlineRoomStateSubscriptionActive) return
-    startOnlineRoomStateSubscription(serverAddress, roomId, sessionId, userId, password)
+    startOnlineRoomStateSubscription(serverAddress, roomId, sessionId, userId)
   }, ONLINE_RECONNECT_DELAY_MS)
 }
 
@@ -1551,6 +1714,7 @@ function returnToMainMenu(
   onlineRoomReady.value = false
   onlinePlayer.value = null
   onlinePresence.value = null
+  onlineRoomRef.value = null
   onlineConnectionStatus.value = 'offline'
   onlineError.value = ''
   onlineClock.value = null
@@ -1632,6 +1796,10 @@ async function init() {
     refreshSavedGameState()
     requiredAssetsReady.value = true
     void loadOptionalSounds()
+    if (parseSharedRoomHash(window.location.hash)) {
+      loading.value = false
+      void openSharedRoomFromHash()
+    }
   }
   catch (err) {
     loadingError.value = t.value('error.loadFailed')
@@ -2000,15 +2168,13 @@ watch(gameSettings, () => {
             class="match-settings-panel"
           >
             <div class="settings-list match-settings-list">
-              <label class="settings-row">
-                <span>{{ t('match.privatePasswordPlaceholder') }}</span>
-                <GameTextInput
-                  v-model="matchPrivateRoomPassword"
-                  size="setting"
-                  type="password"
-                  autocomplete="off"
+              <div class="settings-row">
+                <span>{{ t('match.setting.private') }}</span>
+                <GameToggle
+                  v-model="matchRoomSettings.private"
+                  :style="menuButtonStyle"
                 />
-              </label>
+              </div>
               <div class="settings-row settings-row--stacked">
                 <span>{{ t('match.setting.creatorPlayer') }}</span>
                 <div class="match-radio-group">
@@ -2298,6 +2464,14 @@ watch(gameSettings, () => {
             <span>{{ t('main.settings') }}</span>
           </GameButton>
           <GameButton
+            v-if="onlineRoomRef"
+            size="secondary"
+            :style="menuButtonStyle"
+            @click="openShareRoomDialog"
+          >
+            <span>{{ t('button.shareRoom') }}</span>
+          </GameButton>
+          <GameButton
             size="secondary"
             :style="menuButtonStyle"
             @click="clickReturnToMainMenuButton"
@@ -2475,6 +2649,125 @@ watch(gameSettings, () => {
               @click="copyExportText"
             >
               <span>{{ t('button.copy') }}</span>
+            </GameButton>
+            <GameButton
+              size="secondary"
+              :style="menuButtonStyle"
+              @click="closeDialog()"
+            >
+              <span>{{ t('button.close') }}</span>
+            </GameButton>
+          </div>
+        </div>
+
+        <div
+          v-else-if="dialogMode === 'share'"
+          class="dialog-card"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">{{ t('dialog.shareRoomTitle') }}</h2>
+          <textarea
+            v-model="shareLink"
+            class="dialog-textarea"
+            readonly
+            spellcheck="false"
+          ></textarea>
+          <p
+            class="dialog-message"
+            :class="{ 'dialog-message--empty': !shareCopyStatus }"
+            aria-live="polite"
+          >
+            {{ shareCopyStatus || t('share.copied') }}
+          </p>
+          <div class="dialog-actions">
+            <GameButton
+              size="secondary"
+              :style="menuButtonStyle"
+              @click="copyShareLink()"
+            >
+              <span>{{ t('button.copy') }}</span>
+            </GameButton>
+            <GameButton
+              size="secondary"
+              :style="menuButtonStyle"
+              @click="closeDialog()"
+            >
+              <span>{{ t('button.close') }}</span>
+            </GameButton>
+          </div>
+        </div>
+
+        <div
+          v-else-if="dialogMode === 'shared-room'"
+          class="dialog-card dialog-card--narrow"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">{{ t('dialog.sharedRoomTitle') }}</h2>
+          <div
+            v-if="sharedRoom?.loading"
+            class="dialog-message"
+            aria-live="polite"
+          >
+            {{ t('share.loadingRoom') }}
+          </div>
+          <div
+            v-else-if="sharedRoom?.room"
+            class="shared-room-content"
+          >
+            <div class="shared-room-name">{{ sharedRoom.room.name }}</div>
+            <div class="shared-room-meta">
+              {{ getMatchServerDisplayAddress(sharedRoom.server) }}
+            </div>
+            <div class="shared-room-meta">
+              <span
+                class="match-room-player"
+                :class="{ 'match-room-player--online': sharedRoom.room.seats[0]?.online }"
+              >{{ getMatchRoomSeatLabel(sharedRoom.room.seats[0]) }}</span>
+              <span>{{ t('match.playersVersusSeparator') }}</span>
+              <span
+                class="match-room-player"
+                :class="{ 'match-room-player--online': sharedRoom.room.seats[1]?.online }"
+              >{{ sharedRoom.room.seats[1] ? getMatchRoomSeatLabel(sharedRoom.room.seats[1]) : '?' }}</span>
+              <span>{{ getMatchRoomStatusSuffix(sharedRoom.room) }}</span>
+            </div>
+            <div class="shared-room-meta">
+              {{ getMatchRoomSettingsMeta(sharedRoom.room) }}
+            </div>
+          </div>
+          <p
+            v-else
+            class="dialog-message dialog-message-error"
+            aria-live="polite"
+          >
+            {{ sharedRoom?.error || t('share.roomNotFound') }}
+          </p>
+          <div class="dialog-actions">
+            <GameButton
+              v-if="sharedRoom?.room?.ownSession && sharedRoom.room.status !== 'finished'"
+              size="secondary"
+              :style="menuButtonStyle"
+              badge="!"
+              @click="returnToSharedRoom"
+            >
+              <span>{{ t('match.returnToGame') }}</span>
+            </GameButton>
+            <GameButton
+              v-else-if="sharedRoom?.room?.status === 'waiting'"
+              size="secondary"
+              :style="menuButtonStyle"
+              @click="joinSharedRoom"
+            >
+              <span>{{ t('match.join') }}</span>
+            </GameButton>
+            <GameButton
+              v-else-if="sharedRoom?.room && canViewMatchRoom(sharedRoom.room)"
+              size="secondary"
+              :style="menuButtonStyle"
+              @click="viewSharedRoom"
+            >
+              <span>{{ getViewMatchRoomLabel(sharedRoom.room) }}</span>
             </GameButton>
             <GameButton
               size="secondary"
@@ -3224,6 +3517,32 @@ canvas {
 
 .dialog-message-error {
   color: #9b3a32;
+}
+
+.shared-room-content {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 0.5);
+  min-width: min(520px, calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10));
+  color: var(--button-text-color);
+  text-align: center;
+}
+
+.shared-room-name {
+  overflow: hidden;
+  font-size: 24px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-room-meta {
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.25;
+  opacity: 0.82;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .loading-progress {

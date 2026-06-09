@@ -7,6 +7,7 @@ button.import: "Import"
 button.export: "Export"
 button.record: "Record"
 button.clock: "Clock"
+button.shareRoom: "Share room"
 button.cancel: "Cancel"
 button.copy: "Copy"
 button.close: "Close"
@@ -43,12 +44,10 @@ dialog.helpText: |
   Record and files
 
   The Record panel shows live 5dpgn notation. Use Import and Export in that panel to load or copy a game. Record entries can be clicked to focus the related board. Clicking a record marker rolls back to that action; submitting from a rollback state overwrites later history.
-
-  Ending a game
-
-  Forfeit game returns to the main menu and clears the local saved game. Finish Game does the same after checkmate or draw.
 dialog.importTitle: "Import 5dpgn"
 dialog.exportTitle: "Export 5dpgn"
+dialog.shareRoomTitle: "Share room"
+dialog.sharedRoomTitle: "Shared room"
 dialog.matchRoomSettingsTitle: "Room settings"
 dialog.loadingTitle: "Loading"
 dialog.loadingAssets: "Loading assets..."
@@ -94,7 +93,6 @@ match.collapseServer: "Collapse server"
 match.serverAddressPlaceholder: "Server address"
 match.roomNamePlaceholder: "Room name"
 match.nicknamePlaceholder: "Nickname"
-match.privatePasswordPlaceholder: "Private password"
 match.privateRoom: "Private"
 match.customRoom: "Custom room"
 match.anonymous: "Anonymous"
@@ -141,6 +139,11 @@ online.error: "Online error - {message}"
 export.pendingNotExported: "Pending moves are not exported."
 export.copied: "Copied."
 export.copyManual: "Failed to copy. Please select the text and copy it manually."
+
+share.copied: "Link copied."
+share.copyManual: "Failed to copy. Please select the link and copy it manually."
+share.loadingRoom: "Loading room..."
+share.roomNotFound: "Room not found or not viewable."
 
 error.importFailed: "Failed to import 5dpgn."
 error.saveFailed: "Failed to save game state."

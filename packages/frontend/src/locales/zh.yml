@@ -7,6 +7,7 @@ button.import: "导入"
 button.export: "导出"
 button.record: "记谱"
 button.clock: "棋钟"
+button.shareRoom: "分享房间"
 button.cancel: "取消"
 button.copy: "复制"
 button.close: "关闭"
@@ -43,12 +44,10 @@ dialog.helpText: |
   记谱和文件
 
   记谱面板会实时显示 5dpgn。可以在该面板中导入或导出对局。记谱中的位置可以点击，用于聚焦对应棋盘。点击记谱标记可以回溯到对应大步；在回溯状态提交会覆盖之后的历史。
-
-  结束对局
-
-  放弃对局会返回主菜单，并清除本地缓存的对局。将死或和棋后，结束对局也会执行相同操作。
 dialog.importTitle: "导入 5dpgn"
 dialog.exportTitle: "导出 5dpgn"
+dialog.shareRoomTitle: "分享房间"
+dialog.sharedRoomTitle: "分享的房间"
 dialog.matchRoomSettingsTitle: "房间设置"
 dialog.loadingTitle: "加载中"
 dialog.loadingAssets: "正在加载资源..."
@@ -94,7 +93,6 @@ match.collapseServer: "折叠服务器"
 match.serverAddressPlaceholder: "服务器地址"
 match.roomNamePlaceholder: "房间名"
 match.nicknamePlaceholder: "昵称"
-match.privatePasswordPlaceholder: "私密房间密码"
 match.privateRoom: "私密"
 match.customRoom: "自定义房间"
 match.anonymous: "Anonymous"
@@ -141,6 +139,11 @@ online.error: "在线错误 - {message}"
 export.pendingNotExported: "未提交的小步不会导出。"
 export.copied: "已复制。"
 export.copyManual: "复制失败，请选择文本并手动复制。"
+
+share.copied: "链接已复制。"
+share.copyManual: "复制失败，请选择链接并手动复制。"
+share.loadingRoom: "正在加载房间..."
+share.roomNotFound: "找不到房间，或房间不可查看。"
 
 error.importFailed: "导入 5dpgn 失败。"
 error.saveFailed: "保存对局状态失败。"

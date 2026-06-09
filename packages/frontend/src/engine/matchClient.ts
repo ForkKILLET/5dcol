@@ -57,9 +57,8 @@ export class MatchClient {
     return MatchServerInfoSchema.parse(await this.request('/health'))
   }
 
-  async getRooms(options: { password?: string, userId?: string | null } = {}): Promise<MatchRoom[]> {
+  async getRooms(options: { userId?: string | null } = {}): Promise<MatchRoom[]> {
     const query = new URLSearchParams()
-    if (options.password?.trim()) query.set('password', options.password.trim())
     if (options.userId) query.set('userId', options.userId)
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
     const response = MatchRoomsResponseSchema.parse(await this.request(`/rooms${suffix}`))
@@ -91,11 +90,10 @@ export class MatchClient {
     return response.state
   }
 
-  async getRoomState(roomId: string, options: { sessionId?: string, userId?: string, password?: string } = {}): Promise<MatchGameState> {
+  async getRoomState(roomId: string, options: { sessionId?: string, userId?: string } = {}): Promise<MatchGameState> {
     const query = new URLSearchParams()
     if (options.sessionId) query.set('sessionId', options.sessionId)
     if (options.userId) query.set('userId', options.userId)
-    if (options.password?.trim()) query.set('password', options.password.trim())
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
     const response = GetMatchRoomStateResponseSchema.parse(await this.request(
       `/rooms/${encodeURIComponent(roomId)}/state${suffix}`,
@@ -142,12 +140,10 @@ export class MatchClient {
     userId: string | null,
     listener: MatchRoomEventListener,
     options: MatchRoomStateSubscriptionOptions = {},
-    password = '',
   ): MatchRoomStateSubscription {
     const query = new URLSearchParams()
     if (sessionId) query.set('sessionId', sessionId)
     if (userId) query.set('userId', userId)
-    if (password.trim()) query.set('password', password.trim())
     const suffix = query.size > 0 ? `?${query.toString()}` : ''
     const socket = new WebSocket(
       this.getWebSocketUrl(`/rooms/${encodeURIComponent(roomId)}/events${suffix}`),

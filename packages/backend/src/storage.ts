@@ -9,6 +9,7 @@ import {
   MATCH_STORAGE_VERSION,
   MatchRoomFinishReasonSchema,
   MatchRoomSettingsSchema,
+  type MatchRoomSettings,
   type StoredMatchRoomsFile,
 } from '@5dcol/shared/protocol'
 import { drizzle } from 'drizzle-orm/node-sqlite'
@@ -243,16 +244,16 @@ function saveState(db: RoomDatabase, state: StorageState) {
 
 function roomToRow(room: RoomState): typeof roomsTable.$inferInsert {
   return {
-    id: room.id,
-    name: room.name,
-    maxPlayers: room.maxPlayers,
-    winner: room.winner,
-    finishReason: room.finishReason === null
-      ? null
-      : MatchRoomFinishReasonSchema.parse(room.finishReason),
-    settingsJson: JSON.stringify(room.settings),
-    password: room.password,
-    clockJson: JSON.stringify(room.clock),
+      id: room.id,
+      name: room.name,
+      maxPlayers: room.maxPlayers,
+      winner: room.winner,
+      finishReason: room.finishReason === null
+        ? null
+        : MatchRoomFinishReasonSchema.parse(room.finishReason),
+      settingsJson: JSON.stringify(room.settings),
+      password: null,
+      clockJson: JSON.stringify(room.clock),
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
@@ -277,8 +278,7 @@ function rowToRoom(room: RoomRow, sessions: SessionRow[], actions: ActionRow[]):
     finishReason: room.finishReason === null
       ? null
       : MatchRoomFinishReasonSchema.parse(room.finishReason),
-    settings: parseJson(room.settingsJson),
-    password: room.password,
+    settings: parseRoomSettings(room),
     clock: parseJson(room.clockJson),
     createdAt: room.createdAt,
     startedAt: room.startedAt,
@@ -385,9 +385,6 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
   room.winner ??= null
   room.finishReason ??= null
   room.settings = MatchRoomSettingsSchema.parse(room.settings)
-  room.password = typeof room.password === 'string' && room.password.length > 0
-    ? room.password
-    : null
   room.createdAt ??= room.updatedAt
   room.startedAt ??= null
   room.clock = getValidRoomClock(room)
@@ -408,6 +405,14 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
   catch {
     return false
   }
+}
+
+function parseRoomSettings(room: RoomRow): MatchRoomSettings {
+  const settings = parseJson<Record<string, unknown>>(room.settingsJson)
+  if (typeof room.password === 'string' && room.password.length > 0) {
+    settings.private = true
+  }
+  return MatchRoomSettingsSchema.parse(settings)
 }
 
 function getValidRoomClock(room: Partial<RoomState>): RoomState['clock'] {

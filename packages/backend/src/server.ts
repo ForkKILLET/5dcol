@@ -64,7 +64,6 @@ export interface RoomState {
   winner: Player | null
   finishReason: MatchRoomFinishReason | null
   settings: MatchRoomSettings
-  password: string | null
   clock: RoomClockState
   createdAt: number
   startedAt: number | null
@@ -123,7 +122,7 @@ export function createBackendServer(options: BackendServerOptions) {
   }))
 
   app.get<{ Querystring: MatchRoomsRequestQuery }>('/rooms', async (request): Promise<MatchRoomsResponse> => ({
-    rooms: getListedRooms(rooms, normalizePassword(request.query.password), request.query.userId, onlineSessionCounts),
+    rooms: getListedRooms(rooms, request.query.userId, onlineSessionCounts),
   }))
 
   app.post<{ Body: CreateMatchRoomRequest }>('/rooms', async (request, reply): Promise<CreateMatchRoomResponse> => {
@@ -138,7 +137,6 @@ export function createBackendServer(options: BackendServerOptions) {
       winner: null,
       finishReason: null,
       settings,
-      password: normalizePassword(body?.password),
       clock: createInitialClock(),
       createdAt: Date.now(),
       startedAt: null,
@@ -168,7 +166,7 @@ export function createBackendServer(options: BackendServerOptions) {
     },
   )
 
-  app.get<{ Params: { id: string }, Querystring: { sessionId?: string, userId?: string, password?: string } }>(
+  app.get<{ Params: { id: string }, Querystring: { sessionId?: string, userId?: string } }>(
     '/rooms/:id/state',
     async (request, reply): Promise<GetMatchRoomStateResponse | MatchErrorResponse> => {
       const room = rooms.find(room => room.id === request.params.id)
@@ -177,17 +175,17 @@ export function createBackendServer(options: BackendServerOptions) {
         ? room.sessions.find(session => session.id === request.query.sessionId && session.userId === request.query.userId) ?? null
         : null
       if (request.query.sessionId && ! session) return sendError(reply, 403, 'Invalid session')
-      if (! session && ! canViewRoom(room, normalizePassword(request.query.password))) {
+      if (! session && ! canViewRoom(room)) {
         return sendError(reply, 403, 'Room is not viewable')
       }
       return {
-        state: toGameStateView(room, session, onlineSessionCounts),
+        state: toGameStateView(room, session, onlineSessionCounts, request.query.userId),
       }
     },
   )
 
   void app.register(async routeApp => {
-    routeApp.get<{ Params: { id: string }, Querystring: { sessionId?: string, userId?: string, password?: string } }>(
+    routeApp.get<{ Params: { id: string }, Querystring: { sessionId?: string, userId?: string } }>(
       '/rooms/:id/events',
       { websocket: true },
       (socket, request) => {
@@ -204,7 +202,7 @@ export function createBackendServer(options: BackendServerOptions) {
           socket.close()
           return
         }
-        if (! session && ! canViewRoom(room, normalizePassword(request.query.password))) {
+        if (! session && ! canSubscribeRoom(room)) {
           socket.close()
           return
         }
@@ -228,9 +226,6 @@ export function createBackendServer(options: BackendServerOptions) {
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
       if (toRoomView(room).status !== 'waiting') return sendError(reply, 409, 'Room is not joinable')
-      if (! canAccessRoom(room, normalizePassword(body.password))) {
-        return sendError(reply, 403, 'Invalid room password')
-      }
 
       const player = getAvailablePlayer(room)
       if (player === null) return sendError(reply, 409, 'Room is full')
@@ -449,20 +444,19 @@ function normalizeNickname(nickname: string | null | undefined): string | null {
   return trimmed ? trimmed.slice(0, 32) : null
 }
 
-function normalizePassword(password: string | null | undefined): string | null {
-  const trimmed = password?.trim()
-  return trimmed ? trimmed.slice(0, 128) : null
-}
-
-function canAccessRoom(room: RoomState, password: string | null): boolean {
-  return room.password === null || room.password === password
-}
-
-function canViewRoom(room: RoomState, password: string | null): boolean {
-  if (! canAccessRoom(room, password)) return false
-  if (! room.settings.canReplay) return false
-
+function canViewRoom(room: RoomState): boolean {
   const status = getRoomStatus(room)
+  if (status === 'waiting') return true
+  if (! room.settings.canReplay) return false
+  if (status === 'playing') return true
+  return status === 'finished'
+    && room.settings.saveRecordToServer
+    && room.actions.length > 0
+}
+
+function canSubscribeRoom(room: RoomState): boolean {
+  const status = getRoomStatus(room)
+  if (! room.settings.canReplay) return false
   if (status === 'playing') return true
   return status === 'finished'
     && room.settings.saveRecordToServer
@@ -519,7 +513,7 @@ function toRoomView(
     winner: room.winner,
     finishReason: room.finishReason,
     settings: room.settings,
-    private: room.password !== null,
+    private: room.settings.private,
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
@@ -541,18 +535,17 @@ function getRoomSeats(room: RoomState, onlineSessionCounts: Map<string, number>)
 
 function getListedRooms(
   rooms: RoomState[],
-  password: string | null,
   userId: string | null | undefined,
   onlineSessionCounts: Map<string, number>,
 ): MatchRoom[] {
   const now = Date.now()
   const ownUserId = userId ?? null
   const activeRooms = rooms
-    .filter(room => canAccessListedRoom(room, password, ownUserId))
+    .filter(room => canListRoom(room, ownUserId))
     .filter(room => getRoomStatus(room) !== 'finished')
     .map(room => toRoomView(room, ownUserId, onlineSessionCounts))
   const finishedRooms = rooms
-    .filter(room => canAccessListedRoom(room, password, ownUserId))
+    .filter(room => canListRoom(room, ownUserId))
     .filter(room => getRoomStatus(room) === 'finished')
     .filter(room => room.actions.length > 0)
     .filter(room => room.settings.saveRecordToServer)
@@ -564,8 +557,8 @@ function getListedRooms(
   return [...activeRooms, ...finishedRooms]
 }
 
-function canAccessListedRoom(room: RoomState, password: string | null, userId: string | null): boolean {
-  return canAccessRoom(room, password)
+function canListRoom(room: RoomState, userId: string | null): boolean {
+  return ! room.settings.private
     || (userId !== null && room.sessions.some(session => session.userId === userId))
 }
 
@@ -588,10 +581,12 @@ function toGameStateView(
   room: RoomState,
   session: MatchSession | null,
   onlineSessionCounts: Map<string, number>,
+  userId: string | null | undefined = null,
 ): MatchGameState {
   const state = GameState.create(room.actions)
+  const viewUserId = session?.userId ?? userId ?? null
   return {
-    room: toRoomView(room, null, onlineSessionCounts),
+    room: toRoomView(room, viewUserId, onlineSessionCounts),
     session,
     presence: getMatchPresence(room, session, onlineSessionCounts),
     actions: room.actions,

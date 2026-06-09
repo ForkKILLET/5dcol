@@ -23,6 +23,7 @@ export type MatchRoomCreatorPlayer = z.infer<typeof MatchRoomCreatorPlayerSchema
 const MatchRoomSettingsObjectSchema = z.object({
   canReplay: z.boolean().catch(true),
   creatorPlayer: MatchRoomCreatorPlayerSchema.catch('random'),
+  private: z.boolean().catch(false),
   saveRecordToServer: z.boolean().catch(true),
   showOpponentMoves: z.boolean().catch(false),
   showOpponentMoveRange: z.boolean().catch(true),
@@ -128,7 +129,6 @@ export const MatchRoomsResponseSchema = z.object({
 export type MatchRoomsResponse = z.infer<typeof MatchRoomsResponseSchema>
 
 export const MatchRoomsRequestQuerySchema = z.object({
-  password: z.string().optional(),
   userId: z.string().optional(),
 })
 
@@ -138,7 +138,6 @@ export const CreateMatchRoomRequestSchema = z.object({
   userId: z.string().optional(),
   name: z.string().optional(),
   nickname: z.string().optional(),
-  password: z.string().optional(),
   settings: z.custom<Partial<MatchRoomSettings>>().optional(),
 }).nullish()
 
@@ -154,7 +153,6 @@ export type CreateMatchRoomResponse = z.infer<typeof CreateMatchRoomResponseSche
 export const JoinMatchRoomRequestSchema = z.object({
   userId: z.string().optional(),
   nickname: z.string().optional(),
-  password: z.string().optional(),
 }).nullish()
 
 export type JoinMatchRoomRequest = NonNullable<z.infer<typeof JoinMatchRoomRequestSchema>>
