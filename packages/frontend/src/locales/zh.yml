@@ -69,6 +69,7 @@ player.black: "黑方"
 status.owner.your: "你的"
 status.owner.their: "对方"
 status.turn: "{owner}回合 - {player}执棋"
+status.turnSpectator: "{player}回合"
 status.checkmate: "对局结束 - {player}获胜"
 status.stalemate: "对局结束 - 和棋"
 

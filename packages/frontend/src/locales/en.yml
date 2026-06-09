@@ -69,6 +69,7 @@ player.black: "Black"
 status.owner.your: "Your"
 status.owner.their: "Their"
 status.turn: "{owner} turn - {player} pieces"
+status.turnSpectator: "{player} to move"
 status.checkmate: "Game ended - {player} wins"
 status.stalemate: "Game ended - Draw"
 

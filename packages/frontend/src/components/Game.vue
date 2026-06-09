@@ -193,6 +193,9 @@ const gameStatusText = computed(() => {
   const player = gameStatus.value.player === Player.B
     ? t.value('player.black')
     : t.value('player.white')
+  if (onlineRoomStatus.value !== null && onlinePlayer.value === null) {
+    return t.value('status.turnSpectator', { player })
+  }
   const owner = ! onlineSession.value || gameStatus.value.player === onlinePlayer.value
     ? t.value('status.owner.your')
     : t.value('status.owner.their')
