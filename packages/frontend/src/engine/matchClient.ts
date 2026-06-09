@@ -1,24 +1,27 @@
+import {
+  CreateMatchRoomResponseSchema,
+  ForfeitMatchRoomResponseSchema,
+  GetMatchRoomStateResponseSchema,
+  GetMatchSessionResponseSchema,
+  JoinMatchRoomResponseSchema,
+  LeaveMatchRoomResponseSchema,
+  MatchRoomsResponseSchema,
+  MatchServerInfoSchema,
+  SubmitMatchActionResponseSchema,
+  parseMatchRoomEvent,
+} from '@5dcol/shared/protocol'
 import type {
   CreateMatchRoomRequest,
-  CreateMatchRoomResponse,
   ForfeitMatchRoomRequest,
-  ForfeitMatchRoomResponse,
-  GetMatchRoomStateResponse,
-  GetMatchSessionResponse,
-  JoinMatchRoomResponse,
   JoinMatchRoomRequest,
   LeaveMatchRoomRequest,
-  LeaveMatchRoomResponse,
   MatchGameState,
   MatchRoomClientEvent,
   MatchRoomEvent,
-  MatchRoomStateEvent,
   MatchRoom,
-  MatchRoomsResponse,
   MatchServerInfo,
   SubmitMatchActionRequest,
-  SubmitMatchActionResponse,
-} from '@5dcol/backend/protocol'
+} from '@5dcol/shared/protocol'
 import type { Move } from '@5dcol/core'
 
 export type MatchServerConnectionStatus = 'idle' | 'connecting' | 'connected' | 'failed'
@@ -49,80 +52,80 @@ export class MatchClient {
   ) {}
 
   async getInfo(): Promise<MatchServerInfo> {
-    return await this.request<MatchServerInfo>('/health')
+    return MatchServerInfoSchema.parse(await this.request('/health'))
   }
 
   async getRooms(password = ''): Promise<MatchRoom[]> {
     const query = password.trim()
       ? `?password=${encodeURIComponent(password.trim())}`
       : ''
-    const response = await this.request<MatchRoomsResponse>(`/rooms${query}`)
+    const response = MatchRoomsResponseSchema.parse(await this.request(`/rooms${query}`))
     return response.rooms
   }
 
   async createRoom(request: CreateMatchRoomRequest = {}): Promise<MatchGameState> {
-    const response = await this.request<CreateMatchRoomResponse>('/rooms', {
+    const response = CreateMatchRoomResponseSchema.parse(await this.request('/rooms', {
       method: 'POST',
       body: JSON.stringify(request),
-    })
+    }))
     return response.state
   }
 
   async joinRoom(roomId: string, request: JoinMatchRoomRequest = {}): Promise<MatchGameState> {
-    const response = await this.request<JoinMatchRoomResponse>(
+    const response = JoinMatchRoomResponseSchema.parse(await this.request(
       `/rooms/${encodeURIComponent(roomId)}/join`,
       {
         method: 'POST',
         body: JSON.stringify(request),
       },
-    )
+    ))
     return response.state
   }
 
   async getSession(sessionId: string): Promise<MatchGameState> {
-    const response = await this.request<GetMatchSessionResponse>(
+    const response = GetMatchSessionResponseSchema.parse(await this.request(
       `/sessions/${encodeURIComponent(sessionId)}`,
-    )
+    ))
     return response.state
   }
 
   async getRoomState(roomId: string, sessionId: string): Promise<MatchGameState> {
-    const response = await this.request<GetMatchRoomStateResponse>(
+    const response = GetMatchRoomStateResponseSchema.parse(await this.request(
       `/rooms/${encodeURIComponent(roomId)}/state?sessionId=${encodeURIComponent(sessionId)}`,
-    )
+    ))
     return response.state
   }
 
   async submitAction(roomId: string, request: SubmitMatchActionRequest): Promise<MatchGameState> {
-    const response = await this.request<SubmitMatchActionResponse>(
+    const response = SubmitMatchActionResponseSchema.parse(await this.request(
       `/rooms/${encodeURIComponent(roomId)}/actions`,
       {
         method: 'POST',
         body: JSON.stringify(request),
       },
-    )
+    ))
     return response.state
   }
 
   async leaveRoom(roomId: string, request: LeaveMatchRoomRequest): Promise<MatchGameState> {
-    const response = await this.request<LeaveMatchRoomResponse>(
+    const response = LeaveMatchRoomResponseSchema.parse(await this.request(
       `/rooms/${encodeURIComponent(roomId)}/leave`,
       {
         method: 'POST',
         body: JSON.stringify(request),
       },
-    )
+    ))
     return response.state
   }
 
   async forfeitRoom(roomId: string, request: ForfeitMatchRoomRequest): Promise<MatchGameState> {
-    const response = await this.request<ForfeitMatchRoomResponse>(
+    const response = ForfeitMatchRoomResponseSchema.parse(await this.request(
       `/rooms/${encodeURIComponent(roomId)}/forfeit`,
       {
         method: 'POST',
         body: JSON.stringify(request),
       },
-    )
+    ))
     return response.state
   }
 
@@ -160,7 +163,7 @@ export class MatchClient {
     }
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch(this.getUrl(path), {
       ...init,
       headers: {
@@ -172,7 +175,7 @@ export class MatchClient {
       const message = await readErrorMessage(response)
       throw new Error(message || `${response.status} ${response.statusText}`)
     }
-    return await response.json() as T
+    return await response.json() as unknown
   }
 
   private getUrl(path: string): string {
@@ -184,12 +187,6 @@ export class MatchClient {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     return url.toString()
   }
-}
-
-function parseMatchRoomEvent(text: string): MatchRoomEvent {
-  const data = JSON.parse(text) as MatchRoomEvent | Partial<MatchRoomStateEvent>
-  if ('type' in data && data.type) return data as MatchRoomEvent
-  return { type: 'state', state: data.state! }
 }
 
 function sendRoomClientEvent(socket: WebSocket, event: MatchRoomClientEvent) {

@@ -12,8 +12,8 @@
     "check": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@5dcol/backend": "workspace:*",
     "@5dcol/core": "workspace:*",
+    "@5dcol/shared": "workspace:*",
     "vue": "^3.5.35"
   },
   "devDependencies": {

@@ -13,6 +13,9 @@ importers:
       '@5dcol/core':
         specifier: workspace:*
         version: link:../core
+      '@5dcol/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@fastify/cors':
         specifier: ^11.2.0
         version: 11.2.0
@@ -54,12 +57,12 @@ importers:
 
   packages/frontend:
     dependencies:
-      '@5dcol/backend':
-        specifier: workspace:*
-        version: link:../backend
       '@5dcol/core':
         specifier: workspace:*
         version: link:../core
+      '@5dcol/shared':
+        specifier: workspace:*
+        version: link:../shared
       vue:
         specifier: ^3.5.35
         version: 3.5.35(typescript@5.9.3)
@@ -82,6 +85,25 @@ importers:
       vue-tsc:
         specifier: ^3.2.7
         version: 3.3.3(typescript@5.9.3)
+
+  packages/shared:
+    dependencies:
+      '@5dcol/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.4
+        version: 24.12.4
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.10
+        version: 8.0.16(@types/node@24.12.4)(jiti@2.7.0)
 
 packages:
 
@@ -757,6 +779,9 @@ packages:
       utf-8-validate:
         optional: true
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
 snapshots:
 
   '@babel/helper-string-parser@7.29.7': {}
@@ -1379,3 +1404,5 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.21.0: {}
+
+  zod@4.4.3: {}

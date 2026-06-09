@@ -6,7 +6,8 @@ const dirname = import.meta.dirname
 export default defineConfig({
   resolve: {
     alias: {
-      '@5dcol/core': path.resolve(dirname, '../core/src/index.ts'),
+      '@5dcol/core': path.resolve(dirname, '../core/src'),
+      '@5dcol/shared': path.resolve(dirname, '../shared/src'),
     },
   },
   build: {

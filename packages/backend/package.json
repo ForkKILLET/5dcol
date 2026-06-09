@@ -4,8 +4,7 @@
   "description": "Backend server for 5dcol online matches.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./protocol": "./src/protocol.ts"
+    ".": "./src/index.ts"
   },
   "license": "MIT",
   "scripts": {
@@ -22,6 +21,7 @@
   },
   "dependencies": {
     "@5dcol/core": "workspace:*",
+    "@5dcol/shared": "workspace:*",
     "@fastify/cors": "^11.2.0",
     "@fastify/websocket": "^11.2.0",
     "fastify": "^5.8.5"

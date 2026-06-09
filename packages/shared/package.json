@@ -1,0 +1,38 @@
+{
+  "name": "@5dcol/shared",
+  "version": "0.0.0",
+  "description": "Shared protocol and schemas for 5dcol.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "import": "./dist/protocol.js",
+      "require": "./dist/protocol.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "dev": "vite build --watch",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@5dcol/core": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10"
+  }
+}

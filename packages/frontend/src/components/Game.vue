@@ -2,7 +2,17 @@
 import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
 import { Player } from '@5dcol/core'
 import type { Action } from '@5dcol/core'
-import { DEFAULT_MATCH_ROOM_SETTINGS, type MatchClock, type MatchGameState, type MatchPresence, type MatchRoomSettings, type MatchRoomStatus } from '@5dcol/backend/protocol'
+import {
+  DEFAULT_MATCH_ROOM_SETTINGS,
+  MATCH_ROOM_SETTINGS_STORAGE_VERSION,
+  parseStoredMatchRoomSettings,
+  type MatchClock,
+  type MatchGameState,
+  type MatchPresence,
+  type MatchRoomSettings,
+  type MatchRoomStatus,
+  type StoredMatchRoomSettings,
+} from '@5dcol/shared/protocol'
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
@@ -1401,28 +1411,12 @@ function getStoredMatchRoomSettings(): MatchRoomSettings {
   if (! storage) return { ...DEFAULT_MATCH_ROOM_SETTINGS }
 
   try {
-    const value = JSON.parse(storage.getItem(MATCH_ROOM_SETTINGS_STORAGE_KEY) ?? '{}') as Partial<MatchRoomSettings>
-    return getValidMatchRoomSettings(value)
+    const value = JSON.parse(storage.getItem(MATCH_ROOM_SETTINGS_STORAGE_KEY) ?? '{}') as unknown
+    return parseStoredMatchRoomSettings(value).settings
   }
   catch {
     return { ...DEFAULT_MATCH_ROOM_SETTINGS }
   }
-}
-
-function getValidMatchRoomSettings(value: Partial<MatchRoomSettings>): MatchRoomSettings {
-  return {
-    canSpectate: getValidBoolean(value.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
-    creatorPlayer: getValidCreatorPlayer(value.creatorPlayer),
-    saveRecordToServer: getValidBoolean(value.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
-    showOpponentMoves: getValidBoolean(value.showOpponentMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves),
-    showOpponentMoveRange: getValidBoolean(value.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
-  }
-}
-
-function getValidCreatorPlayer(value: unknown): MatchRoomSettings['creatorPlayer'] {
-  return value === 'white' || value === 'black' || value === 'random'
-    ? value
-    : DEFAULT_MATCH_ROOM_SETTINGS.creatorPlayer
 }
 
 function storeMatchRoomSettings() {
@@ -1430,7 +1424,11 @@ function storeMatchRoomSettings() {
   if (! storage) return
 
   try {
-    storage.setItem(MATCH_ROOM_SETTINGS_STORAGE_KEY, JSON.stringify(matchRoomSettings))
+    const value: StoredMatchRoomSettings = {
+      version: MATCH_ROOM_SETTINGS_STORAGE_VERSION,
+      settings: { ...matchRoomSettings },
+    }
+    storage.setItem(MATCH_ROOM_SETTINGS_STORAGE_KEY, JSON.stringify(value))
   }
   catch {
     // Ignore storage failures; room settings should still apply to newly created rooms.

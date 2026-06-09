@@ -3,11 +3,17 @@ import { randomUUID } from 'node:crypto'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyReply } from 'fastify'
-import { GameState, type Action, type Player } from '@5dcol/core'
+import { GameState, type Action, Player } from '@5dcol/core'
 
 import {
   MATCH_PROTOCOL_VERSION,
-  DEFAULT_MATCH_ROOM_SETTINGS,
+  MatchRoomClientEventSchema,
+  MatchRoomSettingsSchema,
+  CreateMatchRoomRequestSchema,
+  JoinMatchRoomRequestSchema,
+  LeaveMatchRoomRequestSchema,
+  ForfeitMatchRoomRequestSchema,
+  SubmitMatchActionRequestSchema,
   type CreateMatchRoomRequest,
   type CreateMatchRoomResponse,
   type ForfeitMatchRoomRequest,
@@ -35,7 +41,7 @@ import {
   type MatchSession,
   type SubmitMatchActionRequest,
   type SubmitMatchActionResponse,
-} from './protocol.ts'
+} from '@5dcol/shared/protocol'
 import { createRoomStorage } from './storage.ts'
 
 export interface BackendServerOptions {
@@ -82,8 +88,6 @@ interface WebSocketLike {
 }
 
 const DEFAULT_SERVER_NAME = '5DC OL Debug Server'
-const PLAYER_W = 0 as Player
-const PLAYER_B = 1 as Player
 const FINISHED_ROOM_HISTORY_MS = 24 * 60 * 60 * 1000
 const FINISHED_ROOM_HISTORY_LIMIT = 10
 
@@ -102,6 +106,10 @@ export function createBackendServer(options: BackendServerOptions) {
   void app.register(websocket)
 
   app.setErrorHandler((err, _request, reply) => {
+    if (err instanceof Error && err.name === 'ZodError') {
+      reply.code(400).send({ error: 'Invalid request' } satisfies MatchErrorResponse)
+      return
+    }
     console.error(err)
     reply.code(500).send({ error: 'Internal server error' } satisfies MatchErrorResponse)
   })
@@ -116,8 +124,8 @@ export function createBackendServer(options: BackendServerOptions) {
   }))
 
   app.post<{ Body: CreateMatchRoomRequest }>('/rooms', async (request, reply): Promise<CreateMatchRoomResponse> => {
-    const body = request.body
-    const settings = normalizeRoomSettings(body?.settings)
+    const body = CreateMatchRoomRequestSchema.parse(request.body) ?? {}
+    const settings = MatchRoomSettingsSchema.parse(body.settings)
     const room: RoomState = {
       id: randomUUID(),
       name: body?.name?.trim() || `Room ${rooms.length + 1}`,
@@ -197,17 +205,18 @@ export function createBackendServer(options: BackendServerOptions) {
   app.post<{ Params: { id: string }, Body: JoinMatchRoomRequest }>(
     '/rooms/:id/join',
     async (request, reply): Promise<JoinMatchRoomResponse | MatchErrorResponse> => {
+      const body = JoinMatchRoomRequestSchema.parse(request.body) ?? {}
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
       if (toRoomView(room).status !== 'waiting') return sendError(reply, 409, 'Room is not joinable')
-      if (! canAccessRoom(room, normalizePassword(request.body?.password))) {
+      if (! canAccessRoom(room, normalizePassword(body.password))) {
         return sendError(reply, 403, 'Invalid room password')
       }
 
       const player = getAvailablePlayer(room)
       if (player === null) return sendError(reply, 409, 'Room is full')
 
-      const session = createSession(room, player, request.body?.nickname)
+      const session = createSession(room, player, body.nickname)
       storage.save(rooms)
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
@@ -219,10 +228,11 @@ export function createBackendServer(options: BackendServerOptions) {
   app.post<{ Params: { id: string }, Body: LeaveMatchRoomRequest }>(
     '/rooms/:id/leave',
     async (request, reply): Promise<LeaveMatchRoomResponse | MatchErrorResponse> => {
+      const body = LeaveMatchRoomRequestSchema.parse(request.body)
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
 
-      const session = room.sessions.find(session => session.id === request.body?.sessionId)
+      const session = room.sessions.find(session => session.id === body.sessionId)
       if (! session) return sendError(reply, 403, 'Invalid session')
       if (toRoomView(room).status === 'playing') return sendError(reply, 409, 'Use forfeit to leave a playing room')
 
@@ -240,10 +250,11 @@ export function createBackendServer(options: BackendServerOptions) {
   app.post<{ Params: { id: string }, Body: ForfeitMatchRoomRequest }>(
     '/rooms/:id/forfeit',
     async (request, reply): Promise<ForfeitMatchRoomResponse | MatchErrorResponse> => {
+      const body = ForfeitMatchRoomRequestSchema.parse(request.body)
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
 
-      const session = room.sessions.find(session => session.id === request.body?.sessionId)
+      const session = room.sessions.find(session => session.id === body.sessionId)
       if (! session) return sendError(reply, 403, 'Invalid session')
 
       forfeitRoom(room, session)
@@ -258,10 +269,11 @@ export function createBackendServer(options: BackendServerOptions) {
   app.post<{ Params: { id: string }, Body: SubmitMatchActionRequest }>(
     '/rooms/:id/actions',
     async (request, reply): Promise<SubmitMatchActionResponse | MatchErrorResponse> => {
+      const body = SubmitMatchActionRequestSchema.parse(request.body)
       const room = rooms.find(room => room.id === request.params.id)
       if (! room) return sendError(reply, 404, 'Room not found')
 
-      const session = room.sessions.find(session => session.id === request.body?.sessionId)
+      const session = room.sessions.find(session => session.id === body.sessionId)
       if (! session) return sendError(reply, 403, 'Invalid session')
       if (toRoomView(room).status !== 'playing') return sendError(reply, 409, 'Room is not ready')
 
@@ -269,7 +281,7 @@ export function createBackendServer(options: BackendServerOptions) {
       if (state.player !== session.player) return sendError(reply, 409, 'Not your turn')
 
       let nextState: GameState
-      const action = sanitizeAction(request.body.action)
+      const action = sanitizeAction(body.action)
       try {
         // This replays the full authoritative action list and validates every move
         // in the submitted action against core rules before mutating room state.
@@ -384,46 +396,26 @@ function canAccessRoom(room: RoomState, password: string | null): boolean {
   return room.password === null || room.password === password
 }
 
-function normalizeRoomSettings(settings: Partial<MatchRoomSettings> | null | undefined): MatchRoomSettings {
-  return {
-    canSpectate: getBooleanSetting(settings?.canSpectate, DEFAULT_MATCH_ROOM_SETTINGS.canSpectate),
-    creatorPlayer: getCreatorPlayerSetting(settings?.creatorPlayer),
-    saveRecordToServer: getBooleanSetting(settings?.saveRecordToServer, DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer),
-    showOpponentMoves: getBooleanSetting(settings?.showOpponentMoves, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves),
-    showOpponentMoveRange: getBooleanSetting(settings?.showOpponentMoveRange, DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange),
-  }
-}
-
-function getBooleanSetting(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback
-}
-
-function getCreatorPlayerSetting(value: unknown): MatchRoomCreatorPlayer {
-  return value === 'white' || value === 'black' || value === 'random'
-    ? value
-    : DEFAULT_MATCH_ROOM_SETTINGS.creatorPlayer
-}
-
 function getCreatorPlayer(setting: MatchRoomCreatorPlayer): Player {
   switch (setting) {
     case 'black':
-      return PLAYER_B
+      return Player.B
     case 'random':
-      return Math.random() < 0.5 ? PLAYER_W : PLAYER_B
+      return Math.random() < 0.5 ? Player.W : Player.B
     case 'white':
-      return PLAYER_W
+      return Player.W
   }
 }
 
 function getAvailablePlayer(room: RoomState): Player | null {
   const used = new Set(room.sessions.map(session => session.player))
-  if (! used.has(PLAYER_W)) return PLAYER_W
-  if (! used.has(PLAYER_B)) return PLAYER_B
+  if (! used.has(Player.W)) return Player.W
+  if (! used.has(Player.B)) return Player.B
   return null
 }
 
 function getOpponentPlayer(player: Player): Player {
-  return player === PLAYER_W ? PLAYER_B : PLAYER_W
+  return player === Player.W ? Player.B : Player.W
 }
 
 function findSession(
@@ -458,8 +450,8 @@ function toRoomView(room: RoomState): MatchRoom {
 }
 
 function getRoomSeats(room: RoomState): MatchRoom['seats'] {
-  const white = room.sessions.find(session => session.player === PLAYER_W) ?? null
-  const black = room.sessions.find(session => session.player === PLAYER_B) ?? null
+  const white = room.sessions.find(session => session.player === Player.W) ?? null
+  const black = room.sessions.find(session => session.player === Player.B) ?? null
   return [
     white ? { player: white.player, nickname: white.nickname } : null,
     black ? { player: black.player, nickname: black.nickname } : null,
@@ -627,19 +619,11 @@ function parseRoomClientEvent(data: unknown): MatchRoomClientEvent | null {
       : data instanceof Buffer
         ? data.toString('utf8')
         : String(data)
-    const event = JSON.parse(text) as Partial<MatchRoomClientEvent>
-    if (event.type === 'pending-action' && Array.isArray(event.moves)) {
-      return { type: event.type, moves: event.moves }
-    }
-    if (event.type === 'clear-pending-action') {
-      return { type: event.type }
-    }
+    return MatchRoomClientEventSchema.parse(JSON.parse(text) as unknown)
   }
   catch {
     return null
   }
-
-  return null
 }
 
 function disconnectSession(

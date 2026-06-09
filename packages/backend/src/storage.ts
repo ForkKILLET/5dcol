@@ -3,14 +3,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { GameState } from '@5dcol/core'
-
-import { DEFAULT_MATCH_ROOM_SETTINGS } from './protocol.ts'
+import { MATCH_STORAGE_VERSION, MatchRoomSettingsSchema, type StoredMatchRoomsFile } from '@5dcol/shared/protocol'
 import type { RoomState } from './server.ts'
 
-interface StoredRoomsFile {
-  version: 1
-  rooms: RoomState[]
-}
+type StoredRoomsFile = StoredMatchRoomsFile<RoomState>
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_DATA_FILE = path.resolve(dirname, '../data/rooms.json')
@@ -21,7 +17,7 @@ export function createRoomStorage(filePath = process.env.MATCH_DATA_FILE ?? DEFA
       try {
         const raw = fs.readFileSync(filePath, 'utf8')
         const data = JSON.parse(raw) as Partial<StoredRoomsFile>
-        if (data.version !== 1 || ! Array.isArray(data.rooms)) return []
+        if (data.version !== MATCH_STORAGE_VERSION || ! Array.isArray(data.rooms)) return []
 
         const rooms = data.rooms.filter(isValidRoom)
         return rooms
@@ -35,7 +31,7 @@ export function createRoomStorage(filePath = process.env.MATCH_DATA_FILE ?? DEFA
 
     save(rooms: RoomState[]) {
       const data: StoredRoomsFile = {
-        version: 1,
+        version: MATCH_STORAGE_VERSION,
         rooms,
       }
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
@@ -70,7 +66,7 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
 
   room.winner ??= null
   room.finishReason ??= null
-  room.settings = getValidRoomSettings(room.settings)
+  room.settings = MatchRoomSettingsSchema.parse(room.settings)
   room.password = typeof room.password === 'string' && room.password.length > 0
     ? room.password
     : null
@@ -131,19 +127,6 @@ function getValidDuration(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? value
     : 0
-}
-
-function getValidRoomSettings(value: unknown): RoomState['settings'] {
-  if (! value || typeof value !== 'object') return { ...DEFAULT_MATCH_ROOM_SETTINGS }
-
-  const settings = value as Partial<RoomState['settings']>
-  return {
-    canSpectate: settings.canSpectate ?? DEFAULT_MATCH_ROOM_SETTINGS.canSpectate,
-    creatorPlayer: settings.creatorPlayer ?? 'random',
-    saveRecordToServer: settings.saveRecordToServer ?? DEFAULT_MATCH_ROOM_SETTINGS.saveRecordToServer,
-    showOpponentMoves: settings.showOpponentMoves ?? DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoves,
-    showOpponentMoveRange: settings.showOpponentMoveRange ?? DEFAULT_MATCH_ROOM_SETTINGS.showOpponentMoveRange,
-  }
 }
 
 function isNotFoundError(err: unknown): boolean {

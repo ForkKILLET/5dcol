@@ -11,8 +11,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(dirname, 'src'),
-      '@5dcol/backend/protocol': path.resolve(dirname, '../backend/src/protocol.ts'),
-      '@5dcol/core': path.resolve(dirname, '../core/src/index.ts'),
+      '@5dcol/core': path.resolve(dirname, '../core/src'),
+      '@5dcol/shared': path.resolve(dirname, '../shared/src'),
       '@comp': path.resolve(dirname, 'src/components'),
       '@engine': path.resolve(dirname, 'src/engine'),
     },
