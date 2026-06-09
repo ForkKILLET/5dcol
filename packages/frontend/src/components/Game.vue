@@ -18,13 +18,14 @@ import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
 import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMoveSegment, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
-import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState } from '@engine/gameState'
+import { GAME_STORAGE_KEY, isStoredGameState, type StoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
 import { MatchClient, type MatchRoomStateSubscription, type MatchServerState } from '@engine/matchClient'
 import { formatDuration } from '@engine/record'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 import { type LoopingSound, SoundManager } from '@engine/sound'
-import { createTranslator, getStoredLanguage, LANGUAGES, storeLanguage, type Language } from '@/i18n'
+import { createTranslator, getDefaultLanguage, isLanguage, LANGUAGES, type Language } from '@/i18n'
+import { readStorageJson, removeStorageValue, useStorageReactive, useStorageRef } from '@/composables/storage'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
 import GameTextInput from './GameTextInput.vue'
@@ -34,6 +35,10 @@ const canvas = useTemplateRef('canvas')
 
 const SETTINGS_STORAGE_KEY = '5dcol.settings'
 const MATCH_ROOM_SETTINGS_STORAGE_KEY = '5dcol.matchRoomSettings'
+const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
+const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
+const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
+const LANGUAGE_STORAGE_KEY = '5dcol.language'
 const DEFAULT_GAME_SETTINGS: GameSettings = {
   soundVolume: 1,
   autoSwitchViewPlayer: true,
@@ -51,7 +56,10 @@ const gameStatus = ref<GameStatusView>({
   shadowColor: Color4.toRgbaString(Colors.BoardBorderBlack),
   ended: false,
 })
-const language = ref<Language>(getStoredLanguage())
+const language = useStorageRef<Language>(LANGUAGE_STORAGE_KEY, getDefaultLanguage(), {
+  parse: raw => isLanguage(raw) ? raw : getDefaultLanguage(),
+  serialize: value => value,
+})
 const recordPanelOpen = ref(false)
 const recordText = ref('')
 const recordActions = ref<GameRecordAction[]>([])
@@ -78,10 +86,26 @@ const viewportWidth = ref(window.innerWidth)
 const viewportHeight = ref(window.innerHeight)
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
-const matchNickname = ref(getStoredMatchNickname())
+const matchNickname = useStorageRef(MATCH_NICKNAME_STORAGE_KEY, '', {
+  parse: raw => raw,
+  serialize: value => {
+    const trimmed = value.trim()
+    return trimmed || null
+  },
+})
 const matchPrivateRoomPassword = ref('')
 const customRoomServerId = ref<string | null>(null)
-const matchRoomSettings = reactive<MatchRoomSettings>(getStoredMatchRoomSettings())
+const matchRoomSettings = useStorageReactive<MatchRoomSettings>(
+  MATCH_ROOM_SETTINGS_STORAGE_KEY,
+  DEFAULT_MATCH_ROOM_SETTINGS,
+  {
+    parse: raw => parseStoredMatchRoomSettings(JSON.parse(raw) as unknown).settings,
+    serialize: settings => JSON.stringify({
+      version: MATCH_ROOM_SETTINGS_STORAGE_VERSION,
+      settings: { ...settings },
+    } satisfies StoredMatchRoomSettings),
+  },
+)
 const DEFAULT_SERVERS: Record<string, { name: string }> = {
   'http://localhost:5161': { name: 'Debug Server' },
   'https://genshin.asm.ms:5161': { name: 'Server (China)' },
@@ -99,7 +123,14 @@ const matchServers = reactive<MatchServerState[]>(Object
     error: '',
   }))
 )
-const onlineSession = ref<StoredOnlineSession | null>(getStoredOnlineSession())
+const onlineSession = useStorageRef<StoredOnlineSession | null>(
+  ONLINE_SESSION_STORAGE_KEY,
+  null,
+  {
+    parse: raw => parseStoredOnlineSession(JSON.parse(raw) as unknown),
+    serialize: session => session ? JSON.stringify(session) : null,
+  },
+)
 const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
 const onlineRoomSettings = ref<MatchRoomSettings | null>(null)
 const onlineRoomReady = ref(false)
@@ -110,8 +141,17 @@ const clockNow = ref(Date.now())
 const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
 const onlineError = ref('')
 const onlineRecoveryError = ref('')
-const viewPlayer = ref<Player>(getStoredViewPlayer() ?? Player.W)
-const gameSettings = reactive<GameSettings>(getStoredGameSettings())
+const viewPlayer = useStorageRef<Player>(VIEW_PLAYER_STORAGE_KEY, Player.W, {
+  parse: raw => raw === 'black' ? Player.B : Player.W,
+  serialize: player => player === Player.W ? 'white' : 'black',
+})
+const gameSettings = useStorageReactive<GameSettings>(
+  SETTINGS_STORAGE_KEY,
+  DEFAULT_GAME_SETTINGS,
+  {
+    parse: raw => parseGameSettings(JSON.parse(raw) as Partial<GameSettings>),
+  },
+)
 const logger = new Logger(messages)
 let game: Game | null = null
 let canvasRenderer: CanvasRenderer | null = null
@@ -126,9 +166,6 @@ let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
 
 const query = new URLSearchParams(window.location.search)
-const ONLINE_SESSION_STORAGE_KEY = '5dcol.onlineSession'
-const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
-const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
 const DOCUMENT_TITLE = '5D Chess Online'
 const MATCH_REFRESH_INTERVAL_MS = 5000
 const ONLINE_RECONNECT_DELAY_MS = 1000
@@ -927,7 +964,6 @@ async function recoverOnlineSession() {
 function selectLanguage(nextLanguage: Language) {
   playUISound()
   language.value = nextLanguage
-  storeLanguage(nextLanguage)
   dialogMode.value = 'none'
 }
 
@@ -1047,7 +1083,6 @@ function toggleViewPlayer() {
 
 function updateViewPlayer(player: Player) {
   viewPlayer.value = player
-  storeViewPlayer(player)
 }
 
 function playUISound() {
@@ -1316,135 +1351,50 @@ function refreshSavedGameState() {
 }
 
 function getHasSavedGame() {
-  const storage = getLocalStorage()
-  if (! storage) return false
+  return readStorageJson(
+    GAME_STORAGE_KEY,
+    value => isStoredGameState(value as Partial<StoredGameState>),
+    false,
+  )
+}
 
-  try {
-    const raw = storage.getItem(GAME_STORAGE_KEY)
-    if (! raw) return false
-    return isStoredGameState(JSON.parse(raw))
-  }
-  catch {
-    return false
+function parseStoredOnlineSession(value: unknown): StoredOnlineSession | null {
+  if (! value || typeof value !== 'object') return null
+
+  const session = value as Partial<StoredOnlineSession>
+  if (
+    typeof session.serverAddress !== 'string'
+    || typeof session.roomId !== 'string'
+    || typeof session.roomName !== 'string'
+    || typeof session.sessionId !== 'string'
+  ) return null
+
+  return {
+    serverAddress: session.serverAddress,
+    roomId: session.roomId,
+    roomName: session.roomName,
+    sessionId: session.sessionId,
   }
 }
 
-function getStoredOnlineSession(): StoredOnlineSession | null {
-  const storage = getLocalStorage()
-  if (! storage) return null
-
-  try {
-    const raw = storage.getItem(ONLINE_SESSION_STORAGE_KEY)
-    if (! raw) return null
-    const value = JSON.parse(raw) as Partial<StoredOnlineSession>
-    if (
-      typeof value.serverAddress !== 'string'
-      || typeof value.roomId !== 'string'
-      || typeof value.roomName !== 'string'
-      || typeof value.sessionId !== 'string'
-    ) return null
-    return value as StoredOnlineSession
-  }
-  catch {
-    return null
+function parseGameSettings(value: Partial<GameSettings>): GameSettings {
+  return {
+    soundVolume: parseVolume(value.soundVolume),
+    autoSwitchViewPlayer: parseBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
+    showClock: parseBoolean(value.showClock, DEFAULT_GAME_SETTINGS.showClock),
+    showMoveTravelAnimation: parseBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
+    showOpponentMoveRange: parseBoolean(value.showOpponentMoveRange, DEFAULT_GAME_SETTINGS.showOpponentMoveRange),
   }
 }
 
-function getStoredMatchNickname(): string {
-  const storage = getLocalStorage()
-  if (! storage) return ''
-
-  try {
-    return storage.getItem(MATCH_NICKNAME_STORAGE_KEY) ?? ''
-  }
-  catch {
-    return ''
-  }
-}
-
-function getStoredViewPlayer(): Player | null {
-  const storage = getLocalStorage()
-  if (! storage) return null
-
-  try {
-    const value = storage.getItem(VIEW_PLAYER_STORAGE_KEY)
-    if (value === 'white') return Player.W
-    if (value === 'black') return Player.B
-    return null
-  }
-  catch {
-    return null
-  }
-}
-
-function getStoredGameSettings(): GameSettings {
-  const storage = getLocalStorage()
-  if (! storage) return { ...DEFAULT_GAME_SETTINGS }
-
-  try {
-    const value = JSON.parse(storage.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as Partial<GameSettings>
-    return {
-      soundVolume: getValidVolume(value.soundVolume),
-      autoSwitchViewPlayer: getValidBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
-      showClock: getValidBoolean(value.showClock, DEFAULT_GAME_SETTINGS.showClock),
-      showMoveTravelAnimation: getValidBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
-      showOpponentMoveRange: getValidBoolean(value.showOpponentMoveRange, DEFAULT_GAME_SETTINGS.showOpponentMoveRange),
-    }
-  }
-  catch {
-    return { ...DEFAULT_GAME_SETTINGS }
-  }
-}
-
-function getValidVolume(value: unknown): number {
+function parseVolume(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.min(1, Math.max(0, value))
     : DEFAULT_GAME_SETTINGS.soundVolume
 }
 
-function getValidBoolean(value: unknown, fallback: boolean): boolean {
+function parseBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
-}
-
-function getStoredMatchRoomSettings(): MatchRoomSettings {
-  const storage = getLocalStorage()
-  if (! storage) return { ...DEFAULT_MATCH_ROOM_SETTINGS }
-
-  try {
-    const value = JSON.parse(storage.getItem(MATCH_ROOM_SETTINGS_STORAGE_KEY) ?? '{}') as unknown
-    return parseStoredMatchRoomSettings(value).settings
-  }
-  catch {
-    return { ...DEFAULT_MATCH_ROOM_SETTINGS }
-  }
-}
-
-function storeMatchRoomSettings() {
-  const storage = getLocalStorage()
-  if (! storage) return
-
-  try {
-    const value: StoredMatchRoomSettings = {
-      version: MATCH_ROOM_SETTINGS_STORAGE_VERSION,
-      settings: { ...matchRoomSettings },
-    }
-    storage.setItem(MATCH_ROOM_SETTINGS_STORAGE_KEY, JSON.stringify(value))
-  }
-  catch {
-    // Ignore storage failures; room settings should still apply to newly created rooms.
-  }
-}
-
-function storeGameSettings() {
-  const storage = getLocalStorage()
-  if (! storage) return
-
-  try {
-    storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(gameSettings))
-  }
-  catch {
-    // Ignore storage failures; settings should still apply for the current session.
-  }
 }
 
 function syncGameSettings() {
@@ -1463,32 +1413,6 @@ function getEffectiveShowOpponentMoveRange(settings = onlineRoomSettings.value):
   return gameSettings.showOpponentMoveRange && (settings?.showOpponentMoveRange ?? true)
 }
 
-function storeViewPlayer(player: Player) {
-  const storage = getLocalStorage()
-  if (! storage) return
-
-  try {
-    storage.setItem(VIEW_PLAYER_STORAGE_KEY, player === Player.W ? 'white' : 'black')
-  }
-  catch {
-    // Ignore storage failures; view persistence is only a convenience.
-  }
-}
-
-function storeMatchNickname(nickname: string) {
-  const storage = getLocalStorage()
-  if (! storage) return
-
-  try {
-    const trimmed = nickname.trim()
-    if (trimmed) storage.setItem(MATCH_NICKNAME_STORAGE_KEY, trimmed)
-    else storage.removeItem(MATCH_NICKNAME_STORAGE_KEY)
-  }
-  catch {
-    // Ignore storage failures; nickname persistence is only a convenience.
-  }
-}
-
 function storeOnlineSession(serverAddress: string, state: MatchGameState) {
   if (! state.session) return
 
@@ -1499,42 +1423,14 @@ function storeOnlineSession(serverAddress: string, state: MatchGameState) {
     sessionId: state.session.id,
   }
   onlineSession.value = session
-
-  const storage = getLocalStorage()
-  if (! storage) return
-
-  try {
-    storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify(session))
-  }
-  catch {
-    // Losing the session id only affects reconnect; the active match can continue.
-  }
 }
 
 function clearStoredOnlineSession() {
   onlineSession.value = null
-
-  const storage = getLocalStorage()
-  if (! storage) return
-
-  try {
-    storage.removeItem(ONLINE_SESSION_STORAGE_KEY)
-  }
-  catch {
-    // Ignore storage cleanup failures.
-  }
 }
 
 function clearSavedGameState() {
-  const storage = getLocalStorage()
-  if (! storage) return
-
-  try {
-    storage.removeItem(GAME_STORAGE_KEY)
-  }
-  catch {
-    // Ignore storage cleanup failures; returning to the main menu should still work.
-  }
+  removeStorageValue(GAME_STORAGE_KEY)
 }
 
 function returnToMainMenu(
@@ -1664,11 +1560,8 @@ onUnmounted(() => {
 
 watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
-watch(matchNickname, storeMatchNickname)
-watch(matchRoomSettings, storeMatchRoomSettings, { deep: true })
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
 watch(gameSettings, () => {
-  storeGameSettings()
   syncGameSettings()
 }, { deep: true })
 </script>
