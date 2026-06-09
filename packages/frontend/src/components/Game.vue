@@ -588,10 +588,24 @@ function getMatchRoomSettingsLabel(room: MatchServerState['rooms'][number]) {
     room.private ? t.value('match.setting.private') : '',
     room.settings.showOpponentMoves ? t.value('match.setting.liveMoves') : '',
     room.settings.showOpponentMoveRange ? t.value('match.setting.moveRange') : '',
-    room.settings.canSpectate ? t.value('match.setting.spectate') : '',
+    room.settings.canReplay ? t.value('match.setting.replay') : '',
   ].filter(Boolean)
 
   return enabled.length > 0 ? enabled.join(', ') : t.value('match.setting.default')
+}
+
+function canViewMatchRoom(room: MatchServerState['rooms'][number]) {
+  if (! room.settings.canReplay) return false
+  if (room.status === 'playing') return true
+  return room.status === 'finished'
+    && room.settings.saveRecordToServer
+    && room.actionCount > 0
+}
+
+function getViewMatchRoomLabel(room: MatchServerState['rooms'][number]) {
+  return room.status === 'finished'
+    ? t.value('match.replay')
+    : t.value('match.spectate')
 }
 
 function getSavedOnlineGameMeta(session: StoredOnlineSession) {
@@ -945,6 +959,23 @@ async function joinMatchRoom(server: MatchServerState, roomId: string) {
   }
 }
 
+async function viewMatchRoom(server: MatchServerState, room: MatchServerState['rooms'][number]) {
+  playUISound()
+  if (server.status !== 'connected' || ! canvasRenderer || ! soundManager) return
+
+  try {
+    const client = new MatchClient(server.address)
+    const state = await client.getRoomState(room.id, {
+      password: matchPrivateRoomPassword.value,
+    })
+    startOnlineGame(server.address, state, matchPrivateRoomPassword.value)
+  }
+  catch (err) {
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+  }
+}
+
 async function recoverOnlineSession() {
   const session = onlineSession.value
   if (! session || gameStarted.value || ! canvasRenderer || ! soundManager) return
@@ -1127,17 +1158,17 @@ function startLocalGame() {
   syncGameViewportInsets()
 }
 
-function startOnlineGame(serverAddress: string, state: MatchGameState) {
-  if (! canvasRenderer || ! soundManager || ! state.session || gameStarted.value) return
+function startOnlineGame(serverAddress: string, state: MatchGameState, password = '') {
+  if (! canvasRenderer || ! soundManager || gameStarted.value) return
 
   stopAmbience()
   stopOnlinePolling()
   onlineRoomStatus.value = state.room.status
   onlineRoomSettings.value = state.room.settings
-  onlineRoomReady.value = state.room.status === 'playing'
+  onlineRoomReady.value = state.room.status === 'playing' && state.session !== null
   onlineClock.value = state.clock
-  onlinePlayer.value = state.session.player
-  updateViewPlayer(state.session.player)
+  onlinePlayer.value = state.session?.player ?? null
+  if (state.session) updateViewPlayer(state.session.player)
   onlinePresence.value = state.presence
   onlineConnectionStatus.value = 'connecting'
   onlineError.value = ''
@@ -1148,7 +1179,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     logger,
     debug: query.get('debug') === '1',
     initialActions: state.actions,
-    localPlayer: state.session.player,
+    localPlayer: state.session?.player,
     viewPlayer: viewPlayer.value,
     autoSwitchViewPlayer: false,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
@@ -1165,7 +1196,8 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     onExportRequest: openExportDialog,
     onReturnToMainMenuRequest: returnToMainMenu,
     onActionSubmitted: action => {
-      void submitOnlineAction(serverAddress, state.session!.roomId, state.session!.id, action)
+      if (! state.session) return
+      void submitOnlineAction(serverAddress, state.session.roomId, state.session.id, action)
     },
     onPendingActionChange: action => {
       syncOnlinePendingAction(action)
@@ -1177,8 +1209,8 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   syncGameInputState()
   game.start()
   syncGameViewportInsets()
-  startOnlineRoomStateSubscription(serverAddress, state.session.roomId, state.session.id)
-  startOnlinePolling(serverAddress, state.session.roomId, state.session.id)
+  startOnlineRoomStateSubscription(serverAddress, state.room.id, state.session?.id ?? null, password)
+  if (state.session) startOnlinePolling(serverAddress, state.session.roomId, state.session.id)
 }
 
 function applyOnlineGameState(
@@ -1230,7 +1262,7 @@ async function submitOnlineAction(
   }
 }
 
-function startOnlineRoomStateSubscription(serverAddress: string, roomId: string, sessionId: string) {
+function startOnlineRoomStateSubscription(serverAddress: string, roomId: string, sessionId: string | null, password = '') {
   stopOnlineRoomStateSubscription()
   onlineRoomStateSubscriptionActive = true
   const client = new MatchClient(serverAddress)
@@ -1243,12 +1275,12 @@ function startOnlineRoomStateSubscription(serverAddress: string, roomId: string,
           applyOnlineGameState(serverAddress, event.state)
           break
         case 'pending-action':
-          if (event.sessionId !== sessionId && onlineRoomSettings.value?.showOpponentMoves) {
+          if (sessionId && event.sessionId !== sessionId && onlineRoomSettings.value?.showOpponentMoves) {
             game?.setRemotePendingMoves(event.moves)
           }
           break
         case 'clear-pending-action':
-          if (event.sessionId !== sessionId) game?.clearRemotePendingMoves()
+          if (sessionId && event.sessionId !== sessionId) game?.clearRemotePendingMoves()
           break
       }
     },
@@ -1259,9 +1291,10 @@ function startOnlineRoomStateSubscription(serverAddress: string, roomId: string,
       onError: () => {
         if (! onlineRoomStateSubscriptionActive) return
         onlineConnectionStatus.value = 'reconnecting'
-        scheduleOnlineRoomStateReconnect(serverAddress, roomId, sessionId)
+        scheduleOnlineRoomStateReconnect(serverAddress, roomId, sessionId, password)
       },
     },
+    password,
   )
 }
 
@@ -1279,12 +1312,12 @@ function syncOnlinePendingAction(action: Action | null) {
   else onlineRoomStateSubscription?.clearPendingAction()
 }
 
-function scheduleOnlineRoomStateReconnect(serverAddress: string, roomId: string, sessionId: string) {
+function scheduleOnlineRoomStateReconnect(serverAddress: string, roomId: string, sessionId: string | null, password = '') {
   if (onlineReconnectTimer !== null) return
   onlineReconnectTimer = window.setTimeout(() => {
     onlineReconnectTimer = null
     if (! onlineRoomStateSubscriptionActive) return
-    startOnlineRoomStateSubscription(serverAddress, roomId, sessionId)
+    startOnlineRoomStateSubscription(serverAddress, roomId, sessionId, password)
   }, ONLINE_RECONNECT_DELAY_MS)
 }
 
@@ -1315,7 +1348,7 @@ async function syncOnlineGameState(
 ) {
   try {
     const client = new MatchClient(serverAddress)
-    const state = await client.getRoomState(roomId, sessionId)
+    const state = await client.getRoomState(roomId, { sessionId })
     applyOnlineGameState(serverAddress, state, options)
   }
   catch (err) {
@@ -1883,6 +1916,14 @@ watch(gameSettings, () => {
                     >
                       <span>{{ t('match.join') }}</span>
                     </GameButton>
+                    <GameButton
+                      v-else-if="canViewMatchRoom(room)"
+                      size="small"
+                      :style="menuButtonStyle"
+                      @click="viewMatchRoom(server, room)"
+                    >
+                      <span>{{ getViewMatchRoomLabel(room) }}</span>
+                    </GameButton>
                   </div>
                 </div>
               </div>
@@ -1938,9 +1979,9 @@ watch(gameSettings, () => {
                 </div>
               </div>
               <div class="settings-row">
-                <span>{{ t('match.setting.canSpectate') }}</span>
+                <span>{{ t('match.setting.canReplay') }}</span>
                 <GameToggle
-                  v-model="matchRoomSettings.canSpectate"
+                  v-model="matchRoomSettings.canReplay"
                   :style="menuButtonStyle"
                 />
               </div>

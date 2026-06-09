@@ -161,7 +161,7 @@ export function createBackendServer(options: BackendServerOptions) {
     },
   )
 
-  app.get<{ Params: { id: string }, Querystring: { sessionId?: string } }>(
+  app.get<{ Params: { id: string }, Querystring: { sessionId?: string, password?: string } }>(
     '/rooms/:id/state',
     async (request, reply): Promise<GetMatchRoomStateResponse | MatchErrorResponse> => {
       const room = rooms.find(room => room.id === request.params.id)
@@ -169,6 +169,9 @@ export function createBackendServer(options: BackendServerOptions) {
       const session = request.query.sessionId
         ? room.sessions.find(session => session.id === request.query.sessionId) ?? null
         : null
+      if (! session && ! canViewRoom(room, normalizePassword(request.query.password))) {
+        return sendError(reply, 403, 'Room is not viewable')
+      }
       return {
         state: toGameStateView(room, session, onlineSessionCounts),
       }
@@ -176,7 +179,7 @@ export function createBackendServer(options: BackendServerOptions) {
   )
 
   void app.register(async routeApp => {
-    routeApp.get<{ Params: { id: string }, Querystring: { sessionId?: string } }>(
+    routeApp.get<{ Params: { id: string }, Querystring: { sessionId?: string, password?: string } }>(
       '/rooms/:id/events',
       { websocket: true },
       (socket, request) => {
@@ -189,6 +192,10 @@ export function createBackendServer(options: BackendServerOptions) {
         const session = request.query.sessionId
           ? room.sessions.find(session => session.id === request.query.sessionId) ?? null
           : null
+        if (! session && ! canViewRoom(room, normalizePassword(request.query.password))) {
+          socket.close()
+          return
+        }
         subscribeRoomState(
           socket,
           roomSubscribers,
@@ -394,6 +401,17 @@ function normalizePassword(password: string | null | undefined): string | null {
 
 function canAccessRoom(room: RoomState, password: string | null): boolean {
   return room.password === null || room.password === password
+}
+
+function canViewRoom(room: RoomState, password: string | null): boolean {
+  if (! canAccessRoom(room, password)) return false
+  if (! room.settings.canReplay) return false
+
+  const status = getRoomStatus(room)
+  if (status === 'playing') return true
+  return status === 'finished'
+    && room.settings.saveRecordToServer
+    && room.actions.length > 0
 }
 
 function getCreatorPlayer(setting: MatchRoomCreatorPlayer): Player {

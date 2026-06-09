@@ -32,11 +32,19 @@ export function createRoomStorage(filePath = process.env.MATCH_DATA_FILE ?? DEFA
     save(rooms: RoomState[]) {
       const data: StoredRoomsFile = {
         version: MATCH_STORAGE_VERSION,
-        rooms,
+        rooms: rooms.map(toStoredRoom),
       }
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
       fs.writeFileSync(filePath, `${JSON.stringify(data)}\n`, 'utf8')
     },
+  }
+}
+
+function toStoredRoom(room: RoomState): RoomState {
+  if (room.finishReason === null || room.settings.saveRecordToServer) return room
+  return {
+    ...room,
+    actions: [],
   }
 }
 

@@ -20,13 +20,23 @@ export type MatchRoomFinishReason = z.infer<typeof MatchRoomFinishReasonSchema>
 export type MatchPresenceStatus = z.infer<typeof MatchPresenceStatusSchema>
 export type MatchRoomCreatorPlayer = z.infer<typeof MatchRoomCreatorPlayerSchema>
 
-export const MatchRoomSettingsSchema = z.object({
-  canSpectate: z.boolean().catch(true),
+const MatchRoomSettingsObjectSchema = z.object({
+  canReplay: z.boolean().catch(true),
   creatorPlayer: MatchRoomCreatorPlayerSchema.catch('random'),
   saveRecordToServer: z.boolean().catch(true),
   showOpponentMoves: z.boolean().catch(false),
   showOpponentMoveRange: z.boolean().catch(true),
 })
+
+export const MatchRoomSettingsSchema = z.preprocess((value) => {
+  if (! value || typeof value !== 'object') return value
+  const settings = value as Record<string, unknown>
+  if ('canReplay' in settings || ! ('canSpectate' in settings)) return settings
+  return {
+    ...settings,
+    canReplay: settings.canSpectate,
+  }
+}, MatchRoomSettingsObjectSchema)
 
 export type MatchRoomSettings = z.infer<typeof MatchRoomSettingsSchema>
 
@@ -117,7 +127,7 @@ export const CreateMatchRoomRequestSchema = z.object({
   name: z.string().optional(),
   nickname: z.string().optional(),
   password: z.string().optional(),
-  settings: MatchRoomSettingsSchema.partial().optional(),
+  settings: z.custom<Partial<MatchRoomSettings>>().optional(),
 }).nullish()
 
 export type CreateMatchRoomRequest = NonNullable<z.infer<typeof CreateMatchRoomRequestSchema>>
@@ -247,7 +257,7 @@ export const StoredMatchRoomSettingsSchema = z.object({
 
 export type StoredMatchRoomSettings = z.infer<typeof StoredMatchRoomSettingsSchema>
 
-export const LegacyStoredMatchRoomSettingsSchema = MatchRoomSettingsSchema.partial()
+export const LegacyStoredMatchRoomSettingsSchema = MatchRoomSettingsObjectSchema.partial()
 
 export const StoredMatchRoomsFileSchema = <RoomSchema extends z.ZodType>(roomSchema: RoomSchema) => (
   z.object({

@@ -89,9 +89,13 @@ export class MatchClient {
     return response.state
   }
 
-  async getRoomState(roomId: string, sessionId: string): Promise<MatchGameState> {
+  async getRoomState(roomId: string, options: { sessionId?: string, password?: string } = {}): Promise<MatchGameState> {
+    const query = new URLSearchParams()
+    if (options.sessionId) query.set('sessionId', options.sessionId)
+    if (options.password?.trim()) query.set('password', options.password.trim())
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
     const response = GetMatchRoomStateResponseSchema.parse(await this.request(
-      `/rooms/${encodeURIComponent(roomId)}/state?sessionId=${encodeURIComponent(sessionId)}`,
+      `/rooms/${encodeURIComponent(roomId)}/state${suffix}`,
     ))
     return response.state
   }
@@ -131,12 +135,17 @@ export class MatchClient {
 
   subscribeRoomState(
     roomId: string,
-    sessionId: string,
+    sessionId: string | null,
     listener: MatchRoomEventListener,
     options: MatchRoomStateSubscriptionOptions = {},
+    password = '',
   ): MatchRoomStateSubscription {
+    const query = new URLSearchParams()
+    if (sessionId) query.set('sessionId', sessionId)
+    if (password.trim()) query.set('password', password.trim())
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
     const socket = new WebSocket(
-      this.getWebSocketUrl(`/rooms/${encodeURIComponent(roomId)}/events?sessionId=${encodeURIComponent(sessionId)}`),
+      this.getWebSocketUrl(`/rooms/${encodeURIComponent(roomId)}/events${suffix}`),
     )
     socket.addEventListener('message', (event) => {
       listener(parseMatchRoomEvent(event.data as string))
