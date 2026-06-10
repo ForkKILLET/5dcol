@@ -194,6 +194,7 @@ let clockTimer: number | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
+let pendingLocalActionsSignature = ''
 
 const query = new URLSearchParams(window.location.search)
 const DOCUMENT_TITLE = '5D Chess Online'
@@ -1408,8 +1409,9 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
     onReturnToMainMenuRequest: returnToMainMenu,
-    onActionSubmitted: action => {
+    onActionSubmitted: (action, actions) => {
       if (! state.session) return
+      pendingLocalActionsSignature = JSON.stringify(actions)
       void submitOnlineAction(serverAddress, state.session.roomId, state.session.id, state.session.userId, action)
     },
     onPendingActionChange: action => {
@@ -1417,6 +1419,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     },
   })
   gameStarted.value = true
+  pendingLocalActionsSignature = ''
   mainMenuMode.value = 'home'
   stopMatchServerRefresh()
   syncGameInputState()
@@ -1447,12 +1450,14 @@ function applyOnlineGameState(
   const actionsSignature = JSON.stringify(state.actions)
   if (force || actionsSignature !== onlineActionsSignature) {
     const committedCurrentPreview = ! force && game?.isCurrentPendingActionCommitted(state.actions)
+    const confirmedLocalAction = actionsSignature === pendingLocalActionsSignature
+    if (confirmedLocalAction) pendingLocalActionsSignature = ''
     onlineActionsSignature = actionsSignature
     game?.clearRemotePendingMoves()
     game?.loadActions(state.actions, {
       focus: false,
       force,
-      animate: ! committedCurrentPreview,
+      animate: ! committedCurrentPreview && ! confirmedLocalAction,
     })
   }
 }
@@ -1470,6 +1475,7 @@ async function submitOnlineAction(
     applyOnlineGameState(serverAddress, state)
   }
   catch (err) {
+    pendingLocalActionsSignature = ''
     onlineError.value = err instanceof Error ? err.message : String(err)
     logger.error(onlineError.value)
     await syncOnlineGameState(serverAddress, roomId, sessionId, userId, { force: true })
