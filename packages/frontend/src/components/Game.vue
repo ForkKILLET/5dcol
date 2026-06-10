@@ -23,7 +23,15 @@ import { GAME_STORAGE_KEY, isStoredGameState, type StoredGameState } from '@engi
 import { Logger, type GameMessage } from '@engine/logger'
 import { MatchClient, type MatchRoomStateSubscription, type MatchServerState } from '@engine/matchClient'
 import { formatDuration } from '@engine/record'
-import { CanvasRenderer } from '@engine/canvas/renderer'
+import { type Renderer } from '@engine/renderer'
+import {
+  createGameRenderer,
+  parseRendererPreference,
+  parseRendererPreferenceParam,
+  type RendererBackend,
+  type RendererFallbackReason,
+  type RendererPreference,
+} from '@engine/rendererFactory'
 import { type LoopingSound, SoundManager } from '@engine/sound'
 import { createTranslator, getDefaultLanguage, isLanguage, LANGUAGES, type Language } from '@/i18n'
 import { readStorageJson, removeStorageValue, useStorageReactive, useStorageRef } from '@/composables/storage'
@@ -44,6 +52,7 @@ const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
 const LANGUAGE_STORAGE_KEY = '5dcol.language'
 const DEFAULT_GAME_SETTINGS: GameSettings = {
   soundVolume: 1,
+  renderer: 'auto',
   autoSwitchViewPlayer: true,
   showClock: true,
   showMoveTravelAnimation: true,
@@ -84,6 +93,8 @@ const loadingError = ref('')
 const requiredAssetsReady = ref(false)
 const textureLoadProgress = ref({ completed: 0, total: 0 })
 const soundLoadProgress = ref({ completed: 0, total: 0 })
+const activeRendererBackend = ref<RendererBackend | null>(null)
+const rendererFallbackReason = ref<RendererFallbackReason | null>(null)
 const gameStarted = ref(false)
 const hasSavedGame = ref(false)
 const mainMenuMode = ref<'home' | 'match'>('home')
@@ -165,7 +176,7 @@ const gameSettings = useStorageReactive<GameSettings>(
 )
 const logger = new Logger(messages)
 let game: Game | null = null
-let canvasRenderer: CanvasRenderer | null = null
+let gameRenderer: Renderer | null = null
 let soundManager: SoundManager | null = null
 let ambienceLoop: LoopingSound | null = null
 let matchRefreshTimer: number | null = null
@@ -215,6 +226,7 @@ interface SharedRoomHashPayload {
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 interface GameSettings {
   soundVolume: number
+  renderer: RendererPreference
   autoSwitchViewPlayer: boolean
   showClock: boolean
   showMoveTravelAnimation: boolean
@@ -298,6 +310,13 @@ const languageOptions = computed(() => LANGUAGES.map(value => ({
   value,
   label: t.value(`language.${value}`),
 })))
+const rendererStatusText = computed(() => {
+  if (activeRendererBackend.value === 'webgl') return t.value('settings.rendererStatusWebGL')
+  if (rendererFallbackReason.value === 'unsupported') return t.value('settings.rendererStatusCanvasUnsupported')
+  if (rendererFallbackReason.value === 'create-failed') return t.value('settings.rendererStatusCanvasFailed')
+  if (activeRendererBackend.value === 'canvas') return t.value('settings.rendererStatusCanvas')
+  return t.value('settings.rendererStatusPending')
+})
 
 const primaryButtons = computed(() => (
   toolbarButtons.value.filter(button => primaryButtonIds.has(button.id))
@@ -924,7 +943,7 @@ function openCustomRoomForm(server: MatchServerState) {
 async function createMatchRoom(server: MatchServerState | null = customRoomServer.value) {
   playUISound()
   if (! server) return
-  if (server.status !== 'connected' || ! canvasRenderer || ! soundManager) return
+  if (server.status !== 'connected' || ! gameRenderer || ! soundManager) return
 
   try {
     const client = new MatchClient(server.address)
@@ -946,7 +965,7 @@ async function createMatchRoom(server: MatchServerState | null = customRoomServe
 
 async function joinMatchRoom(server: MatchServerState, roomId: string) {
   playUISound()
-  if (server.status !== 'connected' || ! canvasRenderer || ! soundManager) return
+  if (server.status !== 'connected' || ! gameRenderer || ! soundManager) return
 
   try {
     const client = new MatchClient(server.address)
@@ -966,7 +985,7 @@ async function joinMatchRoom(server: MatchServerState, roomId: string) {
 
 async function viewMatchRoom(server: MatchServerState, room: MatchServerState['rooms'][number]) {
   playUISound()
-  if (server.status !== 'connected' || ! canvasRenderer || ! soundManager) return
+  if (server.status !== 'connected' || ! gameRenderer || ! soundManager) return
 
   try {
     const client = new MatchClient(server.address)
@@ -981,7 +1000,7 @@ async function viewMatchRoom(server: MatchServerState, room: MatchServerState['r
 
 async function returnToMatchRoom(server: MatchServerState, room: MatchServerState['rooms'][number]) {
   playUISound()
-  if (! room.ownSession || gameStarted.value || ! canvasRenderer || ! soundManager) return
+  if (! room.ownSession || gameStarted.value || ! gameRenderer || ! soundManager) return
 
   try {
     const client = new MatchClient(server.address)
@@ -1292,11 +1311,11 @@ function enterAfterLoading() {
 }
 
 function startLocalGame() {
-  if (! canvasRenderer || ! soundManager || gameStarted.value) return
+  if (! gameRenderer || ! soundManager || gameStarted.value) return
 
   playUISound()
   game = new Game({
-    renderer: canvasRenderer,
+    renderer: gameRenderer,
     soundManager,
     logger,
     debug: query.get('debug') === '1',
@@ -1321,7 +1340,7 @@ function startLocalGame() {
 }
 
 function startOnlineGame(serverAddress: string, state: MatchGameState) {
-  if (! canvasRenderer || ! soundManager || gameStarted.value) return
+  if (! gameRenderer || ! soundManager || gameStarted.value) return
 
   stopOnlinePolling()
   onlineRoomRef.value = {
@@ -1340,7 +1359,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   onlineError.value = ''
   onlineActionsSignature = JSON.stringify(state.actions)
   game = new Game({
-    renderer: canvasRenderer,
+    renderer: gameRenderer,
     soundManager,
     logger,
     debug: query.get('debug') === '1',
@@ -1595,6 +1614,7 @@ function parseStoredOnlineGame(value: unknown): StoredOnlineGame | null {
 function parseGameSettings(value: Partial<GameSettings>): GameSettings {
   return {
     soundVolume: parseVolume(value.soundVolume),
+    renderer: parseRendererPreference(value.renderer, DEFAULT_GAME_SETTINGS.renderer),
     autoSwitchViewPlayer: parseBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
     showClock: parseBoolean(value.showClock, DEFAULT_GAME_SETTINGS.showClock),
     showMoveTravelAnimation: parseBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
@@ -1802,10 +1822,15 @@ async function init() {
     soundLoadProgress.value = { completed: 0, total: 0 }
     soundManager = SoundManager.createSilent()
     syncGameSettings()
-    const renderer = await CanvasRenderer.create(canvas.value!, logger, progress => {
-      textureLoadProgress.value = progress
+    const rendererResult = await createGameRenderer(canvas.value!, logger, {
+      backend: parseRendererPreferenceParam(query.get('renderer')) ?? gameSettings.renderer,
+      onProgress: progress => {
+        textureLoadProgress.value = progress
+      },
     })
-    canvasRenderer = renderer
+    gameRenderer = rendererResult.renderer
+    activeRendererBackend.value = rendererResult.backend
+    rendererFallbackReason.value = rendererResult.fallbackReason ?? null
     refreshSavedGameState()
     requiredAssetsReady.value = true
     void loadOptionalSounds()
@@ -1842,7 +1867,7 @@ onUnmounted(() => {
   stopAmbience()
   if (clockTimer !== null) window.clearInterval(clockTimer)
   game?.dispose()
-  canvasRenderer?.dispose()
+  gameRenderer?.dispose()
   soundManager?.dispose()
   document.title = DOCUMENT_TITLE
 })
@@ -2558,6 +2583,39 @@ watch(gameSettings, () => {
                 @change="playUISound"
               />
             </label>
+            <div class="settings-row settings-row--renderer">
+              <span>{{ t('settings.renderer') }}</span>
+              <div class="settings-renderer-control">
+                <div class="settings-radio-group">
+                  <GameToggle
+                    v-model="gameSettings.renderer"
+                    type="radio"
+                    value="auto"
+                    :style="menuButtonStyle"
+                  >
+                    <span>{{ t('settings.rendererAuto') }}</span>
+                  </GameToggle>
+                  <GameToggle
+                    v-model="gameSettings.renderer"
+                    type="radio"
+                    value="webgl"
+                    :style="menuButtonStyle"
+                  >
+                    <span>{{ t('settings.rendererWebGL') }}</span>
+                  </GameToggle>
+                  <GameToggle
+                    v-model="gameSettings.renderer"
+                    type="radio"
+                    value="canvas"
+                    :style="menuButtonStyle"
+                  >
+                    <span>{{ t('settings.rendererCanvas') }}</span>
+                  </GameToggle>
+                </div>
+                <span class="settings-status">{{ rendererStatusText }}</span>
+                <span class="settings-note">{{ t('settings.rendererRestartHint') }}</span>
+              </div>
+            </div>
             <div class="settings-row">
               <span>{{ t('settings.autoSwitchView') }}</span>
               <GameToggle
@@ -3182,7 +3240,8 @@ canvas {
   min-width: 0;
 }
 
-.match-radio-group {
+.match-radio-group,
+.settings-radio-group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3619,6 +3678,38 @@ canvas {
 
 .settings-row--stacked > span {
   transform: translateY(var(--ui-text-y));
+}
+
+.settings-row--renderer {
+  align-items: flex-start;
+}
+
+.settings-renderer-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(var(--button-content-gap) * 0.75);
+  min-width: 0;
+}
+
+.settings-note {
+  max-width: 240px;
+  color: var(--button-text-color);
+  font-size: 14px;
+  line-height: 1.25;
+  opacity: 0.72;
+  text-align: right;
+  white-space: normal;
+}
+
+.settings-status {
+  max-width: 260px;
+  color: var(--button-text-color);
+  font-size: 16px;
+  line-height: 1.2;
+  text-align: right;
+  transform: translateY(var(--ui-text-y));
+  white-space: normal;
 }
 
 .piece-icon {

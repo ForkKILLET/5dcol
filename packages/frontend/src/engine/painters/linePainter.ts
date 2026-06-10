@@ -297,61 +297,68 @@ export class LinePainter {
     },
   ) {
     const color = Color4.withAlpha(stroke, alpha)
-    const addOffset = Vec2.curry.add(offset)
+    const points = this.getLineBranchStrokePoints(geometry, offset, strokeWidth)
+    if (points.length === 0) return
 
-    this.renderLineCurve(
-      addOffset(geometry.source),
-      addOffset(geometry.bend1Control1),
-      addOffset(geometry.bend1Control2),
-      addOffset(geometry.bend1End),
+    this.renderer.submit({
+      type: RenderItemType.Polygon,
       layer,
-      color,
-      strokeWidth,
       order,
-    )
-    this.renderLineCurve(
-      addOffset(geometry.bend1End),
-      addOffset(geometry.bend1End),
-      addOffset(geometry.lineEnd),
-      addOffset(geometry.lineEnd),
-      layer,
-      color,
-      strokeWidth,
-      order,
-    )
-    this.renderLineCurve(
-      addOffset(geometry.lineEnd),
-      addOffset(geometry.bend2Control1),
-      addOffset(geometry.bend2Control2),
-      addOffset(geometry.target),
-      layer,
-      color,
-      strokeWidth,
-      order,
-    )
+      points,
+      fill: color,
+      stroke: null,
+    })
   }
 
-  private renderLineCurve(
-    from: Vec2Type,
-    control1: Vec2Type,
-    control2: Vec2Type,
-    to: Vec2Type,
-    layer: RenderLayer,
-    stroke: Color4,
+  private getLineBranchStrokePoints(
+    geometry: LineBranchGeometry,
+    offset: Vec2Type,
     strokeWidth: number,
-    order: number,
-  ) {
-    this.renderer.submit({
-      type: RenderItemType.Curve,
-      layer,
-      order,
-      from,
-      control1,
-      control2,
-      to,
-      stroke,
-      strokeWidth,
-    })
+  ): Vec2Type[] {
+    const centerline = this.getLineBranchCenterline(geometry)
+    if (centerline.length < 2) return []
+
+    const halfWidth = strokeWidth / 2
+    const upper: Vec2Type[] = []
+    const lower: Vec2Type[] = []
+
+    for (let i = 0; i < centerline.length; i ++) {
+      const point = Vec2.add(centerline[i], offset)
+      const previous = centerline[Math.max(0, i - 1)]
+      const next = centerline[Math.min(centerline.length - 1, i + 1)]
+      const tangent = Vec2.sub(next, previous)
+      const length = Vec2.length(tangent)
+      if (length === 0) continue
+
+      const unit = Vec2.scale(tangent, 1 / length)
+      const normal: Vec2Type = [-unit[1], unit[0]]
+      upper.push(Vec2.add(point, Vec2.scale(normal, halfWidth)))
+      lower.push(Vec2.sub(point, Vec2.scale(normal, halfWidth)))
+    }
+
+    return [
+      ...upper,
+      ...lower.reverse(),
+    ]
+  }
+
+  private getLineBranchCenterline(geometry: LineBranchGeometry): Vec2Type[] {
+    const points: Vec2Type[] = []
+    const pushPoint = (point: Vec2Type) => {
+      const previous = points.at(-1)
+      if (previous && Vec2.length(Vec2.sub(point, previous)) < 0.001) return
+      points.push(point)
+    }
+    const pushCubic = (from: Vec2Type, control1: Vec2Type, control2: Vec2Type, to: Vec2Type) => {
+      for (let i = 0; i <= Sizes.LineBranchCurveSamples; i ++) {
+        pushPoint(CubicBezier.point(from, control1, control2, to, i / Sizes.LineBranchCurveSamples))
+      }
+    }
+
+    pushCubic(geometry.source, geometry.bend1Control1, geometry.bend1Control2, geometry.bend1End)
+    pushPoint(geometry.lineEnd)
+    pushCubic(geometry.lineEnd, geometry.bend2Control1, geometry.bend2Control2, geometry.target)
+    return points
   }
 
   private getLineBranchGeometry(multiverse: Multiverse, line: Line, l: number): LineBranchGeometry | null {

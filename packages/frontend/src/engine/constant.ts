@@ -49,13 +49,13 @@ export namespace Sizes {
   export const MoveArrowHeadWidth = 6
   export const MoveArrowCurveOffset = 30
   export const MoveArrowCurveSamples = 32
-  export const MoveArrowFadeLength = 2
+  export const MoveArrowFadeLength = 4
 
   export const TurnHeight = BoardMarginWidth
   export const TurnWidth = BoardMarginWidth * 2
   export const TurnSize: Vec2 = [TurnWidth, TurnHeight]
   export const BoardTimeOverdrawDevicePixels = 1
-  export const TimelikeLabelFontSize = 30
+  export const TimelikeLabelFontSize = 36
   export const TimelikeLabelInset = 9
   export const SpacelikeLabelFontSize = 4
   export const SpacelikeLabelInset = 0.5
@@ -67,7 +67,7 @@ export namespace Sizes {
   export const LineStartSegmentLength = BoardWidth + BoardGap
   export const LineBranchRadius = (BoardWidth + BoardGap) / 2
   export const LineBranchWidth = LineArrowRadius * 2
-  export const LineBranchCurveSamples = 8
+  export const LineBranchCurveSamples = 32
   export const LineBranchOverlapOffset = (LineBranchWidth + LineBorderWidth * 2) / 3
 
   export const LineShadowOffset: Vec2 = [-6, 5]

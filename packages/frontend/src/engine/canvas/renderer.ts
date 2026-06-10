@@ -188,21 +188,28 @@ export class CanvasRenderer extends Renderer {
   }
 
   drawPolygon(item: PolygonRenderItem): void {
-    this.applyTransform(Mat3.identity())
-    this.ctx.beginPath()
-    const [firstPoint, ...otherPoints] = item.points
-    this.ctx.moveTo(...firstPoint)
-    for (const point of otherPoints) this.ctx.lineTo(...point)
-    this.ctx.closePath()
+    if (item.points.length === 0) return
+
+    this.applyTransform(Mat3.identity(), item.space)
     if (item.fill) {
+      this.beginPolygonPath(item.points)
       this.ctx.fillStyle = this.getFillStyle(item.fill)
       this.ctx.fill()
     }
     if (item.stroke) {
+      this.beginPolygonPath(item.points)
       this.ctx.strokeStyle = this.getFillStyle(item.stroke)
       this.ctx.lineWidth = item.strokeWidth ?? 1
       this.ctx.stroke()
     }
+  }
+
+  private beginPolygonPath(points: [number, number][]) {
+    this.ctx.beginPath()
+    const [firstPoint, ...otherPoints] = points
+    this.ctx.moveTo(...firstPoint)
+    for (const point of otherPoints) this.ctx.lineTo(...point)
+    this.ctx.closePath()
   }
 
   drawCurve(item: CurveRenderItem): void {
@@ -225,7 +232,7 @@ export class CanvasRenderer extends Renderer {
   }
 
   drawCircle(item: CircleRenderItem): void {
-    this.applyTransform(Mat3.identity())
+    this.applyTransform(Mat3.identity(), item.space)
     this.ctx.beginPath()
     this.ctx.arc(item.center[0], item.center[1], item.radius, 0, Math.PI * 2)
     if (item.fill) {
