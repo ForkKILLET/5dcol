@@ -194,7 +194,11 @@ let clockTimer: number | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
+let onlineLiveActions: Action[] = []
 let pendingLocalActionsSignature = ''
+const onlineLiveActionCount = ref(0)
+const hasNewLiveActions = ref(false)
+const spectatorDeductionStartActionIndex = ref<number | null>(null)
 
 const query = new URLSearchParams(window.location.search)
 const DOCUMENT_TITLE = '5D Chess Online'
@@ -249,7 +253,12 @@ interface FiveDPGNSettings {
   includeCheckMarkers: boolean
   includePromotionMarkers: boolean
 }
-const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
+interface RecordRowSection {
+  id: string
+  deduction: boolean
+  rows: GameRecordAction[]
+}
+const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
 const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
 const t = computed(() => createTranslator(language.value))
 const gameStatusText = computed(() => {
@@ -357,6 +366,32 @@ const recordHeaders = computed(() => (
     .filter(line => line.startsWith('['))
 ))
 const recordRows = computed(() => recordActions.value)
+const recordSections = computed(() => {
+  const sections: RecordRowSection[] = []
+  for (const row of recordRows.value) {
+    const deduction = isRecordDeductionAction(row)
+    const last = sections.at(-1)
+    if (last && last.deduction === deduction) {
+      last.rows.push(row)
+      continue
+    }
+    sections.push({
+      id: `${deduction ? 'deduction' : 'record'}-${sections.length}-${row.index}`,
+      deduction,
+      rows: [row],
+    })
+  }
+  return sections
+})
+const isOnlineSpectator = computed(() => onlineRoomStatus.value !== null && onlinePlayer.value === null)
+const shouldShowReturnLiveButton = computed(() => (
+  isOnlineSpectator.value
+  && (
+    hasNewLiveActions.value
+    || spectatorDeductionStartActionIndex.value !== null
+    || recordCurrentActionIndex.value !== onlineLiveActionCount.value
+  )
+))
 const customRoomServer = computed(() => (
   customRoomServerId.value === null
     ? null
@@ -808,11 +843,42 @@ function getRecordMarker(action: GameRecordAction) {
   return action.index === recordCurrentActionIndex.value - 1 ? '*' : ''
 }
 
+function isRecordDeductionAction(action: GameRecordAction) {
+  return (
+    isOnlineSpectator.value
+    && spectatorDeductionStartActionIndex.value !== null
+    && action.index >= spectatorDeductionStartActionIndex.value
+  )
+}
+
 function rollbackToRecordAction(action: GameRecordAction) {
   if (! gameStarted.value) return
   if (onlineSession.value) return
   playUISound()
   game?.rollbackToActionEnd(action.index + 1)
+}
+
+function returnToLiveGame() {
+  if (! gameStarted.value || ! isOnlineSpectator.value || ! game) return
+  playUISound()
+
+  let returnedToLive = false
+  if (game.hasActionPrefix(onlineLiveActions)) {
+    returnedToLive = game.rollbackToActionEnd(onlineLiveActionCount.value)
+  }
+  else {
+    game.loadActions(onlineLiveActions, {
+      focus: false,
+      force: true,
+      animate: false,
+    })
+    returnedToLive = true
+  }
+  if (! returnedToLive) return
+
+  hasNewLiveActions.value = false
+  spectatorDeductionStartActionIndex.value = null
+  pendingLocalActionsSignature = ''
 }
 
 function toggleSecondaryMenu() {
@@ -1378,7 +1444,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   }
   onlineRoomStatus.value = state.room.status
   onlineRoomSettings.value = state.room.settings
-  onlineRoomReady.value = state.room.status === 'playing' && state.session !== null
+  onlineRoomReady.value = state.room.status === 'playing'
   onlineClock.value = state.clock
   onlinePlayer.value = state.session?.player ?? null
   if (state.session) updateViewPlayer(state.session.player)
@@ -1386,13 +1452,17 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   onlineConnectionStatus.value = 'connecting'
   onlineError.value = ''
   onlineActionsSignature = JSON.stringify(state.actions)
+  onlineLiveActions = state.actions
+  onlineLiveActionCount.value = state.actions.length
+  hasNewLiveActions.value = false
+  spectatorDeductionStartActionIndex.value = null
   game = new Game({
     renderer: gameRenderer,
     soundManager,
     logger,
     debug: query.get('debug') === '1',
     initialActions: state.actions,
-    localPlayer: state.session?.player,
+    localPlayer: state.session?.player ?? null,
     viewPlayer: viewPlayer.value,
     autoSwitchViewPlayer: false,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
@@ -1410,7 +1480,10 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     onExportRequest: openExportDialog,
     onReturnToMainMenuRequest: returnToMainMenu,
     onActionSubmitted: (action, actions) => {
-      if (! state.session) return
+      if (! state.session) {
+        spectatorDeductionStartActionIndex.value ??= actions.length - 1
+        return
+      }
       pendingLocalActionsSignature = JSON.stringify(actions)
       void submitOnlineAction(serverAddress, state.session.roomId, state.session.id, state.session.userId, action)
     },
@@ -1449,10 +1522,32 @@ function applyOnlineGameState(
   game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange(state.room.settings))
   const actionsSignature = JSON.stringify(state.actions)
   if (force || actionsSignature !== onlineActionsSignature) {
+    const previousLiveActionCount = onlineLiveActions.length
     const committedCurrentPreview = ! force && game?.isCurrentPendingActionCommitted(state.actions)
     const confirmedLocalAction = actionsSignature === pendingLocalActionsSignature
     if (confirmedLocalAction) pendingLocalActionsSignature = ''
+    const receivedLiveActionUpdate = ! force && ! confirmedLocalAction
     onlineActionsSignature = actionsSignature
+    onlineLiveActions = state.actions
+    onlineLiveActionCount.value = state.actions.length
+    const receivedRemoteAction = receivedLiveActionUpdate && state.actions.length > previousLiveActionCount
+    if (receivedRemoteAction) soundManager?.play('bell.ogg')
+
+    const isSpectatorOffLive = isOnlineSpectator.value
+      && (
+        spectatorDeductionStartActionIndex.value !== null
+        || recordCurrentActionIndex.value !== previousLiveActionCount
+        || recordHasPendingMoves.value
+      )
+    if (
+      isSpectatorOffLive
+      && ! force
+    ) {
+      if (receivedLiveActionUpdate) hasNewLiveActions.value = true
+      return
+    }
+
+    hasNewLiveActions.value = false
     game?.clearRemotePendingMoves()
     game?.loadActions(state.actions, {
       focus: false,
@@ -1679,7 +1774,7 @@ function parseBoolean(value: unknown, fallback: boolean): boolean {
 
 function syncGameSettings() {
   soundManager?.setVolume(gameSettings.soundVolume)
-  game?.setAutoSwitchViewPlayer(onlineSession.value ? false : gameSettings.autoSwitchViewPlayer)
+  game?.setAutoSwitchViewPlayer(onlineRoomStatus.value !== null ? false : gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
   game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange())
   game?.setFiveDPGNOptions(gameSettings.fiveDPGN)
@@ -1796,6 +1891,12 @@ function returnToMainMenu(
   onlineConnectionStatus.value = 'offline'
   onlineError.value = ''
   onlineClock.value = null
+  onlineActionsSignature = ''
+  onlineLiveActions = []
+  onlineLiveActionCount.value = 0
+  hasNewLiveActions.value = false
+  spectatorDeductionStartActionIndex.value = null
+  pendingLocalActionsSignature = ''
   game?.dispose()
   game = null
   toolbarButtons.value = []
@@ -2342,6 +2443,14 @@ watch(gameSettings, () => {
             draggable="false"
           >
         </GameButton>
+        <GameButton
+          v-if="shouldShowReturnLiveButton"
+          :style="menuButtonStyle"
+          :badge="hasNewLiveActions ? '!' : ''"
+          @click="returnToLiveGame"
+        >
+          <span>{{ t('button.returnToLive') }}</span>
+        </GameButton>
       </div>
 
       <div
@@ -2461,47 +2570,57 @@ watch(gameSettings, () => {
             class="record-table"
           >
             <div
-              v-for="(row, index) in recordRows"
-              :key="`${row.serial}-${index}`"
-              class="record-row"
+              v-for="section in recordSections"
+              :key="section.id"
+              class="record-section"
               :class="{
-                'record-row--black': row.player === 'b',
-                'record-row--white': row.player !== 'b',
+                'record-section--deduction': section.deduction,
+                'record-section--plain': ! section.deduction,
               }"
-              @mouseenter="recordHoveredActionIndex = row.index"
-              @mouseleave="recordHoveredActionIndex = null"
             >
-              <span
-                class="record-marker"
-                @click="rollbackToRecordAction(row)"
-              >{{ getRecordMarker(row) }}</span>
-              <span class="record-serial">{{ row.serial }}</span>
-              <span class="record-action">
+              <div
+                v-for="row in section.rows"
+                :key="`${row.serial}-${row.index}`"
+                class="record-row"
+                :class="{
+                  'record-row--black': row.player === 'b',
+                  'record-row--white': row.player !== 'b',
+                }"
+                @mouseenter="recordHoveredActionIndex = row.index"
+                @mouseleave="recordHoveredActionIndex = null"
+              >
                 <span
-                  v-if="row.clock"
-                  class="record-clock"
-                >
-                  {{ t('record.clock', {
-                    elapsed: row.clock.elapsed,
-                    total: row.clock.total,
-                  }) }}
+                  class="record-marker"
+                  @click="rollbackToRecordAction(row)"
+                >{{ getRecordMarker(row) }}</span>
+                <span class="record-serial">{{ row.serial }}</span>
+                <span class="record-action">
+                  <span
+                    v-if="row.clock"
+                    class="record-clock"
+                  >
+                    {{ t('record.clock', {
+                      elapsed: row.clock.elapsed,
+                      total: row.clock.total,
+                    }) }}
+                  </span>
+                  <span
+                    v-for="(move, moveIndex) in row.moves"
+                    :key="`${row.serial}-${moveIndex}`"
+                    class="record-move"
+                  >
+                    <button
+                      v-for="(segment, segmentIndex) in move.segments"
+                      :key="`${row.serial}-${moveIndex}-${segmentIndex}`"
+                      class="record-segment"
+                      type="button"
+                      @click.stop="focusRecordSegment(segment)"
+                    >
+                      {{ segment.text }}
+                    </button>
+                  </span>
                 </span>
-                <span
-                  v-for="(move, moveIndex) in row.moves"
-                  :key="`${row.serial}-${moveIndex}`"
-                  class="record-move"
-                >
-                  <button
-                    v-for="(segment, segmentIndex) in move.segments"
-                  :key="`${row.serial}-${moveIndex}-${segmentIndex}`"
-                  class="record-segment"
-                  type="button"
-                  @click.stop="focusRecordSegment(segment)"
-                >
-                    {{ segment.text }}
-                  </button>
-                </span>
-              </span>
+              </div>
             </div>
           </div>
           <div
@@ -3536,7 +3655,24 @@ canvas {
   row-gap: calc(var(--button-content-gap) * 0.75);
 }
 
+.record-section--plain {
+  display: contents;
+}
+
+.record-section--deduction {
+  box-sizing: border-box;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 20px max-content minmax(0, 1fr);
+  column-gap: var(--button-content-gap);
+  row-gap: calc(var(--button-content-gap) * 0.75);
+  margin: calc(var(--button-content-gap) * 0.25) 0;
+  padding-left: calc(var(--button-content-gap) * 1.35);
+  border-left: 3px solid var(--main-arrow-fill-color);
+}
+
 .record-row {
+  position: relative;
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;

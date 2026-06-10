@@ -36,7 +36,7 @@ export interface GameToolbarButton {
 }
 
 export const isPrimaryGameToolbarButton = (id: string): boolean => (
-  id === 'undo-move' || id === 'deselect-piece' || id === 'submit-moves'
+  id === 'undo-move' || id === 'deselect-piece' || id === 'submit-moves' || id === 'return-live-game'
 )
 
 export const getUndoMoveButtonColor = (is5D: boolean): ButtonColorPreset => (

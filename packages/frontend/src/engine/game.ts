@@ -35,7 +35,7 @@ export interface GameConfig {
   renderer: Renderer
   soundManager: SoundManager
   initialActions?: Action[]
-  localPlayer?: Player
+  localPlayer?: Player | null
   viewPlayer?: Player
   autoSwitchViewPlayer?: boolean
   showMoveTravelAnimation?: boolean
@@ -377,6 +377,10 @@ export class Game extends Disposable(Empty) {
     return Move.isSameList(actions.at(-1)?.moves ?? [], pendingMoves)
   }
 
+  public hasActionPrefix(actions: Action[]): boolean {
+    return isActionPrefix(actions, this.actions)
+  }
+
   public clearRemotePendingMoves() {
     if (this.canControlTurn()) return
     if (this.pendingMoves.length === 0) return
@@ -526,7 +530,11 @@ export class Game extends Disposable(Empty) {
 
   private canControlTurn(): boolean {
     return (this.config.canControlOnlineGame?.() ?? true)
-      && (this.config.localPlayer === undefined || this.config.localPlayer === this.player)
+      && (
+        this.config.localPlayer === undefined
+        || this.config.localPlayer === null
+        || this.config.localPlayer === this.player
+      )
   }
 
   private clearStoredGameState() {
@@ -992,7 +1000,7 @@ export class Game extends Disposable(Empty) {
           || this.submitRequestedDuringMoveAnimation,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
-        labelKey: 'button.submitMoves',
+        labelKey: this.config.localPlayer === null ? 'button.deduceMoves' : 'button.submitMoves',
         piece: null,
         effect: 'pulse',
         onClick: () => {
@@ -1492,8 +1500,8 @@ export class Game extends Disposable(Empty) {
     }
   }
 
-  public rollbackToActionEnd(actionIndex: number) {
-    if (this.isMoveAnimating()) return
+  public rollbackToActionEnd(actionIndex: number): boolean {
+    if (this.isMoveAnimating()) return false
 
     const targetActionIndex = Scalar.clamp(Math.floor(actionIndex), 0, this.actions.length)
     const state = CoreGameState.create(this.actions.slice(0, targetActionIndex))
@@ -1518,6 +1526,7 @@ export class Game extends Disposable(Empty) {
     this.persistGameState()
     this.focusCurrentPresent()
     this.syncToolbarButtons()
+    return true
   }
 
   private requestImportFiveDPGN() {
@@ -1575,6 +1584,8 @@ export class Game extends Disposable(Empty) {
   }
 
   private playTurnStartSound() {
+    if (this.isOnlineGame()) return
+
     if (this.config.localPlayer === this.player) {
       this.soundManager.play('bell.ogg')
       return
@@ -3247,7 +3258,7 @@ const isActionPrefix = (prefix: Action[], actions: Action[]): boolean => {
   if (prefix.length > actions.length) return false
 
   for (let i = 0; i < prefix.length; i += 1) {
-    if (JSON.stringify(prefix[i]) !== JSON.stringify(actions[i])) return false
+    if (! Action.isSame(prefix[i]!, actions[i]!)) return false
   }
   return true
 }
