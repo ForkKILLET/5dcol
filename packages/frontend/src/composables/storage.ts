@@ -92,8 +92,10 @@ function writeStorageValue<T>(
 function cloneFallback<T>(fallback: T): T {
   if (fallback && typeof fallback === 'object') {
     return Array.isArray(fallback)
-      ? [...fallback] as T
-      : { ...fallback }
+      ? fallback.map(item => cloneFallback(item)) as T
+      : Object.fromEntries(
+          Object.entries(fallback).map(([key, value]) => [key, cloneFallback(value)]),
+        ) as T
   }
   return fallback
 }

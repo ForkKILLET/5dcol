@@ -50,9 +50,17 @@ const LAST_ONLINE_GAME_STORAGE_KEY = '5dcol.lastOnlineGame'
 const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
 const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
 const LANGUAGE_STORAGE_KEY = '5dcol.language'
+const DEFAULT_FIVE_DPGN_SETTINGS: FiveDPGNSettings = {
+  includePieceSymbols: false,
+  includeTravelMarkers: false,
+  includeCaptureMarkers: false,
+  includeCheckMarkers: false,
+  includePromotionMarkers: false,
+}
 const DEFAULT_GAME_SETTINGS: GameSettings = {
   soundVolume: 1,
   renderer: 'auto',
+  fiveDPGN: DEFAULT_FIVE_DPGN_SETTINGS,
   autoSwitchViewPlayer: true,
   showClock: true,
   showMoveTravelAnimation: true,
@@ -79,7 +87,7 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordHoveredActionIndex = ref<number | null>(null)
 const secondaryMenuOpen = ref(false)
-const dialogMode = ref<'none' | 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'>('none')
+const dialogMode = ref<'none' | 'language' | 'help' | 'settings' | 'five-dpgn-settings' | 'import' | 'export' | 'share' | 'shared-room'>('none')
 const importText = ref('')
 const importError = ref('')
 const exportText = ref('')
@@ -227,10 +235,18 @@ type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnec
 interface GameSettings {
   soundVolume: number
   renderer: RendererPreference
+  fiveDPGN: FiveDPGNSettings
   autoSwitchViewPlayer: boolean
   showClock: boolean
   showMoveTravelAnimation: boolean
   showOpponentMoveRange: boolean
+}
+interface FiveDPGNSettings {
+  includePieceSymbols: boolean
+  includeTravelMarkers: boolean
+  includeCaptureMarkers: boolean
+  includeCheckMarkers: boolean
+  includePromotionMarkers: boolean
 }
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves'])
 const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
@@ -826,6 +842,16 @@ function openSettingsDialog() {
   dialogMode.value = 'settings'
 }
 
+function openFiveDPGNSettingsDialog() {
+  playUISound()
+  dialogMode.value = 'five-dpgn-settings'
+}
+
+function returnToSettingsDialog() {
+  playUISound()
+  dialogMode.value = 'settings'
+}
+
 function openMatchRoomSettingsDialog() {
   playUISound()
   matchPanelMode.value = 'room-settings'
@@ -1328,6 +1354,7 @@ function startLocalGame() {
     autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     showOpponentMoveRange: gameSettings.showOpponentMoveRange,
+    fiveDPGNOptions: gameSettings.fiveDPGN,
     onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
@@ -1369,6 +1396,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     autoSwitchViewPlayer: false,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     showOpponentMoveRange: getEffectiveShowOpponentMoveRange(state.room.settings),
+    fiveDPGNOptions: gameSettings.fiveDPGN,
     canControlOnlineGame: () => onlineRoomReady.value,
     isExternallyFinished: () => onlineRoomStatus.value === 'finished',
     onToolbarChange: buttons => {
@@ -1615,10 +1643,21 @@ function parseGameSettings(value: Partial<GameSettings>): GameSettings {
   return {
     soundVolume: parseVolume(value.soundVolume),
     renderer: parseRendererPreference(value.renderer, DEFAULT_GAME_SETTINGS.renderer),
+    fiveDPGN: parseFiveDPGNSettings(value.fiveDPGN),
     autoSwitchViewPlayer: parseBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
     showClock: parseBoolean(value.showClock, DEFAULT_GAME_SETTINGS.showClock),
     showMoveTravelAnimation: parseBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
     showOpponentMoveRange: parseBoolean(value.showOpponentMoveRange, DEFAULT_GAME_SETTINGS.showOpponentMoveRange),
+  }
+}
+
+function parseFiveDPGNSettings(value: Partial<FiveDPGNSettings> | undefined): FiveDPGNSettings {
+  return {
+    includePieceSymbols: parseBoolean(value?.includePieceSymbols, DEFAULT_FIVE_DPGN_SETTINGS.includePieceSymbols),
+    includeTravelMarkers: parseBoolean(value?.includeTravelMarkers, DEFAULT_FIVE_DPGN_SETTINGS.includeTravelMarkers),
+    includeCaptureMarkers: parseBoolean(value?.includeCaptureMarkers, DEFAULT_FIVE_DPGN_SETTINGS.includeCaptureMarkers),
+    includeCheckMarkers: parseBoolean(value?.includeCheckMarkers, DEFAULT_FIVE_DPGN_SETTINGS.includeCheckMarkers),
+    includePromotionMarkers: parseBoolean(value?.includePromotionMarkers, DEFAULT_FIVE_DPGN_SETTINGS.includePromotionMarkers),
   }
 }
 
@@ -1637,6 +1676,7 @@ function syncGameSettings() {
   game?.setAutoSwitchViewPlayer(onlineSession.value ? false : gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
   game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange())
+  game?.setFiveDPGNOptions(gameSettings.fiveDPGN)
 }
 
 function getClockStepMs(clock: MatchClock, player: Player, now: number): number {
@@ -2637,8 +2677,80 @@ watch(gameSettings, () => {
                 :style="menuButtonStyle"
               />
             </div>
+            <div class="settings-row">
+              <span>{{ t('settings.fiveDPGN') }}</span>
+              <GameButton
+                size="small"
+                :style="menuButtonStyle"
+                @click="openFiveDPGNSettingsDialog"
+              >
+                <span>{{ t('button.open') }}</span>
+              </GameButton>
+            </div>
           </div>
           <div class="dialog-actions">
+            <GameButton
+              size="secondary"
+              :style="menuButtonStyle"
+              @click="closeDialog()"
+            >
+              <span>{{ t('button.close') }}</span>
+            </GameButton>
+          </div>
+        </div>
+
+        <div
+          v-else-if="dialogMode === 'five-dpgn-settings'"
+          class="dialog-card dialog-card--narrow"
+          :style="menuButtonStyle"
+          @click.stop
+        >
+          <h2 class="dialog-title">{{ t('dialog.fiveDPGNSettingsTitle') }}</h2>
+          <div class="settings-list">
+            <div class="settings-row">
+              <span>{{ t('settings.fiveDPGNPieceSymbols') }}</span>
+              <GameToggle
+                v-model="gameSettings.fiveDPGN.includePieceSymbols"
+                :style="menuButtonStyle"
+              />
+            </div>
+            <div class="settings-row">
+              <span>{{ t('settings.fiveDPGNTravelMarkers') }}</span>
+              <GameToggle
+                v-model="gameSettings.fiveDPGN.includeTravelMarkers"
+                :style="menuButtonStyle"
+              />
+            </div>
+            <div class="settings-row">
+              <span>{{ t('settings.fiveDPGNCaptureMarkers') }}</span>
+              <GameToggle
+                v-model="gameSettings.fiveDPGN.includeCaptureMarkers"
+                :style="menuButtonStyle"
+              />
+            </div>
+            <div class="settings-row">
+              <span>{{ t('settings.fiveDPGNCheckMarkers') }}</span>
+              <GameToggle
+                v-model="gameSettings.fiveDPGN.includeCheckMarkers"
+                :style="menuButtonStyle"
+              />
+            </div>
+            <div class="settings-row">
+              <span>{{ t('settings.fiveDPGNPromotionMarkers') }}</span>
+              <GameToggle
+                v-model="gameSettings.fiveDPGN.includePromotionMarkers"
+                :style="menuButtonStyle"
+              />
+            </div>
+          </div>
+          <div class="dialog-actions">
+            <GameButton
+              size="secondary"
+              :style="menuButtonStyle"
+              @click="returnToSettingsDialog"
+            >
+              <span>{{ t('button.back') }}</span>
+            </GameButton>
             <GameButton
               size="secondary"
               :style="menuButtonStyle"

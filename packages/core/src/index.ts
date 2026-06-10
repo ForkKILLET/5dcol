@@ -2553,14 +2553,142 @@ export namespace FiveDPGN {
   const FILES = 'abcdefgh'
   const MOVE_RE = /\(([+-]?\d+)T([+-]?\d+)\)[A-Z]?([a-h])([1-8])x?(?:>{1,2})?(?:x?\(([+-]?\d+)T([+-]?\d+)\))?x?([a-h])([1-8])(?:=[A-Z])?(?:[+#*~]|!!|!\?|!\?|!|\?\?|\?)*\s*/y
   const ACTION_RE = /(?:\d+[wb]?\.|\/)\s*((?:(?!\d+[wb]?\.|\/\s).)+)/gs
+  const PIECE_SYMBOLS: Partial<Record<Piece, string>> = {
+    [Piece.RW]: 'R',
+    [Piece.NW]: 'N',
+    [Piece.BW]: 'B',
+    [Piece.QW]: 'Q',
+    [Piece.KW]: 'K',
+    [Piece.RB]: 'R',
+    [Piece.NB]: 'N',
+    [Piece.BB]: 'B',
+    [Piece.QB]: 'Q',
+    [Piece.KB]: 'K',
+  }
 
-  export const exportGameState = ({ actions }: Pick<GameState, 'actions'>): string => {
+  export interface ExportOptions {
+    includePieceSymbols?: boolean
+    includeTravelMarkers?: boolean
+    includeCaptureMarkers?: boolean
+    includeCheckMarkers?: boolean
+    includePromotionMarkers?: boolean
+  }
+
+  export interface FormattedAction {
+    index: number
+    serial: string
+    player: 'w' | 'b'
+    moves: FormattedMove[]
+  }
+
+  export interface FormattedMove {
+    text: string
+    segments: FormattedMoveSegment[]
+  }
+
+  export interface FormattedMoveSegment {
+    text: string
+    board: CoordTimelike
+  }
+
+  interface MoveFormatContext {
+    piece: Piece
+    capture: boolean
+    branching: boolean
+    promotion: boolean
+    suffix: string
+  }
+
+  type ResolvedExportOptions = Required<ExportOptions>
+
+  const DEFAULT_EXPORT_OPTIONS: ResolvedExportOptions = {
+    includePieceSymbols: false,
+    includeTravelMarkers: false,
+    includeCaptureMarkers: false,
+    includeCheckMarkers: false,
+    includePromotionMarkers: false,
+  }
+
+  export const exportGameState = (
+    { actions }: Pick<GameState, 'actions'>,
+    options: ExportOptions = {},
+  ): string => {
+    const formattedActions = formatActions(actions, options)
     const lines = [
       '[Board "Standard"]',
       '',
-      ...actions.map((action, index) => `${getTurnSerial(index)} ${action.moves.map(formatMove).join(' ')}`),
+      ...formattedActions.map(action => `${action.serial} ${action.moves.map(move => move.text).join(' ')}`),
     ]
     return `${lines.join('\n').trim()}\n`
+  }
+
+  export const formatActions = (
+    actions: readonly Action[],
+    options: ExportOptions = {},
+  ): FormattedAction[] => {
+    const resolvedOptions = resolveExportOptions(options)
+    let multiverse = Multiverse.createInitial()
+    let player = Player.W
+
+    return actions.map((action, actionIndex) => {
+      const moves: FormattedMove[] = []
+
+      for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex ++) {
+        const move = action.moves[moveIndex]
+        const piece = getMovePiece(multiverse, move, player)
+        const context: MoveFormatContext = {
+          piece,
+          capture: isCaptureMove(multiverse, move, player, piece),
+          branching: isBranchingMove(multiverse, move, player),
+          promotion: isPromotionMove(piece, move.to),
+          suffix: '',
+        }
+        const checksBefore = resolvedOptions.includeCheckMarkers
+          ? new Set(getChecksGiven(multiverse, player).map(getMoveKey))
+          : null
+
+        multiverse = Multiverse.applyMove(
+          move,
+          player,
+          multiverse,
+          actionIndex * GameState.MOVE_ORDER_STRIDE + moveIndex,
+        )
+        if (
+          resolvedOptions.includeCheckMarkers
+          && getChecksGiven(multiverse, player).some(check => ! checksBefore?.has(getMoveKey(check)))
+        ) {
+          context.suffix = '+'
+        }
+        moves.push(formatMove(move, context, resolvedOptions))
+      }
+
+      if (resolvedOptions.includeCheckMarkers && moves.length > 0 && actionIndex === actions.length - 1) {
+        const checkmateStatus = GameState.getCheckmateStatus({
+          multiverse,
+          player: Players.opponent(player),
+        })
+        if (checkmateStatus === 'checkmate') {
+          const lastMove = moves[moves.length - 1]
+          const withoutCheck = lastMove.text.endsWith('+') ? lastMove.text.slice(0, -1) : lastMove.text
+          lastMove.text = `${withoutCheck}#`
+          const lastSegment = lastMove.segments[lastMove.segments.length - 1]
+          if (lastSegment) {
+            lastSegment.text = lastSegment.text.endsWith('+')
+              ? `${lastSegment.text.slice(0, -1)}#`
+              : `${lastSegment.text}#`
+          }
+        }
+      }
+
+      const formattedAction = {
+        index: actionIndex,
+        serial: getTurnSerial(actionIndex),
+        player: player === Player.W ? 'w' as const : 'b' as const,
+        moves,
+      }
+      player = Players.opponent(player)
+      return formattedAction
+    })
   }
 
   export const importGameState = (input: string): GameState => {
@@ -2635,18 +2763,109 @@ export namespace FiveDPGN {
     y: 8 - Number(rank),
   })
 
-  const formatMove = ({ from, to }: Move): string => {
+  const formatMove = (
+    { from, to }: Move,
+    context: MoveFormatContext,
+    options: ResolvedExportOptions,
+  ): FormattedMove => {
     const fromBoard = formatBoard(from)
     const fromSquare = formatSquare(from)
+    const fromText = `${fromBoard}${formatPieceSymbol(context.piece, options)}${fromSquare}`
+    const promotion = options.includePromotionMarkers && context.promotion ? '=Q' : ''
+    const suffix = options.includeCheckMarkers ? context.suffix : ''
+    const capture = options.includeCaptureMarkers && context.capture ? 'x' : ''
     const toSquare = formatSquare(to)
-    return Coord.isSameBoard(from, to)
-      ? `${fromBoard}${fromSquare}${toSquare}`
-      : `${fromBoard}${fromSquare}${formatBoard(to)}${toSquare}`
+    if (Coord.isSameBoard(from, to)) {
+      const text = `${fromText}${capture}${toSquare}${promotion}${suffix}`
+      return {
+        text,
+        segments: [{
+          text,
+          board: from,
+        }],
+      }
+    }
+
+    const travel = options.includeTravelMarkers
+      ? context.branching ? '>>' : '>'
+      : ''
+    const sourceText = fromText
+    const targetText = `${travel}${capture}${formatBoard(to)}${toSquare}${promotion}${suffix}`
+    return {
+      text: `${sourceText}${targetText}`,
+      segments: [
+        {
+          text: sourceText,
+          board: from,
+        },
+        {
+          text: targetText,
+          board: to,
+        },
+      ],
+    }
   }
 
   const formatBoard = ({ l, t }: CoordTimelike): string => `(${l}T${t})`
 
   const formatSquare = ({ x, y }: CoordSpacelike): string => `${FILES[x]}${8 - y}`
+
+  const formatPieceSymbol = (piece: Piece, options: ResolvedExportOptions): string => (
+    options.includePieceSymbols ? PIECE_SYMBOLS[piece] ?? '' : ''
+  )
+
+  const resolveExportOptions = (options: ExportOptions): ResolvedExportOptions => ({
+    ...DEFAULT_EXPORT_OPTIONS,
+    ...options,
+  })
+
+  const getMovePiece = (multiverse: Multiverse, { from }: Move, player: Player): Piece => {
+    const board = Multiverse.getBoard(multiverse, from, player)
+    return board ? Board.getPiece(from, board) : Piece.E
+  }
+
+  const isCaptureMove = (
+    multiverse: Multiverse,
+    { from, to }: Move,
+    player: Player,
+    piece: Piece,
+  ): boolean => {
+    const targetBoard = Multiverse.getBoard(multiverse, to, player)
+    const targetPiece = targetBoard ? Board.getPiece(to, targetBoard) : Piece.E
+    if (Pieces.getPlayer(targetPiece) === Players.opponent(player)) return true
+
+    if (! Coord.isSameBoard(from, to)) return false
+    if (piece !== Piece.PW && piece !== Piece.PB) return false
+    if (Math.abs(to.x - from.x) !== 1) return false
+
+    const sourceBoard = Multiverse.getBoard(multiverse, from, player)
+    if (! sourceBoard) return false
+    return Pieces.getPlayer(Board.getPiece({ x: to.x, y: from.y }, sourceBoard)) === Players.opponent(player)
+  }
+
+  const isBranchingMove = (multiverse: Multiverse, { from, to }: Move, player: Player): boolean => {
+    if (Coord.isSameBoard(from, to)) return false
+
+    const line = Multiverse.getLine(multiverse, to.l)
+    const latestM = Line.getLatestBoardIndex(line)
+    if (latestM === null) return false
+    return Coord.boardIndex(to, player) < latestM
+  }
+
+  const isPromotionMove = (piece: Piece, to: CoordSpacelike): boolean => (
+    Pieces.promotePawn(piece, to) !== piece
+  )
+
+  const getChecksGiven = (multiverse: Multiverse, attackingPlayer: Player): Move[] => (
+    Multiverse.findChecks(
+      Multiverse.createPhantom(multiverse, Players.opponent(attackingPlayer)),
+      attackingPlayer,
+    )
+  )
+
+  const getMoveKey = ({ from, to }: Move): string => (
+    `${from.l}:${from.t}:${from.x}:${from.y}->${to.l}:${to.t}:${to.x}:${to.y}`
+  )
 
   const getTurnSerial = (actionIndex: number): string => {
     const turn = Math.floor(actionIndex / 2) + 1

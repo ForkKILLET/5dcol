@@ -40,6 +40,7 @@ export interface GameConfig {
   autoSwitchViewPlayer?: boolean
   showMoveTravelAnimation?: boolean
   showOpponentMoveRange?: boolean
+  fiveDPGNOptions?: FiveDPGN.ExportOptions
   canControlOnlineGame?: () => boolean
   isExternallyFinished?: () => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
@@ -185,6 +186,7 @@ export class Game extends Disposable(Empty) {
     this.autoSwitchViewPlayer = config.autoSwitchViewPlayer ?? true
     this.showMoveTravelAnimation = config.showMoveTravelAnimation ?? true
     this.showOpponentMoveRange = config.showOpponentMoveRange ?? true
+    this.fiveDPGNOptions = config.fiveDPGNOptions ?? {}
     this.layout.setViewPlayer(this.viewPlayer)
   }
 
@@ -240,6 +242,7 @@ export class Game extends Disposable(Empty) {
   private autoSwitchViewPlayer = true
   private showMoveTravelAnimation = true
   private showOpponentMoveRange = true
+  private fiveDPGNOptions: FiveDPGN.ExportOptions = {}
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -329,6 +332,12 @@ export class Game extends Disposable(Empty) {
   public setShowOpponentMoveRange(enabled: boolean) {
     this.showOpponentMoveRange = enabled
     if (! enabled) this.hoverPiece = null
+  }
+
+  public setFiveDPGNOptions(options: FiveDPGN.ExportOptions) {
+    this.fiveDPGNOptions = { ...options }
+    this.recordSignature = ''
+    this.syncRecord()
   }
 
   public setRemotePendingMoves(moves: Move[], { animate = true }: { animate?: boolean } = {}) {
@@ -1428,10 +1437,10 @@ export class Game extends Disposable(Empty) {
 
   public getFiveDPGNExport(): GameExportRequest {
     return {
-      text: FiveDPGN.exportGameState({ actions: this.actions }),
+      text: FiveDPGN.exportGameState({ actions: this.actions }, this.fiveDPGNOptions),
       hasPendingMoves: this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
-      actions: buildGameRecordActions(this.actions),
+      actions: buildGameRecordActions(this.actions, this.fiveDPGNOptions),
     }
   }
 
