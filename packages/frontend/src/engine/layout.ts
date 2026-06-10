@@ -33,11 +33,11 @@ export class GameLayout {
   }
 
   getDisplayLine(l: number): number {
-    return this.viewPlayer === Player.W ? -l : l
+    return this.viewPlayer === Player.W ? l : -l
   }
 
   getLogicalLine(displayLine: number): number {
-    return this.viewPlayer === Player.W ? -displayLine : displayLine
+    return this.viewPlayer === Player.W ? displayLine : -displayLine
   }
 
   setViewportInsets(insets: Partial<ViewportInsets>) {

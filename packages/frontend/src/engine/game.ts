@@ -394,7 +394,7 @@ export class Game extends Disposable(Empty) {
     if (this.viewPlayer === player) return
 
     const shouldMirrorCameraY = this.layout.getDisplayLine(1) !== (
-      player === Player.W ? -1 : 1
+      player === Player.W ? 1 : -1
     )
     if (shouldMirrorCameraY) {
       const camera = this.renderer.getCamera()
