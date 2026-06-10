@@ -358,6 +358,12 @@ export namespace Pieces {
   export const isRoyal = (piece: Piece): boolean => (
     piece === Piece.KW || piece === Piece.KB
   )
+
+  export const promotePawn = (piece: Piece, to: CoordSpacelike): Piece => {
+    if (piece === Piece.PW && to.y === 0) return Piece.QW
+    if (piece === Piece.PB && to.y === 7) return Piece.QB
+    return piece
+  }
 }
 
 export namespace Players {
@@ -1340,20 +1346,20 @@ export namespace Multiverse {
     Board.setPiece(from, boardFromNew, Piece.E)
     if (Coord.isSameBoard(from, to)) {
       applyEnPassantCapture(boardFromNew, piece, from, to)
-      Board.setPiece(to, boardFromNew, piece)
+      Board.setPiece(to, boardFromNew, Pieces.promotePawn(piece, to))
       applyCastlingRookMove(boardFromNew, piece, from, to)
     }
     else if (Coord.isFreshBoard(to, multiverse, player)) {
       const boardToNew = advance(to, player, multiverse)
       updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
       setBoardCreation(boardToNew, move, player, 'target', order)
-      Board.setPiece(to, boardToNew, piece)
+      Board.setPiece(to, boardToNew, Pieces.promotePawn(piece, to))
     }
     else {
       const boardToNew = fork(to, player, multiverse)
       updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
       setBoardCreation(boardToNew, move, player, 'target', order)
-      Board.setPiece(to, boardToNew, piece)
+      Board.setPiece(to, boardToNew, Pieces.promotePawn(piece, to))
     }
     multiverse.lastMove = move
   })
@@ -1956,7 +1962,7 @@ const createPhysicalSemimoveBoard = (
   const piece = Board.getPiece(from, board)
   Board.setPiece(from, board, Piece.E)
   applyPhysicalEnPassantCapture(board, piece, from, to)
-  Board.setPiece(to, board, piece)
+  Board.setPiece(to, board, Pieces.promotePawn(piece, to))
   applyPhysicalCastlingRookMove(board, piece, from, to)
   return board
 }
@@ -1984,7 +1990,8 @@ const createArrivingSemimoveBoard = (
   if (! source || ! target) throw new Error('Cannot create arriving semimove from missing board')
 
   const board = Board.clone(target)
-  Board.setPiece(to, board, Board.getPiece(from, source))
+  const piece = Board.getPiece(from, source)
+  Board.setPiece(to, board, Pieces.promotePawn(piece, to))
   return board
 }
 
