@@ -127,6 +127,14 @@ export class WebGLRenderer extends Renderer {
     return new WebGLRenderer(textureManager, canvas, gl, logger)
   }
 
+  protected getDisplaySize() {
+    const { width, height } = this.canvas.getBoundingClientRect()
+    return {
+      widthCss: width || window.innerWidth,
+      heightCss: height || window.innerHeight,
+    }
+  }
+
   setScreen(screen: Screen): void {
     super.setScreen(screen)
 

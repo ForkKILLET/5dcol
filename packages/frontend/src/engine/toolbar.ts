@@ -80,5 +80,5 @@ export const toToolbarButtonColors = (
 const getPieceImageUrl = (piece: Piece): string => {
   const textureId = PIECE_TO_TEXTURE_ID.get(piece)
   if (textureId === undefined) return ''
-  return getAssetUrl(`assets/canvas/textures/${TEXTURE_ID_TO_NAME.get(textureId)!}`)
+  return getAssetUrl(`assets/textures/${TEXTURE_ID_TO_NAME.get(textureId)!}`)
 }

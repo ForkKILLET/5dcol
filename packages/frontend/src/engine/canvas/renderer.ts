@@ -24,6 +24,14 @@ export class CanvasRenderer extends Renderer {
   private canvasBuffer: OffscreenCanvas
   private ctx: OffscreenCanvasRenderingContext2D
 
+  protected getDisplaySize() {
+    const { width, height } = this.canvasDisplay.getBoundingClientRect()
+    return {
+      widthCss: width || window.innerWidth,
+      heightCss: height || window.innerHeight,
+    }
+  }
+
   setScreen(screen: Screen): void {
     super.setScreen(screen)
 

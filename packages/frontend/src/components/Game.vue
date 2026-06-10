@@ -107,8 +107,11 @@ const gameStarted = ref(false)
 const hasSavedGame = ref(false)
 const mainMenuMode = ref<'home' | 'match'>('home')
 const matchPanelMode = ref<'servers' | 'room-settings'>('servers')
-const viewportWidth = ref(window.innerWidth)
-const viewportHeight = ref(window.innerHeight)
+const coarsePointerQuery = window.matchMedia('(hover: none) and (pointer: coarse)')
+const initialViewportSize = getViewportSize()
+const viewportWidth = ref(initialViewportSize.width)
+const viewportHeight = ref(initialViewportSize.height)
+const hasCoarsePointer = ref(coarsePointerQuery.matches)
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
 const matchNickname = useStorageRef(MATCH_NICKNAME_STORAGE_KEY, '', {
@@ -413,6 +416,11 @@ const mainMenuStartText = computed(() => (
   hasSavedGame.value ? t.value('main.resume') : t.value('main.start')
 ))
 const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
+const gameButtonScale = computed(() => (
+  hasCoarsePointer.value
+    ? Math.min(1, Math.max(0.62, viewportHeight.value / 720))
+    : 1
+))
 const mainArrowGeometry = computed(() => getMainArrowGeometry(
   mainMenuLayout.value.arrowWidth,
   mainMenuLayout.value.arrowHeight,
@@ -426,49 +434,53 @@ const mainArrowStyle = computed(() => ({
 }))
 const uiStyle = computed(() => {
   const menuCardPreset = viewButtonPreset.value
+  const buttonScale = gameButtonScale.value
+  const scaled = (value: number) => value * buttonScale
   return {
-  '--button-width': `${Sizes.ButtonWidth}px`,
-  '--secondary-button-width': `${Sizes.SecondaryButtonWidth}px`,
-  '--record-panel-width': `${Sizes.RecordPanelWidth}px`,
-  '--button-circle-size': `${Sizes.ButtonHeight}px`,
-  '--button-height': `${Sizes.ButtonHeight}px`,
-  '--button-top': `${Sizes.ButtonTop}px`,
-  '--button-shadow-offset': `${Sizes.ButtonShadowOffset}px`,
-  '--small-button-shadow-offset': `${Sizes.SmallButtonShadowOffset}px`,
-  '--button-border': `${Sizes.ButtonBorder}px`,
-  '--button-font-size': `${Sizes.ButtonFontSize}px`,
-  '--button-icon-size': `${Sizes.ButtonIconSize}px`,
-  '--button-content-gap': `${Sizes.ButtonContentGap}px`,
-  '--button-shadow-color': Color4.toRgbaString(Colors.Shadow),
-  '--button-pulse-duration': `${Animations.PulseEffectDuration * 2}ms`,
-  '--overlay-mask-color': Color4.toRgbaString(Colors.OverlayMask),
-  '--menu-card-border-color': Color4.toRgbaString(menuCardPreset.border),
-  '--menu-card-fill-color': Color4.toRgbaString(menuCardPreset.fill),
-  '--record-white-bg': Color4.toRgbaString(ButtonColors.White.border),
-  '--record-white-text': Color4.toRgbaString(ButtonColors.White.text),
-  '--record-black-bg': Color4.toRgbaString(ButtonColors.Black.fill),
-  '--record-black-text': Color4.toRgbaString(ButtonColors.Black.text),
-  '--game-status-color': gameStatus.value.color,
-  '--game-status-shadow-color': gameStatus.value.shadowColor,
-  '--main-title-color': Color4.toRgbaString(Colors.BoardBorderWhite),
-  '--main-title-shadow-color': Color4.toRgbaString(Colors.Shadow),
-  '--main-arrow-fill-color': Color4.toRgbaString(Colors.Purple),
-  '--main-arrow-border-color': Color4.toRgbaString(Colors.PurpleDark),
-  '--main-arrow-border-width': `${mainMenuLayout.value.arrowBorderWidth}px`,
-  '--main-menu-center-x': `${mainMenuLayout.value.centerX}px`,
-  '--main-menu-title-left': `${mainMenuLayout.value.titleLeft}px`,
-  '--main-menu-title-top': `${mainMenuLayout.value.titleTop}px`,
-  '--main-title-primary-size': `${mainMenuLayout.value.titlePrimarySize}px`,
-  '--main-title-secondary-size': `${mainMenuLayout.value.titleSecondarySize}px`,
-  '--main-title-primary-shadow-x': `${mainMenuLayout.value.titlePrimaryShadowX}px`,
-  '--main-title-primary-shadow-y': `${mainMenuLayout.value.titlePrimaryShadowY}px`,
-  '--main-title-secondary-shadow-x': `${mainMenuLayout.value.titleSecondaryShadowX}px`,
-  '--main-title-secondary-shadow-y': `${mainMenuLayout.value.titleSecondaryShadowY}px`,
-  '--main-menu-button-width': `${mainMenuLayout.value.buttonWidth}px`,
-  '--main-menu-button-height': `${mainMenuLayout.value.buttonHeight}px`,
-  '--main-menu-button-font-size': `${mainMenuLayout.value.buttonFontSize}px`,
-  '--main-menu-button-gap': `${mainMenuLayout.value.buttonGap}px`,
-  '--main-menu-buttons-top': `${mainMenuLayout.value.buttonsTop}px`,
+    '--button-width': `${scaled(Sizes.ButtonWidth)}px`,
+    '--secondary-button-width': `${scaled(Sizes.SecondaryButtonWidth)}px`,
+    '--record-panel-width': `${Sizes.RecordPanelWidth}px`,
+    '--button-circle-size': `${scaled(Sizes.ButtonHeight)}px`,
+    '--button-height': `${scaled(Sizes.ButtonHeight)}px`,
+    '--button-top': `${scaled(Sizes.ButtonTop)}px`,
+    '--button-shadow-offset': `${scaled(Sizes.ButtonShadowOffset)}px`,
+    '--small-button-shadow-offset': `${scaled(Sizes.SmallButtonShadowOffset)}px`,
+    '--button-border': `${scaled(Sizes.ButtonBorder)}px`,
+    '--button-font-size': `${scaled(Sizes.ButtonFontSize)}px`,
+    '--button-icon-size': `${scaled(Sizes.ButtonIconSize)}px`,
+    '--button-content-gap': `${scaled(Sizes.ButtonContentGap)}px`,
+    '--app-width': `${viewportWidth.value}px`,
+    '--app-height': `${viewportHeight.value}px`,
+    '--button-shadow-color': Color4.toRgbaString(Colors.Shadow),
+    '--button-pulse-duration': `${Animations.PulseEffectDuration * 2}ms`,
+    '--overlay-mask-color': Color4.toRgbaString(Colors.OverlayMask),
+    '--menu-card-border-color': Color4.toRgbaString(menuCardPreset.border),
+    '--menu-card-fill-color': Color4.toRgbaString(menuCardPreset.fill),
+    '--record-white-bg': Color4.toRgbaString(ButtonColors.White.border),
+    '--record-white-text': Color4.toRgbaString(ButtonColors.White.text),
+    '--record-black-bg': Color4.toRgbaString(ButtonColors.Black.fill),
+    '--record-black-text': Color4.toRgbaString(ButtonColors.Black.text),
+    '--game-status-color': gameStatus.value.color,
+    '--game-status-shadow-color': gameStatus.value.shadowColor,
+    '--main-title-color': Color4.toRgbaString(Colors.BoardBorderWhite),
+    '--main-title-shadow-color': Color4.toRgbaString(Colors.Shadow),
+    '--main-arrow-fill-color': Color4.toRgbaString(Colors.Purple),
+    '--main-arrow-border-color': Color4.toRgbaString(Colors.PurpleDark),
+    '--main-arrow-border-width': `${mainMenuLayout.value.arrowBorderWidth}px`,
+    '--main-menu-center-x': `${mainMenuLayout.value.centerX}px`,
+    '--main-menu-title-left': `${mainMenuLayout.value.titleLeft}px`,
+    '--main-menu-title-top': `${mainMenuLayout.value.titleTop}px`,
+    '--main-title-primary-size': `${mainMenuLayout.value.titlePrimarySize}px`,
+    '--main-title-secondary-size': `${mainMenuLayout.value.titleSecondarySize}px`,
+    '--main-title-primary-shadow-x': `${mainMenuLayout.value.titlePrimaryShadowX}px`,
+    '--main-title-primary-shadow-y': `${mainMenuLayout.value.titlePrimaryShadowY}px`,
+    '--main-title-secondary-shadow-x': `${mainMenuLayout.value.titleSecondaryShadowX}px`,
+    '--main-title-secondary-shadow-y': `${mainMenuLayout.value.titleSecondaryShadowY}px`,
+    '--main-menu-button-width': `${mainMenuLayout.value.buttonWidth}px`,
+    '--main-menu-button-height': `${mainMenuLayout.value.buttonHeight}px`,
+    '--main-menu-button-font-size': `${mainMenuLayout.value.buttonFontSize}px`,
+    '--main-menu-button-gap': `${mainMenuLayout.value.buttonGap}px`,
+    '--main-menu-buttons-top': `${mainMenuLayout.value.buttonsTop}px`,
   }
 })
 
@@ -1177,7 +1189,7 @@ function getRecordViewportRightInset() {
 
   const panelWidth = Math.min(
     Sizes.RecordPanelWidth,
-    Math.max(0, window.innerWidth - Sizes.ButtonTop * 2),
+    Math.max(0, viewportWidth.value - Sizes.ButtonTop * 2),
   )
   return panelWidth + Sizes.ButtonTop + Sizes.ButtonShadowOffset
 }
@@ -1188,10 +1200,29 @@ function syncGameViewportInsets() {
   })
 }
 
+function getViewportSize() {
+  const viewport = window.visualViewport
+  return {
+    width: Math.ceil(Math.max(
+      window.innerWidth,
+      viewport?.width ?? 0,
+    )),
+    height: Math.ceil(Math.max(
+      window.innerHeight,
+      viewport?.height ?? 0,
+    )),
+  }
+}
+
 function handleWindowResize() {
-  viewportWidth.value = window.innerWidth
-  viewportHeight.value = window.innerHeight
+  const size = getViewportSize()
+  viewportWidth.value = size.width
+  viewportHeight.value = size.height
   syncGameViewportInsets()
+}
+
+function handleCoarsePointerChange() {
+  hasCoarsePointer.value = coarsePointerQuery.matches
 }
 
 function submitImportDialog() {
@@ -1396,10 +1427,44 @@ function playUISound() {
   if (! loading.value) startAmbience()
 }
 
-function enterAfterLoading() {
+function isMobile() {
+  return (
+    navigator.maxTouchPoints > 0 ||
+    window.matchMedia('(pointer: coarse)').matches
+  )
+}
+
+async function enterImmersiveModeIfNeeded() {
+  if (! isMobile()) return
+
+  if (! document.fullscreenElement) {
+    try {
+      await document.documentElement.requestFullscreen()
+    }
+    catch (err) {
+      logger.warn(`Failed to enter fullscreen: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  const orientation = screen.orientation as ScreenOrientation & {
+    lock?: (orientation: 'landscape') => Promise<void>
+  }
+  if (orientation.lock) {
+    try {
+      await orientation.lock('landscape')
+    }
+    catch (err) {
+      logger.warn(`Failed to lock orientation: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+}
+
+async function enterAfterLoading() {
   if (! requiredAssetsReady.value || loadingError.value) return
-  loading.value = false
   playUISound()
+  await enterImmersiveModeIfNeeded()
+  loading.value = false
+  handleWindowResize()
   startAmbience()
 }
 
@@ -1996,6 +2061,8 @@ async function init() {
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeyDown)
   window.addEventListener('resize', handleWindowResize)
+  window.visualViewport?.addEventListener('resize', handleWindowResize)
+  coarsePointerQuery.addEventListener('change', handleCoarsePointerChange)
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener('blur', handleWindowBlur)
   clockTimer = window.setInterval(() => {
@@ -2006,6 +2073,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleWindowKeyDown)
   window.removeEventListener('resize', handleWindowResize)
+  window.visualViewport?.removeEventListener('resize', handleWindowResize)
+  coarsePointerQuery.removeEventListener('change', handleCoarsePointerChange)
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener('blur', handleWindowBlur)
   stopMatchServerRefresh()
@@ -2038,7 +2107,9 @@ watch(gameSettings, () => {
       @mousedown.stop
       @mouseup.stop
       @pointerdown.stop
+      @pointermove.stop
       @pointerup.stop
+      @pointercancel.stop
       @click.stop
       @contextmenu.prevent.stop
     >
@@ -3163,16 +3234,18 @@ watch(gameSettings, () => {
 <style scoped>
 .game {
   position: fixed;
+  height: 100vh; /* firefox */
   inset: 0;
-  width: 100vw;
-  height: 100vh;
   background-color: #8293b3;
+  overflow: hidden;
+  user-select: none;
 }
 
 canvas {
   display: block;
   width: 100%;
   height: 100%;
+  touch-action: none;
 }
 
 .ui-layer {
@@ -3757,13 +3830,23 @@ canvas {
 }
 
 .dialog-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 10;
   display: grid;
   place-items: center;
+  box-sizing: border-box;
+  padding: var(--button-top);
   background: var(--overlay-mask-color);
   pointer-events: auto;
+}
+
+.loading-backdrop {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100dvh;
+  min-height: 100lvh;
+  background: #8293b3;
 }
 
 .secondary-menu-card {
@@ -3773,6 +3856,9 @@ canvas {
   display: flex;
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 2);
+  box-sizing: border-box;
+  max-height: max(160px, calc(var(--app-height) - var(--button-top) * 2));
+  overflow: auto;
   padding: calc(var(--button-content-gap) * 5);
   border: var(--button-border) solid var(--menu-card-border-color);
   border-radius: 8px;
@@ -3786,7 +3872,10 @@ canvas {
   display: flex;
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 2);
+  box-sizing: border-box;
   width: min(720px, calc(100vw - var(--button-top) * 4));
+  max-height: max(160px, calc(var(--app-height) - var(--button-top) * 2));
+  overflow: auto;
   padding: calc(var(--button-content-gap) * 5);
   border: var(--button-border) solid var(--menu-card-border-color);
   border-radius: 8px;
@@ -3810,7 +3899,9 @@ canvas {
 }
 
 .dialog-textarea {
-  min-height: 220px;
+  min-height: min(220px, 36vh);
+  min-height: min(220px, 36dvh);
+  flex: 1 1 auto;
   padding: calc(var(--button-content-gap) * 2);
   border: var(--button-border) solid var(--button-border-color);
   border-radius: 8px;
@@ -3851,6 +3942,7 @@ canvas {
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 0.5);
   min-width: min(520px, calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10));
+  min-height: 0;
   color: var(--button-text-color);
   text-align: center;
 }
@@ -3886,7 +3978,9 @@ canvas {
 
 .help-content {
   max-width: min(620px, calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10));
+  min-height: 0;
   max-height: min(58vh, 560px);
+  max-height: min(58dvh, 560px);
   overflow: auto;
   color: var(--button-text-color);
   font-size: 18px;
@@ -3905,6 +3999,7 @@ canvas {
   flex-direction: column;
   align-items: center;
   gap: calc(var(--button-content-gap) * 2);
+  min-height: 0;
   width: 100%;
 }
 
@@ -3912,6 +4007,7 @@ canvas {
   display: flex;
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 2);
+  min-height: 0;
   width: min(360px, calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10));
 }
 

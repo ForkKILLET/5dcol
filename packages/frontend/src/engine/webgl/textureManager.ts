@@ -1,7 +1,7 @@
 import { getAssetUrl, type AssetLoadProgressCallback } from '@engine/assets'
 import { getTextureLabel, TEXTURE_ID_TO_NAME, type TextureID, TextureManager, type TextureName } from '@engine/texture'
 
-const WEBGL_TEXTURE_PATH = 'assets/canvas/textures'
+const WEBGL_TEXTURE_PATH = 'assets/textures'
 const SVG_TEXTURE_SIZE = 512
 
 export interface WebGLTextureResource {

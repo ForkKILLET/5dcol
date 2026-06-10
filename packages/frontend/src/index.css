@@ -3,11 +3,27 @@
   src: local("Times New Roman"), local("Georgia"), local("Palatino Linotype"), local("Liberation Serif");
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
+  /* background: #8293b3; */
   color: #fff;
   font-family: "Latin Serif", serif;
 }
 
+
 p {
   margin: 0;
+}
+
+html {
+  background: red;
 }

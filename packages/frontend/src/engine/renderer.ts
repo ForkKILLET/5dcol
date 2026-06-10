@@ -38,13 +38,19 @@ export abstract class Renderer extends Disposable(Empty) {
 
   resize() {
     const dpr = window.devicePixelRatio || 1
-    const widthCss = window.innerWidth
-    const heightCss = window.innerHeight
+    const { widthCss, heightCss } = this.getDisplaySize()
 
     this.setScreen({ dpr, widthCss, heightCss })
 
 
     this.updateProjMats()
+  }
+
+  protected getDisplaySize(): Pick<Screen, 'widthCss' | 'heightCss'> {
+    return {
+      widthCss: window.innerWidth,
+      heightCss: window.innerHeight,
+    }
   }
 
   getScreen(): Screen { return this.screen }

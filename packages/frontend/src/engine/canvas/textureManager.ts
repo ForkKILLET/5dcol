@@ -39,7 +39,7 @@ export type CanvasTexture =
   | CanvasBitmapTexture
   | CanvasSVGTexture
 
-export const CANVAS_TEXTURE_PATH = 'assets/canvas/textures'
+export const CANVAS_TEXTURE_PATH = 'assets/textures'
 
 export namespace SVGParser {
   const IGNORED_TAGS = new Set([

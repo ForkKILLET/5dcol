@@ -75,9 +75,13 @@ export interface GameStatusView {
 
 interface PointerState {
   screen: Vec2
+  activePointerId: number | null
   dragStartScreen: Vec2 | null
   dragLastScreen: Vec2 | null
   dragExceeded: boolean
+  touchPointers: Map<number, Vec2>
+  pinchLastDistance: number | null
+  pinchLastScreen: Vec2 | null
 }
 
 interface BoardFrame {
@@ -210,9 +214,13 @@ export class Game extends Disposable(Empty) {
   private actions: Action[] = []
   private readonly pointer: PointerState = {
     screen: [0, 0],
+    activePointerId: null,
     dragStartScreen: null,
     dragLastScreen: null,
     dragExceeded: false,
+    touchPointers: new Map(),
+    pinchLastDistance: null,
+    pinchLastScreen: null,
   }
   private cameraMotion: CameraMotion | null = null
   private selectedPiece: PieceSelection | null = null
@@ -289,7 +297,7 @@ export class Game extends Disposable(Empty) {
     this.hoverSquare = null
     this.hoverPiece = null
     this.hoverCheckWarning = null
-    this.clearPointerDrag()
+    this.finishPointerGesture()
   }
 
   public setViewPlayer(
@@ -551,52 +559,44 @@ export class Game extends Disposable(Empty) {
     this.collect(Effect.useListener(window, 'resize', () => {
       this.resizeDirty = true
     }))
-
-    this.collect(Effect.useListener(window, 'mousemove', e => {
-      if (this.gameInputDisabled) return
-      const screen: Vec2 = [e.clientX, e.clientY]
-      this.pointer.screen = screen
-      this.updatePointerDragExceeded(screen)
-      this.panByPointerDrag(screen)
-    }))
-
-    this.collect(Effect.useListener(window, 'mousedown', e => {
-      if (this.gameInputDisabled) return
-      if (e.button !== 0) return
-
-      const screen: Vec2 = [e.clientX, e.clientY]
-      this.pointer.screen = screen
-      this.pointer.dragStartScreen = screen
-      this.pointer.dragLastScreen = screen
-      this.pointer.dragExceeded = false
-    }))
-
-    this.collect(Effect.useListener(window, 'mouseup', e => {
-      if (this.gameInputDisabled) {
-        this.finishPointerDrag()
-        return
+    const visualViewport = window.visualViewport
+    if (visualViewport) {
+      const handleVisualViewportResize = () => {
+        this.resizeDirty = true
       }
-      if (e.button !== 0) return
+      visualViewport.addEventListener('resize', handleVisualViewportResize)
+      this.collect(() => visualViewport.removeEventListener('resize', handleVisualViewportResize))
+    }
 
-      const screen: Vec2 = [e.clientX, e.clientY]
-      this.pointer.screen = screen
-      if (! this.pointer.dragExceeded) this.handleBoardClick(screen)
-      this.finishPointerDrag()
+    this.collect(Effect.useListener(window, 'pointermove', e => {
+      this.handlePointerMove(e)
+    }, { passive: false }))
+
+    this.collect(Effect.useListener(window, 'pointerdown', e => {
+      this.handlePointerDown(e)
+    }, { passive: false }))
+
+    this.collect(Effect.useListener(window, 'pointerup', e => {
+      this.handlePointerUp(e)
+    }, { passive: false }))
+
+    this.collect(Effect.useListener(window, 'pointercancel', e => {
+      this.handlePointerCancel(e)
     }))
 
     this.collect(Effect.useListener(window, 'mouseleave', () => {
-      this.finishPointerDrag()
+      this.finishPointerGesture()
     }))
 
     this.collect(Effect.useListener(window, 'blur', () => {
-      this.finishPointerDrag()
+      this.finishPointerGesture()
     }))
 
     this.collect(Effect.useListener(window, 'contextmenu', e => {
       if (this.gameInputDisabled) return
       e.preventDefault()
       if (! this.isMoveAnimating()) this.cancelPieceSelection()
-      this.finishPointerDrag()
+      this.finishPointerGesture()
     }))
 
     this.collect(Effect.useListener(window, 'keydown', e => {
@@ -610,10 +610,144 @@ export class Game extends Disposable(Empty) {
     }, { passive: false }))
   }
 
+  private getPointerScreen(e: PointerEvent): Vec2 {
+    return [e.clientX, e.clientY]
+  }
+
+  private handlePointerDown(e: PointerEvent) {
+    if (this.gameInputDisabled) return
+    if (! e.isPrimary && e.pointerType !== 'touch') return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+
+    const screen = this.getPointerScreen(e)
+    this.pointer.screen = screen
+
+    if (e.pointerType === 'touch') {
+      e.preventDefault()
+      this.pointer.touchPointers.set(e.pointerId, screen)
+      if (this.pointer.touchPointers.size >= 2) {
+        this.startPinchGesture()
+        return
+      }
+    }
+    else if (this.pointer.activePointerId !== null) {
+      return
+    }
+
+    this.pointer.activePointerId = e.pointerId
+    this.pointer.dragStartScreen = screen
+    this.pointer.dragLastScreen = screen
+    this.pointer.dragExceeded = false
+  }
+
+  private handlePointerMove(e: PointerEvent) {
+    if (this.gameInputDisabled) return
+
+    const screen = this.getPointerScreen(e)
+    this.pointer.screen = screen
+
+    if (e.pointerType === 'touch') {
+      e.preventDefault()
+      if (! this.pointer.touchPointers.has(e.pointerId)) return
+      this.pointer.touchPointers.set(e.pointerId, screen)
+      if (this.pointer.touchPointers.size >= 2) {
+        this.updatePinchGesture()
+        return
+      }
+    }
+
+    if (this.pointer.activePointerId !== null && this.pointer.activePointerId !== e.pointerId) return
+    this.updatePointerDragExceeded(screen)
+    this.panByPointerDrag(screen)
+  }
+
+  private handlePointerUp(e: PointerEvent) {
+    if (this.gameInputDisabled) {
+      this.finishPointerGesture()
+      return
+    }
+
+    if (e.pointerType === 'touch') {
+      e.preventDefault()
+      this.pointer.touchPointers.delete(e.pointerId)
+      if (this.pointer.pinchLastDistance !== null) {
+        this.restartDragAfterPinch()
+        return
+      }
+    }
+
+    if (this.pointer.activePointerId !== e.pointerId) return
+    const screen = this.getPointerScreen(e)
+    this.pointer.screen = screen
+    if (! this.pointer.dragExceeded) this.handleBoardClick(screen)
+    this.finishPointerGesture()
+  }
+
+  private handlePointerCancel(e: PointerEvent) {
+    if (e.pointerType === 'touch') this.pointer.touchPointers.delete(e.pointerId)
+    if (this.pointer.activePointerId === e.pointerId || this.pointer.pinchLastDistance !== null) {
+      this.finishPointerGesture()
+    }
+  }
+
+  private startPinchGesture() {
+    const points = [...this.pointer.touchPointers.values()]
+    if (points.length < 2) return
+
+    this.pointer.pinchLastDistance = Math.max(1, Vec2.length(Vec2.sub(points[0]!, points[1]!)))
+    this.pointer.pinchLastScreen = Vec2.scale(Vec2.add(points[0]!, points[1]!), 0.5)
+    this.pointer.dragStartScreen = null
+    this.pointer.dragLastScreen = null
+    this.pointer.dragExceeded = true
+    this.cameraMotion = null
+  }
+
+  private updatePinchGesture() {
+    const points = [...this.pointer.touchPointers.values()]
+    if (points.length < 2 || this.pointer.pinchLastDistance === null || ! this.pointer.pinchLastScreen) return
+
+    const distance = Math.max(1, Vec2.length(Vec2.sub(points[0]!, points[1]!)))
+    const screen = Vec2.scale(Vec2.add(points[0]!, points[1]!), 0.5)
+    this.pointer.screen = screen
+    this.panViewportByScreenDelta(this.pointer.pinchLastScreen, screen)
+
+    const camera = this.renderer.getCamera()
+    this.setCameraScaleAt(screen, Scalar.clamp(
+      camera.scale * (distance / this.pointer.pinchLastDistance),
+      CameraControl.ZoomMin,
+      CameraControl.ZoomMax,
+    ))
+
+    this.pointer.pinchLastDistance = distance
+    this.pointer.pinchLastScreen = screen
+    this.syncCameraMotion()
+  }
+
+  private restartDragAfterPinch() {
+    this.pointer.pinchLastDistance = null
+    this.pointer.pinchLastScreen = null
+    const remaining = [...this.pointer.touchPointers.entries()][0]
+    if (! remaining) {
+      this.finishPointerGesture()
+      return
+    }
+
+    const [pointerId, screen] = remaining
+    this.pointer.activePointerId = pointerId
+    this.pointer.dragStartScreen = screen
+    this.pointer.dragLastScreen = screen
+    this.pointer.dragExceeded = true
+  }
+
   private panByPointerDrag(screen: Vec2) {
     const lastScreen = this.pointer.dragLastScreen
     if (! lastScreen) return
 
+    this.panViewportByScreenDelta(lastScreen, screen)
+    this.pointer.dragLastScreen = screen
+  }
+
+  private panViewportByScreenDelta(lastScreen: Vec2, screen: Vec2) {
     const worldLast = this.renderer.screenToWorld(lastScreen)
     const worldCurrent = this.renderer.screenToWorld(screen)
     const delta = Vec2.sub(worldCurrent, worldLast)
@@ -625,7 +759,6 @@ export class Game extends Disposable(Empty) {
       viewport: null,
       cancelMotion: true,
     })
-    this.pointer.dragLastScreen = screen
   }
 
   private updatePointerDragExceeded(screen: Vec2) {
@@ -637,12 +770,16 @@ export class Game extends Disposable(Empty) {
   }
 
   private clearPointerDrag() {
+    this.pointer.activePointerId = null
     this.pointer.dragStartScreen = null
     this.pointer.dragLastScreen = null
     this.pointer.dragExceeded = false
+    this.pointer.touchPointers.clear()
+    this.pointer.pinchLastDistance = null
+    this.pointer.pinchLastScreen = null
   }
 
-  private finishPointerDrag() {
+  private finishPointerGesture() {
     this.clearPointerDrag()
     this.updateCameraBounds()
   }
