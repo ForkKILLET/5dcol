@@ -136,6 +136,10 @@ interface BoardFocusPulse {
   heldForMotion: boolean
   releaseStartedAt: number | null
 }
+interface BoardActivationAnimation {
+  boardKeys: Set<string>
+  startedAt: number
+}
 interface BoardRenderOptions {
   activeProgress?: number
   temporaryProgress?: number
@@ -226,6 +230,7 @@ export class Game extends Disposable(Empty) {
   private remoteActionMoves: Move[] | null = null
   private remoteActionTargetSignature = ''
   private boardFocusPulse: BoardFocusPulse | null = null
+  private boardActivationAnimation: BoardActivationAnimation | null = null
   private gameEndStatus: Exclude<CheckmateStatus, 'not-checkmate'> | null = null
   private gameEndTrial = false
   private gameEndTrialStatus: Exclude<CheckmateStatus, 'not-checkmate'> | null = null
@@ -831,6 +836,7 @@ export class Game extends Disposable(Empty) {
     this.updateCameraBounds()
     this.updateMoveTravelSound()
     this.updateViewFlipTransition()
+    this.updateBoardActivationAnimation()
     this.render()
     this.renderer.flush()
     this.finalizeSubmittedMoveAfterAnimation()
@@ -865,6 +871,15 @@ export class Game extends Disposable(Empty) {
     if (progress >= 1) {
       if (! transition.applied) this.applyViewPlayer(transition.to)
       this.viewFlipTransition = null
+    }
+  }
+
+  private updateBoardActivationAnimation() {
+    const animation = this.boardActivationAnimation
+    if (! animation) return
+
+    if (this.getBoardActivationAnimationProgress(animation) >= 1) {
+      this.boardActivationAnimation = null
     }
   }
 
@@ -1187,6 +1202,7 @@ export class Game extends Disposable(Empty) {
     if (wasGameEndStatus) this.gameEndTrialStatus = wasGameEndStatus
     this.gameEndStatus = null
     this.syncCheckState()
+    this.boardActivationAnimation = null
     this.moveAnimation = {
       startedAt: performance.now(),
       cameraCenter: [...this.renderer.getCamera().center],
@@ -1249,6 +1265,7 @@ export class Game extends Disposable(Empty) {
     this.pendingMove = pendingMove
     this.gameEndStatus = null
     this.syncCheckState()
+    this.boardActivationAnimation = null
     this.moveAnimation = {
       startedAt: performance.now(),
       cameraCenter: [...this.renderer.getCamera().center],
@@ -1267,6 +1284,7 @@ export class Game extends Disposable(Empty) {
     if (! this.canControlTurn()) return
     if (this.submitRequestedDuringMoveAnimation) return
     if (this.pendingMoves.length === 0) return
+    const undoneMove = this.pendingMoves.at(-1)!
     this.playUndoSound()
     this.pendingMoves.pop()
     this.multiverse = this.replayPendingMoves()
@@ -1281,10 +1299,37 @@ export class Game extends Disposable(Empty) {
     }
     this.syncCheckState()
     this.clearMoveAnimation()
+    this.startBoardActivationAnimation(undoneMove)
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
     this.persistGameState()
     this.notifyPendingActionChange()
+  }
+
+  private startBoardActivationAnimation(pendingMove: PendingMove) {
+    const boardKeys = new Set<string>()
+    const candidates = [
+      pendingMove.from,
+      ...(pendingMove.is5D
+        ? [{
+            l: pendingMove.move.to.l,
+            m: Coord.boardIndex(pendingMove.move.to, this.player),
+          }]
+        : []),
+    ]
+
+    for (const candidate of candidates) {
+      if (this.isTerminalBoard(Multiverse.getLine(this.multiverse, candidate.l), candidate.m)) {
+        boardKeys.add(this.getBoardKey(candidate.l, candidate.m))
+      }
+    }
+
+    this.boardActivationAnimation = boardKeys.size === 0
+      ? null
+      : {
+          boardKeys,
+          startedAt: performance.now(),
+        }
   }
 
   private submitMoves() {
@@ -1689,9 +1734,9 @@ export class Game extends Disposable(Empty) {
     return Line.getLatestBoardIndex(line) === m
   }
 
-  private isActiveBoard(line: Line | null, m: number): boolean {
+  private isTerminalBoard(line: Line | null, m: number): boolean {
     if (! line) return false
-    return Line.getLatestBoardIndex(line) === m && m % 2 === this.player
+    return Line.getLatestBoardIndex(line) === m
   }
 
   private getBoardKey(l: number, m: number): string {
@@ -1782,6 +1827,21 @@ export class Game extends Disposable(Empty) {
   private getMoveAnimationElapsed(): number {
     if (! this.moveAnimation) return Infinity
     return performance.now() - this.moveAnimation.startedAt
+  }
+
+  private getBoardActivationAnimationProgress(animation: BoardActivationAnimation): number {
+    return Scalar.clamp(
+      (performance.now() - animation.startedAt) / Animations.MoveAnimationDuration,
+      0,
+      1,
+    )
+  }
+
+  private getBoardActivationProgress(l: number, m: number, isActive: boolean): number | null {
+    const animation = this.boardActivationAnimation
+    if (! animation || ! isActive) return null
+    if (! animation.boardKeys.has(this.getBoardKey(l, m))) return null
+    return Easing.easeInOut(this.getBoardActivationAnimationProgress(animation))
   }
 
   private getMoveAnimationDuration(): number {
@@ -2198,7 +2258,7 @@ export class Game extends Disposable(Empty) {
 
       for (const [m, board] of Line.getBoardEntries(line)) {
         if (! board) continue
-        this.renderBoard(board, l, m, this.isActiveBoard(line, m), this.isTemporaryBoard(l, m), {
+        this.renderBoard(board, l, m, this.isTerminalBoard(line, m), this.isTemporaryBoard(l, m), {
           temporaryPreset: this.getTemporaryBoardPreset(l, m),
         })
       }
@@ -2261,17 +2321,17 @@ export class Game extends Disposable(Empty) {
         if (! board) continue
         if (isPendingLine && m === pendingMove.from.m) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
+            activeProgress: this.isTerminalBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
         if (isTargetLine && m === targetBoardIndex) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
+            activeProgress: this.isTerminalBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
-        this.renderBoard(board, l, m, this.isActiveBoard(lineCommitted, m), false)
+        this.renderBoard(board, l, m, this.isTerminalBoard(lineCommitted, m), false)
       }
 
       if (l === pendingMove.created.l) {
@@ -2304,11 +2364,11 @@ export class Game extends Disposable(Empty) {
         if (! board) continue
         if (isSourceLine && m === pendingMove.from.m) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
+            activeProgress: this.isTerminalBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
-        this.renderBoard(board, l, m, this.isActiveBoard(lineCommitted, m), false)
+        this.renderBoard(board, l, m, this.isTerminalBoard(lineCommitted, m), false)
       }
 
       if (isSourceLine) this.renderSourceCreatedBoard(pendingMove, progress)
@@ -2354,11 +2414,11 @@ export class Game extends Disposable(Empty) {
         }
         if (isTargetLine && m === targetBoardIndex) {
           this.renderBoard(board, l, m, true, false, {
-            activeProgress: this.isActiveBoard(lineCommitted, m) ? 1 - progress : 0,
+            activeProgress: this.isTerminalBoard(lineCommitted, m) ? 1 - progress : 0,
           })
           continue
         }
-        this.renderBoard(board, l, m, this.isActiveBoard(lineCommitted, m), false)
+        this.renderBoard(board, l, m, this.isTerminalBoard(lineCommitted, m), false)
       }
 
       if (isSourceLine) this.renderSourceCreatedBoard(pendingMove, 1)
@@ -2661,10 +2721,15 @@ export class Game extends Disposable(Empty) {
       ?? Color4.mix(baseActiveBorderFill, temporaryPreset.fill, temporaryProgress)
     const borderColor = Color4.withAlpha(borderColorBase, alpha)
     const activeBorderFill = Color4.withAlpha(activeBorderFillBase, alpha)
+    const explicitActiveProgress = options.activeProgress
+    const boardActivationProgress = explicitActiveProgress === undefined
+      ? this.getBoardActivationProgress(l, m, isActive)
+      : null
     const activeProgress = pendingCheckPreset
       ? 1
-      : (options.activeProgress ?? (isActive ? 1 : 0))
-    const outerBorder = Sizes.BoardBorder + Sizes.ActiveBoardBorder * activeProgress
+      : (boardActivationProgress ?? explicitActiveProgress ?? (isActive ? 1 : 0))
+    const activeBorder = Sizes.ActiveBoardBorder * activeProgress
+    const outerBorder = Sizes.BoardBorder + activeBorder
     const outerBorderPos: Vec2 = [x0 - outerBorder, y0 - outerBorder]
     const outerBorderSize: Vec2 = [
       Sizes.BoardWidth + outerBorder * 2,
@@ -2697,12 +2762,12 @@ export class Game extends Disposable(Empty) {
         type: RenderItemType.RoundRect,
         layer: layers.border,
         pos: [
-          x0 - Sizes.ActiveBoardBorder,
-          y0 - Sizes.ActiveBoardBorder,
+          x0 - activeBorder,
+          y0 - activeBorder,
         ],
         size: [
-          Sizes.BoardWidth + Sizes.ActiveBoardBorder * 2,
-          Sizes.BoardWidth + Sizes.ActiveBoardBorder * 2,
+          Sizes.BoardWidth + activeBorder * 2,
+          Sizes.BoardWidth + activeBorder * 2,
         ],
         radius: innerBorderRadius,
         fill: Color4.withAlpha(activeBorderFill, activeProgress),
