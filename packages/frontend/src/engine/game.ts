@@ -432,7 +432,10 @@ export class Game extends Disposable(Empty) {
     }
     if (animate && ! force && this.tryStartRemoteActionPlayback(actions)) return
 
+    const previousPlayer = this.player
+    const previousActionIndex = this.actionIndex
     this.loadCoreGameState(CoreGameState.create(actions), { focus })
+    this.playLocalTurnStartSoundAfterLoadedAction(previousPlayer, previousActionIndex)
     this.syncToolbarButtons()
     this.syncRecord()
     this.syncStatus()
@@ -1581,6 +1584,16 @@ export class Game extends Disposable(Empty) {
       { name: 'timpani_hit_c3.ogg', nextAfter: 0.5 },
       'timpani_hit_e3.ogg',
     ])
+  }
+
+  private playLocalTurnStartSoundAfterLoadedAction(previousPlayer: Player, previousActionIndex: number) {
+    if (! this.isOnlineGame()) return
+    if (this.isGameEnded()) return
+    if (this.config.localPlayer !== this.player) return
+    if (previousPlayer === this.player) return
+    if (this.actionIndex <= previousActionIndex) return
+
+    this.playTurnStartSound()
   }
 
   private playGameEndSound() {

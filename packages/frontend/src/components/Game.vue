@@ -1452,7 +1452,7 @@ function applyOnlineGameState(
     game?.loadActions(state.actions, {
       focus: false,
       force,
-      animate: state.room.settings.showOpponentMoves && ! committedCurrentPreview,
+      animate: ! committedCurrentPreview,
     })
   }
 }
