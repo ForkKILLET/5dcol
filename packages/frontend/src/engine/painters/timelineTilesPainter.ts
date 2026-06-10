@@ -88,13 +88,15 @@ export class TimelineTilesPainter {
     const alpha = this.getLabelAlpha()
     if (alpha <= 0) return
 
-    const bounds = this.getBoardGridBounds(multiverse)
-    if (! bounds) return
+    const grid = this.getBoardGridInfo(multiverse)
+    if (! grid) return
 
-    const bottomLabelDisplayLine = bounds.displayLMax + 1
+    const bottomLabelDisplayLine = grid.displayLMax + 1
     const bottomLabelLine = this.layout.getLogicalLine(bottomLabelDisplayLine)
     if (bottomLabelDisplayLine >= displayL0 && bottomLabelDisplayLine < displayL1) {
       for (let t = Math.max(0, t0); t < t1; t ++) {
+        if (! grid.occupiedTurns.has(t)) continue
+
         const [pos, size] = this.layout.getTurnRect(bottomLabelLine, t)
         this.renderer.submit({
           type: RenderItemType.Text,
@@ -118,9 +120,11 @@ export class TimelineTilesPainter {
       }
     }
 
-    const rightLabelTurn = Math.floor((bounds.mMax + 1) / 2)
+    const rightLabelTurn = Math.floor((grid.mMax + 1) / 2)
     if (rightLabelTurn >= t0 && rightLabelTurn < t1) {
       for (let displayL = displayL0; displayL < displayL1; displayL ++) {
+        if (! grid.occupiedDisplayLines.has(displayL)) continue
+
         const l = this.layout.getLogicalLine(displayL)
         const [pos, size] = this.layout.getTurnRect(l, rightLabelTurn)
         this.renderer.submit({
@@ -146,21 +150,37 @@ export class TimelineTilesPainter {
     }
   }
 
-  private getBoardGridBounds(multiverse: Multiverse): { displayLMax: number, mMax: number } | null {
+  private getBoardGridInfo(multiverse: Multiverse): {
+    displayLMax: number
+    mMax: number
+    occupiedDisplayLines: Set<number>
+    occupiedTurns: Set<number>
+  } | null {
     let displayLMax = -Infinity
     let mMax = -Infinity
+    const occupiedDisplayLines = new Set<number>()
+    const occupiedTurns = new Set<number>()
 
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
       for (const [m, board] of Line.getBoardEntries(line)) {
         if (! board) continue
-        displayLMax = Math.max(displayLMax, this.layout.getDisplayLine(l))
+
+        const displayL = this.layout.getDisplayLine(l)
+        displayLMax = Math.max(displayLMax, displayL)
         mMax = Math.max(mMax, m)
+        occupiedDisplayLines.add(displayL)
+        occupiedTurns.add(Math.floor(m / 2))
       }
     }
 
     if (! Number.isFinite(displayLMax) || ! Number.isFinite(mMax)) return null
-    return { displayLMax, mMax }
+    return {
+      displayLMax,
+      mMax,
+      occupiedDisplayLines,
+      occupiedTurns,
+    }
   }
 
   private getTileColor(
