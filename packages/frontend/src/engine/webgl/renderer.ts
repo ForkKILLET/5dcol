@@ -152,6 +152,10 @@ export class WebGLRenderer extends Renderer {
     this.gl.viewport(0, 0, widthDevice, heightDevice)
   }
 
+  setCursor(cursor: string): void {
+    this.canvas.style.cursor = cursor
+  }
+
   flush() {
     this.gl.clearColor(0, 0, 0, 0)
     this.gl.clear(this.gl.COLOR_BUFFER_BIT)

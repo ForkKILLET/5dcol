@@ -1793,11 +1793,37 @@ function handleMainMenuCanvasPointerDown(event: PointerEvent) {
   if (! canvas) return
 
   const rect = canvas.getBoundingClientRect()
-  const piece = pickMainMenuFlyingPiece(event.clientX - rect.left, event.clientY - rect.top)
-  if (! piece) return
+  const x = event.clientX - rect.left
+  const y = event.clientY - rect.top
+  const piece = pickMainMenuFlyingPiece(x, y)
+  if (! piece) {
+    updateMainMenuCanvasCursorAt(x, y)
+    return
+  }
 
   playUISound()
   clickMainMenuFlyingPiece(piece)
+  updateMainMenuCanvasCursorAt(x, y)
+}
+
+function handleMainMenuCanvasPointerMove(event: PointerEvent) {
+  const canvas = mainMenuCanvas.value
+  if (! canvas) return
+
+  const rect = canvas.getBoundingClientRect()
+  updateMainMenuCanvasCursorAt(event.clientX - rect.left, event.clientY - rect.top)
+}
+
+function handleMainMenuCanvasPointerLeave() {
+  if (! mainMenuCanvas.value) return
+  mainMenuCanvas.value.style.cursor = ''
+}
+
+function updateMainMenuCanvasCursorAt(x: number, y: number) {
+  const canvas = mainMenuCanvas.value
+  if (! canvas) return
+
+  canvas.style.cursor = pickMainMenuFlyingPiece(x, y) ? 'pointer' : ''
 }
 
 function pickMainMenuFlyingPiece(x: number, y: number): MainMenuFlyingPiece | null {
@@ -2923,6 +2949,8 @@ watch(gameSettings, () => {
           ref="mainMenuCanvas"
           class="main-menu-canvas"
           @pointerdown.stop.prevent="handleMainMenuCanvasPointerDown"
+          @pointermove.stop="handleMainMenuCanvasPointerMove"
+          @pointerleave.stop="handleMainMenuCanvasPointerLeave"
           aria-hidden="true"
         ></canvas>
         <Card

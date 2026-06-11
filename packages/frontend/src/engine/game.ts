@@ -260,6 +260,7 @@ export class Game extends Disposable(Empty) {
   private animationFrame: number | null = null
   private resizeDirty = false
   private gameDisposed = false
+  private canvasCursor = ''
 
   public start() {
     const restored = this.config.initialActions
@@ -285,6 +286,7 @@ export class Game extends Disposable(Empty) {
   public dispose() {
     this.gameDisposed = true
     this.clearMoveAnimation()
+    this.setCanvasCursor('')
     super.dispose()
   }
 
@@ -298,6 +300,7 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.hoverCheckWarning = null
     this.finishPointerGesture()
+    this.syncCanvasCursor()
   }
 
   public setViewPlayer(
@@ -1065,6 +1068,7 @@ export class Game extends Disposable(Empty) {
       this.hoverSquare = null
       this.hoverPiece = null
       this.hoverCheckWarning = null
+      this.syncCanvasCursor()
       this.syncToolbarButtons()
       return
     }
@@ -1082,7 +1086,38 @@ export class Game extends Disposable(Empty) {
     if (! this.selectedPiece && ! this.hoverPiece && canControlTurn && this.showOpponentMoveRange) {
       this.hoverPiece = this.getPendingOpponentPiecePreviewAtScreen(this.pointer.screen)
     }
+    this.syncCanvasCursor()
     this.syncToolbarButtons()
+  }
+
+  private syncCanvasCursor() {
+    this.setCanvasCursor(this.shouldUsePointerCursor() ? 'pointer' : '')
+  }
+
+  private setCanvasCursor(cursor: string) {
+    if (this.canvasCursor === cursor) return
+    this.canvasCursor = cursor
+    this.renderer.setCursor(cursor)
+  }
+
+  private shouldUsePointerCursor(): boolean {
+    if (this.gameInputDisabled || this.isMoveAnimating()) return false
+    if (this.pointer.dragExceeded || this.pointer.pinchLastDistance !== null) return false
+    if (! this.canControlTurn()) return false
+    if (this.hoverCheckWarning) return true
+
+    if (this.selectedPiece && this.hoverSquare) {
+      const { l, m, coord } = this.hoverSquare
+      const { player, targets } = this.selectedPiece
+      if (targets.some(target => (
+        this.isTargetAt(target, l, m, coord, player)
+      ))) return true
+    }
+
+    const selection = this.hoverPiece?.player === this.player
+      ? this.hoverPiece
+      : this.getPieceSelectionAtScreen(this.pointer.screen)
+    return selection !== null
   }
 
   private getToolbarButtons(): ButtonConfig[] {

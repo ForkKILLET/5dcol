@@ -52,6 +52,10 @@ export class CanvasRenderer extends Renderer {
     canvasDisplay.style.height = `${heightCss}px`
   }
 
+  setCursor(cursor: string): void {
+    this.canvasDisplay.style.cursor = cursor
+  }
+
   static async create(
     canvas: HTMLCanvasElement,
     logger: Logger,

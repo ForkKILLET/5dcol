@@ -58,6 +58,8 @@ export abstract class Renderer extends Disposable(Empty) {
     this.screen = screen
   }
 
+  setCursor(_cursor: string): void {}
+
   getCamera(): Camera { return this.camera }
   setCamera(camera: Partial<Camera>) {
     this.camera = { ...this.camera, ...camera }
