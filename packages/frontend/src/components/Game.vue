@@ -15,7 +15,7 @@ import {
   type StoredMatchRoomSettings,
 } from '@5dcol/shared/protocol'
 
-import { Color4 } from '@engine/basic'
+import { Color4, Scalar } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
 import { Game, type GameExportRequest, type GameRecordAction, type GameRecordMoveSegment, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
@@ -40,6 +40,7 @@ import GameIcon from './GameIcon.vue'
 import GameSlider from './GameSlider.vue'
 import GameTextInput from './GameTextInput.vue'
 import GameToggle from './GameToggle.vue'
+import { getAssetUrl } from '@engine/assets.ts'
 
 const canvas = useTemplateRef('canvas')
 
@@ -112,6 +113,9 @@ const initialViewportSize = getViewportSize()
 const viewportWidth = ref(initialViewportSize.width)
 const viewportHeight = ref(initialViewportSize.height)
 const hasCoarsePointer = ref(coarsePointerQuery.matches)
+const mainVortexCycle = ref(0)
+const mainMenuFrameTime = ref(performance.now())
+const mainMenuFlyingPieces = ref<MainMenuFlyingPiece[]>([])
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
 const matchNickname = useStorageRef(MATCH_NICKNAME_STORAGE_KEY, '', {
@@ -146,8 +150,8 @@ const matchRoomSettings = useStorageReactive<MatchRoomSettings>(
   },
 )
 const DEFAULT_SERVERS: Record<string, { name: string }> = {
-  'http://localhost:5161': { name: 'Debug Server' },
   'https://genshin.asm.ms:5161': { name: 'Server (China)' },
+  'http://localhost:5161': { name: 'Debug Server' },
 }
 const DEFAULT_SERVER_IDS = new Set(Object.keys(DEFAULT_SERVERS))
 const expandedMatchServerIds = reactive(new Set(DEFAULT_SERVER_IDS))
@@ -194,6 +198,10 @@ let matchRefreshTimer: number | null = null
 let onlinePollTimer: number | null = null
 let onlineReconnectTimer: number | null = null
 let clockTimer: number | null = null
+let mainVortexAnimationFrame: number | null = null
+let mainVortexAnimationStartedAt = 0
+let mainMenuPieceSpawnTimer: number | null = null
+let mainMenuFlyingPieceId = 0
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
@@ -415,6 +423,7 @@ const menuButtonStyle = computed(() => getPresetButtonStyle(
 const mainMenuStartText = computed(() => (
   hasSavedGame.value ? t.value('main.resume') : t.value('main.start')
 ))
+const mainMenuVisible = computed(() => ! loading.value && ! gameStarted.value)
 const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
 const gameButtonScale = computed(() => (
   hasCoarsePointer.value
@@ -431,6 +440,18 @@ const mainArrowStyle = computed(() => ({
   top: `${mainMenuLayout.value.areaTop}px`,
   width: `${mainMenuLayout.value.arrowWidth}px`,
   height: `${mainMenuLayout.value.arrowHeight}px`,
+}))
+const mainVortexGeometry = computed(() => getMainVortexGeometry(
+  viewportWidth.value,
+  viewportHeight.value,
+  mainMenuLayout.value.scale,
+  mainVortexCycle.value,
+))
+const mainVortexStyle = computed(() => ({
+  '--main-vortex-center-x': `${mainVortexGeometry.value.centerX}px`,
+  '--main-vortex-center-y': `${mainVortexGeometry.value.centerY}px`,
+  '--main-vortex-layer-opacity': String(MAIN_VORTEX_CONFIG.layerOpacity),
+  '--main-vortex-glow-opacity': String(MAIN_VORTEX_CONFIG.glowOpacity),
 }))
 const uiStyle = computed(() => {
   const menuCardPreset = viewButtonPreset.value
@@ -536,6 +557,73 @@ const MAIN_MENU_BASE_LAYOUT: MainMenuLayout = {
   arrowBorderWidth: 4,
 }
 
+const MAIN_VORTEX_CONFIG = {
+  centerXRatio: 0.5,
+  centerYRatio: 0.51,
+  innerRadius: 4,
+  outerRadiusScale: 1.65,
+  ringCount: 42,
+  sectorCount: 8,
+  twistPerRing: 0.24,
+  direction: 1,
+  durationSeconds: 3,
+  glowRadiusScale: 0.36,
+  glowOpacity: 1,
+  layerOpacity: 0.86,
+  radiusGrowth: 7.5,
+  tileInnerOpacity: 0.24,
+  tileOuterOpacity: 0.82,
+  vignetteRadiusScale: 0.9,
+  vignetteOpacity: 0.46,
+}
+
+const MAIN_MENU_PIECE_IMAGES = [
+  'PW', 'NW', 'BW', 'RW', 'QW', 'KW',
+  'PB', 'NB', 'BB', 'RB', 'QB', 'KB',
+].map(piece => getAssetUrl(`assets/textures/pieces/${piece}.svg`))
+
+const MAIN_MENU_FLYING_PIECE_CONFIG = {
+  maxPieces: 24,
+  spawnDelayMinMs: 400,
+  spawnDelayMaxMs: 800,
+  durationMinMs: 5000,
+  durationMaxMs: 5000,
+  centerRadiusMin: 3,
+  centerRadiusScale: 0.022,
+  screenPlaneDistanceRatioMin: 1.10,
+  screenPlaneDistanceRatioMax: 1.60,
+  baseSizeScale: 0.05,
+  baseSizeMin: 36,
+  baseSizeMax: 80,
+  startScaleMin: 0.20,
+  startScaleMax: 0.28,
+  endScaleMin: 20,
+  endScaleMax: 30,
+  bezierX1: 0.90,
+  bezierY1: 0,
+  bezierX2: 0.99,
+  bezierY2: 0.02,
+  screenPlaneFadeStart: 0.62,
+  spinMinTurns: 0.5,
+  spinMaxTurns: 1.0,
+}
+
+interface MainMenuFlyingPiece {
+  id: number
+  imageUrl: string
+  startedAt: number
+  durationMs: number
+  baseSize: number
+  startX: number
+  startY: number
+  endX: number
+  endY: number
+  startScale: number
+  endScale: number
+  startRotate: number
+  endRotate: number
+}
+
 function getMainMenuLayout(width: number, height: number): MainMenuLayout {
   const scale = Math.min(
     1,
@@ -599,6 +687,197 @@ function getMainArrowGeometry(outerWidth: number, outerHeight: number, borderWid
     viewBox: `0 0 ${outerWidth} ${outerHeight}`,
     points: points.map(point => point.join(',')).join(' '),
   }
+}
+
+interface MainVortexTile {
+  path: string
+  tone: 'light' | 'dark'
+  opacity: string
+}
+
+interface MainVortexGeometry {
+  viewBox: string
+  centerX: number
+  centerY: number
+  glowRadius: number
+  vignetteRadius: number
+  tiles: MainVortexTile[]
+}
+
+function getMainVortexGeometry(width: number, height: number, scale: number, cycle: number): MainVortexGeometry {
+  const config = MAIN_VORTEX_CONFIG
+  const cycleOffset = Math.floor(cycle)
+  const phase = cycle - cycleOffset
+  const centerX = width * config.centerXRatio
+  const centerY = height * config.centerYRatio
+  const maxDistance = Math.hypot(
+    Math.max(centerX, width - centerX),
+    Math.max(centerY, height - centerY),
+  )
+  const innerRadius = Math.max(6, config.innerRadius * scale)
+  const outerRadius = maxDistance * config.outerRadiusScale
+  const ringCount = config.ringCount
+  const sectorCount = config.sectorCount
+  const sectorStep = Math.PI * 2 / sectorCount
+  const twistStep = config.twistPerRing * config.direction
+  const tiles: MainVortexTile[] = []
+  const ringBuffer = 3
+
+  for (let ring = -ringBuffer; ring < ringCount + ringBuffer; ring ++) {
+    const innerCoord = ring + phase
+    const outerCoord = ring + 1 + phase
+    const innerTwist = innerCoord * twistStep
+    const outerTwist = outerCoord * twistStep
+    const inner = getVortexRadiusAt(innerRadius, outerRadius, ringCount, config.radiusGrowth, innerCoord)
+    const outer = getVortexRadiusAt(innerRadius, outerRadius, ringCount, config.radiusGrowth, outerCoord)
+    const ringOpacity = getVortexTileOpacity(
+      (innerCoord + outerCoord) / 2,
+      ringCount,
+      config.tileInnerOpacity,
+      config.tileOuterOpacity,
+    )
+
+    for (let sector = 0; sector < sectorCount; sector ++) {
+      const innerStart = sector * sectorStep + innerTwist
+      const innerEnd = (sector + 1) * sectorStep + innerTwist
+      const outerStart = sector * sectorStep + outerTwist
+      const outerEnd = (sector + 1) * sectorStep + outerTwist
+      tiles.push({
+        path: getVortexTilePath(
+          centerX,
+          centerY,
+          inner,
+          outer,
+          innerStart,
+          innerEnd,
+          outerStart,
+          outerEnd,
+        ),
+        tone: isEven(ring + sector + cycleOffset) ? 'light' : 'dark',
+        opacity: formatSvgNumber(ringOpacity),
+      })
+    }
+  }
+
+  return {
+    viewBox: `0 0 ${width} ${height}`,
+    centerX,
+    centerY,
+    glowRadius: Math.max(width, height) * config.glowRadiusScale,
+    vignetteRadius: Math.max(width, height) * config.vignetteRadiusScale,
+    tiles,
+  }
+}
+
+function getVortexRadiusAt(
+  innerRadius: number,
+  outerRadius: number,
+  ringCount: number,
+  radiusGrowth: number,
+  ringCoord: number,
+) {
+  const denominator = Math.expm1(radiusGrowth)
+  const t = ringCoord / ringCount
+  const eased = denominator === 0
+    ? t
+    : Math.expm1(radiusGrowth * t) / denominator
+  return Math.max(0.1, innerRadius + (outerRadius - innerRadius) * eased)
+}
+
+function isEven(value: number) {
+  return value % 2 === 0
+}
+
+function getVortexTileOpacity(
+  ringCoord: number,
+  ringCount: number,
+  innerOpacity: number,
+  outerOpacity: number,
+) {
+  const t = Math.min(1, Math.max(0, ringCoord / ringCount))
+  const eased = Math.sqrt(t)
+  return innerOpacity + (outerOpacity - innerOpacity) * eased
+}
+
+function getVortexTilePath(
+  centerX: number,
+  centerY: number,
+  innerRadius: number,
+  outerRadius: number,
+  innerStart: number,
+  innerEnd: number,
+  outerStart: number,
+  outerEnd: number,
+) {
+  const innerStartPoint = polarPoint(centerX, centerY, innerRadius, innerStart)
+  const outerEndPoint = polarPoint(centerX, centerY, outerRadius, outerEnd)
+  return [
+    `M ${formatSvgPoint(innerStartPoint)}`,
+    getSpiralCubicCommand(centerX, centerY, innerRadius, innerStart, outerRadius, outerStart),
+    `A ${formatSvgNumber(outerRadius)} ${formatSvgNumber(outerRadius)} 0 0 1 ${formatSvgPoint(outerEndPoint)}`,
+    getSpiralCubicCommand(centerX, centerY, outerRadius, outerEnd, innerRadius, innerEnd),
+    `A ${formatSvgNumber(innerRadius)} ${formatSvgNumber(innerRadius)} 0 0 0 ${formatSvgPoint(innerStartPoint)}`,
+    'Z',
+  ].join(' ')
+}
+
+function getSpiralCubicCommand(
+  centerX: number,
+  centerY: number,
+  fromRadius: number,
+  fromAngle: number,
+  toRadius: number,
+  toAngle: number,
+) {
+  const from = polarPoint(centerX, centerY, fromRadius, fromAngle)
+  const to = polarPoint(centerX, centerY, toRadius, toAngle)
+  const deltaLogRadius = Math.log(toRadius / fromRadius)
+  const deltaAngle = toAngle - fromAngle
+  const fromDerivative = getLogSpiralDerivative(fromRadius, fromAngle, deltaLogRadius, deltaAngle)
+  const toDerivative = getLogSpiralDerivative(toRadius, toAngle, deltaLogRadius, deltaAngle)
+  const controlScale = 1 / 3
+  const control1: [number, number] = [
+    from[0] + fromDerivative[0] * controlScale,
+    from[1] + fromDerivative[1] * controlScale,
+  ]
+  const control2: [number, number] = [
+    to[0] - toDerivative[0] * controlScale,
+    to[1] - toDerivative[1] * controlScale,
+  ]
+
+  return [
+    `C ${formatSvgPoint(control1)}`,
+    formatSvgPoint(control2),
+    formatSvgPoint(to),
+  ].join(' ')
+}
+
+function getLogSpiralDerivative(
+  radius: number,
+  angle: number,
+  deltaLogRadius: number,
+  deltaAngle: number,
+): [number, number] {
+  const radiusDerivative = radius * deltaLogRadius
+  return [
+    radiusDerivative * Math.cos(angle) - radius * deltaAngle * Math.sin(angle),
+    radiusDerivative * Math.sin(angle) + radius * deltaAngle * Math.cos(angle),
+  ]
+}
+
+function polarPoint(centerX: number, centerY: number, radius: number, angle: number): [number, number] {
+  return [
+    centerX + Math.cos(angle) * radius,
+    centerY + Math.sin(angle) * radius,
+  ]
+}
+
+function formatSvgPoint([x, y]: [number, number]) {
+  return `${formatSvgNumber(x)} ${formatSvgNumber(y)}`
+}
+
+function formatSvgNumber(value: number) {
+  return value.toFixed(1)
 }
 
 function getPresetButtonStyle(
@@ -1223,6 +1502,211 @@ function handleWindowResize() {
 
 function handleCoarsePointerChange() {
   hasCoarsePointer.value = coarsePointerQuery.matches
+}
+
+function startMainVortexAnimation() {
+  if (mainVortexAnimationFrame !== null) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+  const durationMs = Math.max(1, MAIN_VORTEX_CONFIG.durationSeconds * 1000)
+  mainVortexAnimationStartedAt = performance.now() - mainVortexCycle.value * durationMs
+
+  const update = (time: number) => {
+    const elapsedCycles = (time - mainVortexAnimationStartedAt) / durationMs
+    mainMenuFrameTime.value = time
+    mainVortexCycle.value = elapsedCycles
+    mainVortexAnimationFrame = window.requestAnimationFrame(update)
+  }
+
+  mainVortexAnimationFrame = window.requestAnimationFrame(update)
+}
+
+function stopMainVortexAnimation() {
+  if (mainVortexAnimationFrame === null) return
+  window.cancelAnimationFrame(mainVortexAnimationFrame)
+  mainVortexAnimationFrame = null
+}
+
+function startMainMenuFlyingPieces() {
+  if (mainMenuPieceSpawnTimer !== null) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  if (mainMenuMode.value !== 'home') return
+  scheduleMainMenuPieceSpawn(160)
+}
+
+function stopMainMenuPieceSpawn() {
+  if (mainMenuPieceSpawnTimer !== null) {
+    window.clearTimeout(mainMenuPieceSpawnTimer)
+    mainMenuPieceSpawnTimer = null
+  }
+}
+
+function stopMainMenuFlyingPieces() {
+  stopMainMenuPieceSpawn()
+  mainMenuFlyingPieces.value = []
+}
+
+function scheduleMainMenuPieceSpawn(delay = randomBetween(
+  MAIN_MENU_FLYING_PIECE_CONFIG.spawnDelayMinMs,
+  MAIN_MENU_FLYING_PIECE_CONFIG.spawnDelayMaxMs,
+)) {
+  if (! mainMenuVisible.value || mainMenuMode.value !== 'home' || mainMenuPieceSpawnTimer !== null) return
+  mainMenuPieceSpawnTimer = window.setTimeout(() => {
+    mainMenuPieceSpawnTimer = null
+    spawnMainMenuFlyingPiece()
+    scheduleMainMenuPieceSpawn()
+  }, delay)
+}
+
+function spawnMainMenuFlyingPiece() {
+  if (! mainMenuVisible.value) return
+  const config = MAIN_MENU_FLYING_PIECE_CONFIG
+  const geometry = mainVortexGeometry.value
+  const width = viewportWidth.value
+  const height = viewportHeight.value
+  const now = performance.now()
+  mainMenuFrameTime.value = now
+  const startAngle = randomBetween(0, Math.PI * 2)
+  const startRadius = Math.sqrt(Math.random()) * Math.max(
+    config.centerRadiusMin,
+    Math.min(width, height) * config.centerRadiusScale,
+  )
+  const startX = geometry.centerX + Math.cos(startAngle) * startRadius
+  const startY = geometry.centerY + Math.sin(startAngle) * startRadius
+  const flyAngle = randomBetween(0, Math.PI * 2)
+  const baseSize = Math.min(
+    config.baseSizeMax,
+    Math.max(config.baseSizeMin, Math.min(width, height) * config.baseSizeScale),
+  )
+  const durationMs = randomBetween(config.durationMinMs, config.durationMaxMs)
+  const startScale = randomBetween(config.startScaleMin, config.startScaleMax)
+  const endScale = randomBetween(config.endScaleMin, config.endScaleMax)
+  const edgeDistance = getDistanceToViewportEdge(startX, startY, flyAngle, width, height)
+  const endDistance = edgeDistance * randomBetween(
+    config.screenPlaneDistanceRatioMin,
+    config.screenPlaneDistanceRatioMax,
+  )
+  const endX = startX + Math.cos(flyAngle) * endDistance
+  const endY = startY + Math.sin(flyAngle) * endDistance
+  const startRotate = randomBetween(0, 360)
+  const spinDirection = Math.random() < 0.5 ? -1 : 1
+  const endRotate = startRotate + spinDirection * 360 * randomBetween(config.spinMinTurns, config.spinMaxTurns)
+  const piece: MainMenuFlyingPiece = {
+    id: ++ mainMenuFlyingPieceId,
+    imageUrl: MAIN_MENU_PIECE_IMAGES[Math.floor(Math.random() * MAIN_MENU_PIECE_IMAGES.length)],
+    startedAt: now,
+    durationMs,
+    baseSize,
+    startX,
+    startY,
+    endX,
+    endY,
+    startScale,
+    endScale,
+    startRotate,
+    endRotate,
+  }
+
+  mainMenuFlyingPieces.value = [
+    ...mainMenuFlyingPieces.value.slice(-config.maxPieces + 1),
+    piece,
+  ]
+  window.setTimeout(() => removeMainMenuFlyingPiece(piece.id), durationMs + 100)
+}
+
+function removeMainMenuFlyingPiece(id: number) {
+  mainMenuFlyingPieces.value = mainMenuFlyingPieces.value.filter(piece => piece.id !== id)
+}
+
+function getMainMenuFlyingPieceStyle(piece: MainMenuFlyingPiece): Record<string, string> {
+  const progress = Scalar.clamp(
+    (mainMenuFrameTime.value - piece.startedAt) / piece.durationMs,
+    0,
+    1,
+  )
+  const eased = cubicBezierEase(
+    progress,
+    MAIN_MENU_FLYING_PIECE_CONFIG.bezierX1,
+    MAIN_MENU_FLYING_PIECE_CONFIG.bezierY1,
+    MAIN_MENU_FLYING_PIECE_CONFIG.bezierX2,
+    MAIN_MENU_FLYING_PIECE_CONFIG.bezierY2,
+  )
+  const x = Scalar.lerp(piece.startX, piece.endX, eased)
+  const y = Scalar.lerp(piece.startY, piece.endY, eased)
+  const scale = Scalar.lerp(piece.startScale, piece.endScale, eased)
+  const rotate = Scalar.lerp(piece.startRotate, piece.endRotate, progress)
+  const visualSize = piece.baseSize * scale
+
+  return {
+    width: `${piece.baseSize}px`,
+    height: `${piece.baseSize}px`,
+    opacity: String(getMainMenuFlyingPieceOpacity(progress, eased)),
+    zIndex: String(Math.round(visualSize * 100)),
+    transform: [
+      `translate(${x}px, ${y}px)`,
+      'translate(-50%, -50%)',
+      `rotate(${rotate}deg)`,
+      `scale(${scale})`,
+    ].join(' '),
+  }
+}
+
+function getMainMenuFlyingPieceOpacity(progress: number, easedProgress: number) {
+  const fadeIn = progress < 0.12
+    ? progress / 0.12
+    : 1
+  const fadeOutStart = MAIN_MENU_FLYING_PIECE_CONFIG.screenPlaneFadeStart
+  const fadeOutProgress = Scalar.clamp(
+    (easedProgress - fadeOutStart) / (1 - fadeOutStart),
+    0,
+    1,
+  )
+  const fadeOut = 1 - smoothStep(fadeOutProgress)
+  return 0.9 * fadeIn * fadeOut
+}
+
+function smoothStep(t: number) {
+  return t * t * (3 - 2 * t)
+}
+
+function cubicBezierEase(t: number, x1: number, y1: number, x2: number, y2: number) {
+  if (t <= 0) return 0
+  if (t >= 1) return 1
+  let low = 0
+  let high = 1
+  let u = t
+  for (let i = 0; i < 12; i ++) {
+    u = (low + high) / 2
+    const x = cubicBezierAxis(u, x1, x2)
+    if (x < t) low = u
+    else high = u
+  }
+  return cubicBezierAxis(u, y1, y2)
+}
+
+function cubicBezierAxis(t: number, p1: number, p2: number) {
+  const inv = 1 - t
+  return 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t
+}
+
+function getDistanceToViewportEdge(x: number, y: number, angle: number, width: number, height: number) {
+  const dx = Math.cos(angle)
+  const dy = Math.sin(angle)
+  const tx = dx > 0
+    ? (width - x) / dx
+    : dx < 0
+      ? -x / dx
+      : Number.POSITIVE_INFINITY
+  const ty = dy > 0
+    ? (height - y) / dy
+    : dy < 0
+      ? -y / dy
+      : Number.POSITIVE_INFINITY
+  return Math.max(0, Math.min(tx, ty))
+}
+
+function randomBetween(min: number, max: number) {
+  return min + Math.random() * (max - min)
 }
 
 function submitImportDialog() {
@@ -2080,6 +2564,8 @@ onUnmounted(() => {
   stopMatchServerRefresh()
   stopOnlinePolling()
   stopOnlineRoomStateSubscription()
+  stopMainVortexAnimation()
+  stopMainMenuFlyingPieces()
   stopAmbience()
   if (clockTimer !== null) window.clearInterval(clockTimer)
   game?.dispose()
@@ -2090,6 +2576,21 @@ onUnmounted(() => {
 
 watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
+watch(mainMenuVisible, visible => {
+  if (visible) {
+    startMainVortexAnimation()
+    startMainMenuFlyingPieces()
+  }
+  else {
+    stopMainVortexAnimation()
+    stopMainMenuFlyingPieces()
+  }
+}, { immediate: true })
+watch(mainMenuMode, mode => {
+  if (! mainMenuVisible.value) return
+  if (mode === 'home') startMainMenuFlyingPieces()
+  else stopMainMenuPieceSpawn()
+})
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
 watch(gameSettings, () => {
   syncGameSettings()
@@ -2119,6 +2620,108 @@ watch(gameSettings, () => {
         @pointerdown="startAmbience"
       >
         <svg
+          class="main-menu-vortex"
+          :viewBox="mainVortexGeometry.viewBox"
+          :style="mainVortexStyle"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <defs>
+            <radialGradient
+              id="main-menu-vortex-glow"
+              gradientUnits="userSpaceOnUse"
+              :cx="mainVortexGeometry.centerX"
+              :cy="mainVortexGeometry.centerY"
+              :r="mainVortexGeometry.glowRadius"
+            >
+              <stop
+                offset="0"
+                stop-color="rgb(238 242 249)"
+                stop-opacity="0.96"
+              />
+              <stop
+                offset="0.18"
+                stop-color="rgb(219 228 241)"
+                stop-opacity="0.62"
+              />
+              <stop
+                offset="0.62"
+                stop-color="rgb(181 195 218)"
+                stop-opacity="0.16"
+              />
+              <stop
+                offset="1"
+                stop-color="rgb(112 130 163)"
+                stop-opacity="0"
+              />
+            </radialGradient>
+            <radialGradient
+              id="main-menu-vortex-vignette"
+              gradientUnits="userSpaceOnUse"
+              :cx="mainVortexGeometry.centerX"
+              :cy="mainVortexGeometry.centerY"
+              :r="mainVortexGeometry.vignetteRadius"
+            >
+              <stop
+                offset="0"
+                stop-color="rgb(118 136 169)"
+                stop-opacity="0"
+              />
+              <stop
+                offset="0.56"
+                stop-color="rgb(118 136 169)"
+                stop-opacity="0"
+              />
+              <stop
+                offset="1"
+                stop-color="rgb(55 68 96)"
+                :stop-opacity="MAIN_VORTEX_CONFIG.vignetteOpacity"
+              />
+            </radialGradient>
+          </defs>
+          <rect
+            class="main-menu-vortex-glow"
+            :width="viewportWidth"
+            :height="viewportHeight"
+            fill="url(#main-menu-vortex-glow)"
+          />
+          <g class="main-menu-vortex-layer">
+            <path
+              v-for="(tile, index) in mainVortexGeometry.tiles"
+              :key="index"
+              class="main-menu-vortex-tile"
+              :class="`main-menu-vortex-tile--${tile.tone}`"
+              :d="tile.path"
+              :opacity="tile.opacity"
+            />
+          </g>
+          <rect
+            class="main-menu-vortex-vignette"
+            :width="viewportWidth"
+            :height="viewportHeight"
+            fill="url(#main-menu-vortex-vignette)"
+          />
+        </svg>
+        <div
+          class="main-menu-flying-pieces"
+          aria-hidden="true"
+        >
+          <span
+            v-for="piece in mainMenuFlyingPieces"
+            :key="piece.id"
+            class="main-menu-flying-piece"
+            :style="getMainMenuFlyingPieceStyle(piece)"
+          >
+            <img
+              class="main-menu-flying-piece-image"
+              :src="piece.imageUrl"
+              alt=""
+              draggable="false"
+            >
+          </span>
+        </div>
+        <svg
+          v-if="mainMenuMode === 'home'"
           class="main-menu-arrow"
           :viewBox="mainArrowGeometry.viewBox"
           :style="mainArrowStyle"
@@ -3275,13 +3878,77 @@ canvas {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background-color: #8293b3;
+  background-color: #7889aa;
   pointer-events: auto;
+}
+
+.main-menu-vortex {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: var(--main-vortex-layer-opacity);
+  pointer-events: none;
+}
+
+.main-menu-vortex-glow {
+  opacity: var(--main-vortex-glow-opacity);
+  pointer-events: none;
+}
+
+.main-menu-vortex-vignette {
+  pointer-events: none;
+}
+
+.main-menu-vortex-layer {
+  transform-box: view-box;
+  transform-origin: var(--main-vortex-center-x) var(--main-vortex-center-y);
+}
+
+.main-menu-vortex-tile {
+  stroke: transparent;
+  stroke-width: 0;
+}
+
+.main-menu-vortex-tile--light {
+  fill: rgb(190 202 222 / 0.24);
+}
+
+.main-menu-vortex-tile--dark {
+  fill: rgb(82 101 136 / 0.18);
+}
+
+.main-menu-flying-pieces {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.main-menu-flying-piece {
+  position: absolute;
+  left: 0;
+  top: 0;
+  object-fit: contain;
+  pointer-events: none;
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.main-menu-flying-piece-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .main-menu-arrow {
   position: absolute;
   top: 0;
+  z-index: 1;
   display: block;
   opacity: 0.82;
   pointer-events: none;
@@ -3342,11 +4009,26 @@ canvas {
   position: absolute;
   left: var(--main-menu-center-x);
   top: var(--main-menu-buttons-top);
-  z-index: 1;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: var(--main-menu-button-gap);
   transform: translateX(-50%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-menu-vortex-layer {
+    transform: scale(1.1);
+  }
+
+  .main-menu-vortex-glow {
+    opacity: 0.72;
+  }
+
+  .main-menu-flying-piece {
+    animation: none;
+    display: none;
+  }
 }
 
 .match-card {

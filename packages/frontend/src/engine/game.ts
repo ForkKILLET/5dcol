@@ -1149,10 +1149,10 @@ export class Game extends Disposable(Empty) {
         disabled: false,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
-        labelKey: 'button.restart',
+        labelKey: 'button.forfeit',
         piece: null,
         onClick: () => {
-          this.playRestartSound()
+          this.playForfeitSound()
           this.config.onReturnToMainMenuRequest?.({ forfeit: true })
         },
       },
@@ -1716,7 +1716,7 @@ export class Game extends Disposable(Empty) {
     this.soundManager.play('guiro_long.ogg')
   }
 
-  private playRestartSound() {
+  private playForfeitSound() {
     this.soundManager.play('timpani_hit_a2.ogg')
   }
 

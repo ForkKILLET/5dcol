@@ -3,7 +3,7 @@ button.undoMove: "Undo Move"
 button.submitMoves: "Submit Moves"
 button.deduceMoves: "Deduce"
 button.finishGame: "Finish Game"
-button.restart: "Forfeit game"
+button.forfeit: "Forfeit game"
 button.import: "Import"
 button.export: "Export"
 button.record: "Record"
@@ -34,12 +34,12 @@ dialog.helpPlaceholder: ""
 dialog.helpText: |
   Shortcuts
 
-  Z / Backspace: Undo Move
-  Enter / F: Submit Moves or Finish Game
+  Z / Backspace: Undo move
+  Enter / F: Submit moves or finish game
   Right click: Deselect
   WASD: Pan viewport
   Q / E: Zoom out / in
-  R: Toggle Record panel
+  R: Toggle record panel
   C: Toggle clock
   U: Flip view
   ,: Open settings
