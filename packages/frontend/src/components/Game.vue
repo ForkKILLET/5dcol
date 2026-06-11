@@ -206,8 +206,10 @@ let mainVortexAnimationStartedAt = 0
 let mainMenuPieceSpawnTimer: number | null = null
 let mainMenuFlyingPieceId = 0
 let mainMenuSelectedFlyingPieceId: number | null = null
+let mainMenuLastVortexBatchCount = 0
 const mainMenuPieceImageCache = new Map<string, HTMLImageElement>()
 const mainMenuPieceHitMaskCache = new Map<string, MainMenuPieceHitMask | null>()
+let mainVortexBufferCanvas: HTMLCanvasElement | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
@@ -221,6 +223,23 @@ const query = new URLSearchParams(window.location.search)
 const DOCUMENT_TITLE = '5D Chess Online'
 const MATCH_REFRESH_INTERVAL_MS = 5000
 const ONLINE_RECONNECT_DELAY_MS = 1000
+const MAIN_MENU_PERF_LOG_INTERVAL_FRAMES = 120
+const MAIN_MENU_PERF_KEYS = [
+  'total',
+  'resize',
+  'background',
+  'geometry',
+  'vortex',
+  'pieces',
+  'arrow',
+] as const
+
+type MainMenuPerfKey = typeof MAIN_MENU_PERF_KEYS[number]
+type MainMenuFramePerf = Record<MainMenuPerfKey, number>
+
+let mainMenuPerfFrames = 0
+let mainMenuPerfTotals = createMainMenuPerfBucket()
+let mainMenuPerfMax = createMainMenuPerfBucket()
 
 interface StoredOnlineSession {
   serverAddress: string
@@ -544,6 +563,7 @@ const MAIN_MENU_BASE_LAYOUT: MainMenuLayout = {
 const MAIN_VORTEX_CONFIG = {
   centerXRatio: 0.5,
   centerYRatio: 0.51,
+  renderScale: 0.5,
   innerRadius: 4,
   outerRadiusScale: 1.65,
   ringCount: 42,
@@ -557,6 +577,8 @@ const MAIN_VORTEX_CONFIG = {
   radiusGrowth: 7.5,
   tileInnerOpacity: 0.24,
   tileOuterOpacity: 0.82,
+  tileCoreSkipRadiusScale: 0.055,
+  tileCoreFadeRadiusScale: 0.065,
   vignetteRadiusScale: 0.9,
   vignetteOpacity: 0.46,
 }
@@ -698,6 +720,7 @@ function getMainArrowPoints(outerWidth: number, outerHeight: number, borderWidth
 }
 
 interface MainVortexTile {
+  batchIndex: number
   innerRadius: number
   outerRadius: number
   innerStart: number
@@ -706,6 +729,12 @@ interface MainVortexTile {
   outerEnd: number
   tone: 'light' | 'dark'
   opacity: number
+}
+
+interface MainVortexTileBatch {
+  tone: MainVortexTile['tone']
+  opacity: number
+  tiles: MainVortexTile[]
 }
 
 interface MainVortexGeometry {
@@ -732,6 +761,8 @@ function getMainVortexGeometry(width: number, height: number, scale: number, cyc
   const sectorCount = config.sectorCount
   const sectorStep = Math.PI * 2 / sectorCount
   const twistStep = config.twistPerRing * config.direction
+  const coreSkipRadius = Math.min(width, height) * config.tileCoreSkipRadiusScale
+  const coreFadeRadius = Math.max(1, Math.min(width, height) * config.tileCoreFadeRadiusScale)
   const tiles: MainVortexTile[] = []
   const ringBuffer = 3
 
@@ -742,20 +773,28 @@ function getMainVortexGeometry(width: number, height: number, scale: number, cyc
     const outerTwist = outerCoord * twistStep
     const inner = getVortexRadiusAt(innerRadius, outerRadius, ringCount, config.radiusGrowth, innerCoord)
     const outer = getVortexRadiusAt(innerRadius, outerRadius, ringCount, config.radiusGrowth, outerCoord)
+    if (outer <= coreSkipRadius) continue
+
+    const clippedInner = Math.max(inner, coreSkipRadius)
+    const innerClipProgress = getVortexRadiusProgress(inner, outer, clippedInner)
+    const clippedInnerTwist = Scalar.lerp(innerTwist, outerTwist, innerClipProgress)
+    const coreFadeOpacity = smoothStep(Scalar.clamp((outer - coreSkipRadius) / coreFadeRadius, 0, 1))
     const ringOpacity = getVortexTileOpacity(
       (innerCoord + outerCoord) / 2,
       ringCount,
       config.tileInnerOpacity,
       config.tileOuterOpacity,
-    )
+    ) * coreFadeOpacity
+    if (ringOpacity <= 0.001) continue
 
     for (let sector = 0; sector < sectorCount; sector ++) {
-      const innerStart = sector * sectorStep + innerTwist
-      const innerEnd = (sector + 1) * sectorStep + innerTwist
+      const innerStart = sector * sectorStep + clippedInnerTwist
+      const innerEnd = (sector + 1) * sectorStep + clippedInnerTwist
       const outerStart = sector * sectorStep + outerTwist
       const outerEnd = (sector + 1) * sectorStep + outerTwist
       tiles.push({
-        innerRadius: inner,
+        batchIndex: ring,
+        innerRadius: clippedInner,
         outerRadius: outer,
         innerStart,
         innerEnd,
@@ -789,6 +828,14 @@ function getVortexRadiusAt(
     ? t
     : Math.expm1(radiusGrowth * t) / denominator
   return Math.max(0.1, innerRadius + (outerRadius - innerRadius) * eased)
+}
+
+function getVortexRadiusProgress(innerRadius: number, outerRadius: number, radius: number) {
+  if (outerRadius <= innerRadius) return 0
+  if (radius <= innerRadius) return 0
+  if (radius >= outerRadius) return 1
+
+  return Math.log(radius / innerRadius) / Math.log(outerRadius / innerRadius)
 }
 
 function isEven(value: number) {
@@ -1476,10 +1523,87 @@ function getViewportSize() {
 
 function handleWindowResize() {
   const size = getViewportSize()
+  const prevWidth = viewportWidth.value
+  const prevHeight = viewportHeight.value
+  if (size.width !== prevWidth || size.height !== prevHeight) {
+    remapMainMenuFlyingPiecesForResize(prevWidth, prevHeight, size.width, size.height)
+  }
   viewportWidth.value = size.width
   viewportHeight.value = size.height
   syncGameViewportInsets()
   if (mainMenuVisible.value) drawMainMenuCanvas(mainMenuFrameTime)
+}
+
+function remapMainMenuFlyingPiecesForResize(
+  oldWidth: number,
+  oldHeight: number,
+  newWidth: number,
+  newHeight: number,
+) {
+  if (oldWidth <= 0 || oldHeight <= 0 || newWidth <= 0 || newHeight <= 0) return
+  if (mainMenuFlyingPieces.value.length === 0) return
+
+  const oldCenter = getMainVortexCenter(oldWidth, oldHeight)
+  const newCenter = getMainVortexCenter(newWidth, newHeight)
+  const scaleX = newWidth / oldWidth
+  const scaleY = newHeight / oldHeight
+  const oldPieceBaseSize = getMainMenuPieceBaseSize(oldWidth, oldHeight)
+  const newPieceBaseSize = getMainMenuPieceBaseSize(newWidth, newHeight)
+  const baseSizeScale = oldPieceBaseSize > 0 ? newPieceBaseSize / oldPieceBaseSize : 1
+
+  mainMenuFlyingPieces.value = mainMenuFlyingPieces.value.map(piece => {
+    const [startX, startY] = remapMainMenuPointForResize(
+      [piece.startX, piece.startY],
+      oldCenter,
+      newCenter,
+      scaleX,
+      scaleY,
+    )
+    const [endX, endY] = remapMainMenuPointForResize(
+      [piece.endX, piece.endY],
+      oldCenter,
+      newCenter,
+      scaleX,
+      scaleY,
+    )
+
+    return {
+      ...piece,
+      baseSize: piece.baseSize * baseSizeScale,
+      startX,
+      startY,
+      endX,
+      endY,
+    }
+  })
+}
+
+function getMainVortexCenter(width: number, height: number): [number, number] {
+  return [
+    width * MAIN_VORTEX_CONFIG.centerXRatio,
+    height * MAIN_VORTEX_CONFIG.centerYRatio,
+  ]
+}
+
+function getMainMenuPieceBaseSize(width: number, height: number) {
+  const config = MAIN_MENU_FLYING_PIECE_CONFIG
+  return Math.min(
+    config.baseSizeMax,
+    Math.max(config.baseSizeMin, Math.min(width, height) * config.baseSizeScale),
+  )
+}
+
+function remapMainMenuPointForResize(
+  point: [number, number],
+  oldCenter: [number, number],
+  newCenter: [number, number],
+  scaleX: number,
+  scaleY: number,
+): [number, number] {
+  return [
+    newCenter[0] + (point[0] - oldCenter[0]) * scaleX,
+    newCenter[1] + (point[1] - oldCenter[1]) * scaleY,
+  ]
 }
 
 function handleCoarsePointerChange() {
@@ -1515,6 +1639,7 @@ function stopMainVortexAnimation() {
 }
 
 function drawMainMenuCanvas(time: number) {
+  const totalStartedAt = performance.now()
   const canvas = mainMenuCanvas.value
   if (! canvas || ! mainMenuVisible.value) return
 
@@ -1531,6 +1656,7 @@ function drawMainMenuCanvas(time: number) {
   }
   canvas.style.width = `${width}px`
   canvas.style.height = `${height}px`
+  const resizedAt = performance.now()
 
   const ctx = canvas.getContext('2d')
   if (! ctx) return
@@ -1540,11 +1666,132 @@ function drawMainMenuCanvas(time: number) {
   ctx.clearRect(0, 0, width, height)
   ctx.fillStyle = '#7889aa'
   ctx.fillRect(0, 0, width, height)
+  const backgroundDrawnAt = performance.now()
 
   const geometry = getMainVortexGeometry(width, height, mainMenuLayout.value.scale, mainVortexCycle)
-  drawMainMenuVortex(ctx, geometry, width, height)
+  const geometryBuiltAt = performance.now()
+  drawMainMenuVortexLayer(ctx, geometry, width, height, dpr)
+  const vortexDrawnAt = performance.now()
   drawMainMenuFlyingPieces(ctx)
+  const piecesDrawnAt = performance.now()
   if (mainMenuMode.value === 'home') drawMainMenuArrow(ctx, mainMenuLayout.value)
+  const arrowDrawnAt = performance.now()
+
+  recordMainMenuFramePerf({
+    total: arrowDrawnAt - totalStartedAt,
+    resize: resizedAt - totalStartedAt,
+    background: backgroundDrawnAt - resizedAt,
+    geometry: geometryBuiltAt - backgroundDrawnAt,
+    vortex: vortexDrawnAt - geometryBuiltAt,
+    pieces: piecesDrawnAt - vortexDrawnAt,
+    arrow: arrowDrawnAt - piecesDrawnAt,
+  }, {
+    width,
+    height,
+    dpr,
+    renderScale: MAIN_VORTEX_CONFIG.renderScale,
+    tiles: geometry.tiles.length,
+    batches: mainMenuLastVortexBatchCount,
+    pieces: mainMenuFlyingPieces.value.length,
+  })
+}
+
+function createMainMenuPerfBucket(): MainMenuFramePerf {
+  return MAIN_MENU_PERF_KEYS.reduce((bucket, key) => {
+    bucket[key] = 0
+    return bucket
+  }, {} as MainMenuFramePerf)
+}
+
+function isMainMenuPerfEnabled() {
+  return import.meta.env.DEV || query.get('mainMenuPerf') === '1'
+}
+
+function recordMainMenuFramePerf(
+  perf: MainMenuFramePerf,
+  meta: {
+    width: number
+    height: number
+    dpr: number
+    renderScale: number
+    tiles: number
+    batches: number
+    pieces: number
+  },
+) {
+  if (! isMainMenuPerfEnabled()) return
+
+  mainMenuPerfFrames += 1
+  for (const key of MAIN_MENU_PERF_KEYS) {
+    mainMenuPerfTotals[key] += perf[key]
+    mainMenuPerfMax[key] = Math.max(mainMenuPerfMax[key], perf[key])
+  }
+
+  if (mainMenuPerfFrames < MAIN_MENU_PERF_LOG_INTERVAL_FRAMES) return
+
+  const rows = MAIN_MENU_PERF_KEYS.reduce((table, key) => {
+    table[key] = {
+      avgMs: Number((mainMenuPerfTotals[key] / mainMenuPerfFrames).toFixed(2)),
+      maxMs: Number(mainMenuPerfMax[key].toFixed(2)),
+    }
+    return table
+  }, {} as Record<MainMenuPerfKey, { avgMs: number, maxMs: number }>)
+
+  console.info(
+    `[5dcol] main menu canvas perf: ${meta.width}x${meta.height} @${meta.dpr}x, `
+    + `${meta.renderScale}x vortex, ${meta.tiles} vortex tiles, ${meta.batches} batches, ${meta.pieces} pieces`,
+  )
+  console.table(rows)
+
+  mainMenuPerfFrames = 0
+  mainMenuPerfTotals = createMainMenuPerfBucket()
+  mainMenuPerfMax = createMainMenuPerfBucket()
+}
+
+function drawMainMenuVortexLayer(
+  ctx: CanvasRenderingContext2D,
+  geometry: MainVortexGeometry,
+  width: number,
+  height: number,
+  dpr: number,
+) {
+  const renderScale = Scalar.clamp(MAIN_VORTEX_CONFIG.renderScale, 0.1, 1)
+  if (renderScale >= 0.999) {
+    drawMainMenuVortex(ctx, geometry, width, height)
+    return
+  }
+
+  const buffer = getMainVortexBufferCanvas()
+  const bufferWidth = Math.max(1, Math.floor(width * dpr * renderScale))
+  const bufferHeight = Math.max(1, Math.floor(height * dpr * renderScale))
+  if (buffer.width !== bufferWidth || buffer.height !== bufferHeight) {
+    buffer.width = bufferWidth
+    buffer.height = bufferHeight
+  }
+
+  const bufferCtx = buffer.getContext('2d')
+  if (! bufferCtx) {
+    drawMainMenuVortex(ctx, geometry, width, height)
+    return
+  }
+
+  const bufferScale = dpr * renderScale
+  bufferCtx.setTransform(bufferScale, 0, 0, bufferScale, 0, 0)
+  bufferCtx.clearRect(0, 0, width, height)
+  drawMainMenuVortex(bufferCtx, geometry, width, height)
+
+  ctx.save()
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(buffer, 0, 0, width, height)
+  ctx.restore()
+}
+
+function getMainVortexBufferCanvas() {
+  if (mainVortexBufferCanvas) return mainVortexBufferCanvas
+
+  mainVortexBufferCanvas = document.createElement('canvas')
+  return mainVortexBufferCanvas
 }
 
 function drawMainMenuVortex(
@@ -1573,17 +1820,19 @@ function drawMainMenuVortex(
   ctx.fillRect(0, 0, width, height)
   ctx.restore()
 
-  for (const tile of geometry.tiles) {
-    ctx.save()
-    ctx.globalAlpha = config.layerOpacity * tile.opacity
-    ctx.fillStyle = tile.tone === 'light'
-      ? 'rgba(190, 202, 222, 0.24)'
-      : 'rgba(82, 101, 136, 0.18)'
+  ctx.save()
+  const batches = getMainVortexTileBatches(geometry.tiles)
+  mainMenuLastVortexBatchCount = batches.length
+  for (const batch of batches) {
+    ctx.globalAlpha = config.layerOpacity * batch.opacity
+    ctx.fillStyle = getMainVortexTileFillStyle(batch.tone)
     ctx.beginPath()
-    addVortexTilePath(ctx, geometry.centerX, geometry.centerY, tile)
+    for (const tile of batch.tiles) {
+      addVortexTilePath(ctx, geometry.centerX, geometry.centerY, tile)
+    }
     ctx.fill()
-    ctx.restore()
   }
+  ctx.restore()
 
   ctx.save()
   ctx.globalAlpha = config.layerOpacity
@@ -1601,6 +1850,33 @@ function drawMainMenuVortex(
   ctx.fillStyle = vignette
   ctx.fillRect(0, 0, width, height)
   ctx.restore()
+}
+
+function getMainVortexTileBatches(tiles: MainVortexTile[]): MainVortexTileBatch[] {
+  const batches: MainVortexTileBatch[] = []
+  let lastBatchIndex: number | null = null
+  let lightBatch: MainVortexTileBatch | null = null
+  let darkBatch: MainVortexTileBatch | null = null
+
+  for (const tile of tiles) {
+    if (lastBatchIndex !== tile.batchIndex) {
+      lastBatchIndex = tile.batchIndex
+      lightBatch = { tone: 'light', opacity: tile.opacity, tiles: [] }
+      darkBatch = { tone: 'dark', opacity: tile.opacity, tiles: [] }
+      batches.push(lightBatch, darkBatch)
+    }
+
+    const batch = tile.tone === 'light' ? lightBatch : darkBatch
+    batch?.tiles.push(tile)
+  }
+
+  return batches.filter(batch => batch.tiles.length > 0)
+}
+
+function getMainVortexTileFillStyle(tone: MainVortexTile['tone']) {
+  return tone === 'light'
+    ? 'rgba(190, 202, 222, 0.24)'
+    : 'rgba(82, 101, 136, 0.18)'
 }
 
 function addVortexTilePath(
@@ -1724,10 +2000,7 @@ function spawnMainMenuFlyingPiece() {
   const startX = geometry.centerX + Math.cos(startAngle) * startRadius
   const startY = geometry.centerY + Math.sin(startAngle) * startRadius
   const flyAngle = randomBetween(0, Math.PI * 2)
-  const baseSize = Math.min(
-    config.baseSizeMax,
-    Math.max(config.baseSizeMin, Math.min(width, height) * config.baseSizeScale),
-  )
+  const baseSize = getMainMenuPieceBaseSize(width, height)
   const durationMs = randomBetween(config.durationMinMs, config.durationMaxMs)
   const startScale = randomBetween(config.startScaleMin, config.startScaleMax)
   const endScale = randomBetween(config.endScaleMin, config.endScaleMax)
