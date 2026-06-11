@@ -26,6 +26,7 @@ main.match: "匹配"
 main.help: "帮助"
 main.settings: "设置"
 main.github: "GitHub"
+main.annihilationScore: "已湮灭：{score}"
 
 dialog.languageTitle: "语言"
 dialog.helpTitle: "帮助"

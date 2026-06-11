@@ -14,16 +14,11 @@ body,
 }
 
 body {
-  /* background: #8293b3; */
+  background: #8293b3;
   color: #fff;
   font-family: "Latin Serif", serif;
 }
 
-
 p {
   margin: 0;
-}
-
-html {
-  background: red;
 }

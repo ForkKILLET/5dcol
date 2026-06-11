@@ -26,6 +26,7 @@ main.match: "Match"
 main.help: "Help"
 main.settings: "Settings"
 main.github: "GitHub"
+main.annihilationScore: "Annihilated: {score}"
 
 dialog.languageTitle: "Language"
 dialog.helpTitle: "Help"

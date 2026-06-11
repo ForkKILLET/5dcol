@@ -6,7 +6,7 @@
 
 <style scoped>
 .card {
-  padding: 1em;
+  padding: 0.5em;
   border-radius: 2em;
   border: 4px solid #f4f5ed;
   background-color: #e1e2d8;
