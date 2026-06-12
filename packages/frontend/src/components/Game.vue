@@ -294,7 +294,8 @@ interface FiveDPGNSettings {
 }
 interface RecordRowSection {
   id: string
-  kind: 'record' | 'deduction' | 'pending'
+  kind: 'record' | 'deduction' | 'pending' | 'branch'
+  depth: number
   rows: GameRecordAction[]
 }
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
@@ -428,14 +429,16 @@ const recordSections = computed(() => {
   const sections: RecordRowSection[] = []
   for (const row of recordRows.value) {
     const kind = getRecordSectionKind(row)
+    const depth = getRecordSectionDepth(row)
     const last = sections.at(-1)
-    if (last && last.kind === kind) {
+    if (last && last.kind === kind && last.depth === depth) {
       last.rows.push(row)
       continue
     }
     sections.push({
-      id: `${kind}-${sections.length}-${row.index}`,
+      id: `${kind}-${depth}-${sections.length}-${row.recordKey ?? row.index}`,
       kind,
+      depth,
       rows: [row],
     })
   }
@@ -1198,8 +1201,7 @@ function focusRecordSegment(segment: GameRecordMoveSegment) {
 }
 
 function isCurrentRecordAction(action: GameRecordAction) {
-  if (action.pending) return true
-  return action.index === recordCurrentActionIndex.value - 1
+  return action.current === true
 }
 
 function canJumpToRecordAction(action: GameRecordAction) {
@@ -1208,9 +1210,22 @@ function canJumpToRecordAction(action: GameRecordAction) {
     && ! isCurrentRecordAction(action)
 }
 
+function canForkRecordAction(action: GameRecordAction) {
+  return ! action.pending
+    && onlineRoomStatus.value === null
+    && typeof action.recordLineId === 'number'
+    && typeof action.recordActionIndex === 'number'
+}
+
 function getRecordSectionKind(action: GameRecordAction): RecordRowSection['kind'] {
   if (action.pending) return 'pending'
+  if ((action.branchDepth ?? 0) > 0) return 'branch'
   return isRecordDeductionAction(action) ? 'deduction' : 'record'
+}
+
+function getRecordSectionDepth(action: GameRecordAction) {
+  const depth = action.branchDepth ?? 0
+  return Math.max(0, depth - 1)
 }
 
 function isRecordDeductionAction(action: GameRecordAction) {
@@ -1228,7 +1243,13 @@ function rollbackToRecordAction(action: GameRecordAction) {
   if (! gameStarted.value) return
   if (onlineSession.value) return
   playUISound()
-  game?.rollbackToActionEnd(action.index + 1)
+  game?.rollbackToRecordActionEnd(action)
+}
+
+function startRecordBranch(action: GameRecordAction) {
+  if (! gameStarted.value) return
+  if (onlineRoomStatus.value !== null) return
+  if (game?.startRecordBranchBeforeAction(action)) playUISound()
 }
 
 function returnToLiveGame() {
@@ -3820,14 +3841,16 @@ watch(gameSettings, () => {
               :key="section.id"
               class="record-section"
               :class="{
+                'record-section--branch': section.kind === 'branch',
                 'record-section--deduction': section.kind === 'deduction',
                 'record-section--pending': section.kind === 'pending',
                 'record-section--plain': section.kind === 'record',
               }"
+              :style="{ '--record-section-indent': `calc(var(--button-content-gap) * ${section.depth * 2.4})` }"
             >
               <div
                 v-for="row in section.rows"
-                :key="`${row.serial}-${row.index}`"
+                :key="row.recordKey ?? `${row.serial}-${row.index}`"
                 class="record-row"
                 :class="{
                   'record-row--black': row.player === 'b',
@@ -3862,6 +3885,16 @@ watch(gameSettings, () => {
                   </span>
                 </span>
                 <span class="record-action-icons">
+                  <button
+                    v-if="canForkRecordAction(row)"
+                    class="record-action-icon record-action-icon--branch"
+                    type="button"
+                    :title="t('record.branchAction')"
+                    :aria-label="t('record.branchAction')"
+                    @click.stop="startRecordBranch(row)"
+                  >
+                    <GameIcon name="branch" />
+                  </button>
                   <span
                     v-if="isCurrentRecordAction(row)"
                     class="record-action-icon record-action-icon--current"
@@ -3871,7 +3904,7 @@ watch(gameSettings, () => {
                     <GameIcon name="current" />
                   </span>
                   <button
-                    v-if="canJumpToRecordAction(row)"
+                    v-else-if="canJumpToRecordAction(row)"
                     class="record-action-icon record-action-icon--jump"
                     type="button"
                     :title="t('record.jumpToAction')"
@@ -4960,7 +4993,7 @@ canvas {
 
 .record-table {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) calc(var(--button-icon-size) * 2.1);
+  grid-template-columns: max-content minmax(0, 1fr) calc(var(--button-icon-size) * 3.2);
   column-gap: var(--button-content-gap);
   row-gap: calc(var(--button-content-gap) * 0.75);
 }
@@ -4969,19 +5002,21 @@ canvas {
   display: contents;
 }
 
+.record-section--branch,
 .record-section--deduction,
 .record-section--pending {
   box-sizing: border-box;
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: max-content minmax(0, 1fr) calc(var(--button-icon-size) * 2.1);
+  grid-template-columns: max-content minmax(0, 1fr) calc(var(--button-icon-size) * 3.2);
   column-gap: var(--button-content-gap);
   row-gap: calc(var(--button-content-gap) * 0.75);
-  margin: calc(var(--button-content-gap) * 0.25) 0;
+  margin: calc(var(--button-content-gap) * 0.25) 0 calc(var(--button-content-gap) * 0.25) var(--record-section-indent, 0px);
   padding-left: calc(var(--button-content-gap) * 1.35);
   border-left: 3px solid;
 }
 
+.record-section--branch,
 .record-section--deduction {
   border-left-color: var(--main-arrow-fill-color);
 }
@@ -5024,7 +5059,8 @@ canvas {
 }
 
 .record-action-icons {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, calc(var(--button-icon-size) * 0.85));
   align-items: center;
   justify-content: flex-end;
   gap: calc(var(--button-content-gap) * 0.45);
@@ -5044,9 +5080,15 @@ canvas {
 }
 
 .record-action-icon--current {
+  grid-column: 2;
   opacity: 0.82;
 }
 
+.record-action-icon--branch {
+  grid-column: 1;
+}
+
+.record-action-icon--branch,
 .record-action-icon--jump {
   opacity: 0;
   cursor: pointer;
@@ -5054,12 +5096,20 @@ canvas {
   transition: opacity 120ms ease;
 }
 
+.record-action-icon--jump {
+  grid-column: 2;
+}
+
+.record-row:hover .record-action-icon--branch,
+.record-row:focus-within .record-action-icon--branch,
 .record-row:hover .record-action-icon--jump,
 .record-row:focus-within .record-action-icon--jump {
   opacity: 0.72;
   pointer-events: auto;
 }
 
+.record-action-icon--branch:hover,
+.record-action-icon--branch:focus-visible,
 .record-action-icon--jump:hover,
 .record-action-icon--jump:focus-visible {
   opacity: 1;

@@ -6,6 +6,11 @@ export interface GameRecordAction {
   player: 'w' | 'b'
   clock: GameRecordClock | null
   moves: GameRecordMove[]
+  recordKey?: string
+  recordLineId?: number
+  recordActionIndex?: number
+  branchDepth?: number
+  current?: boolean
   pending?: boolean
 }
 

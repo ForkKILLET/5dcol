@@ -98,6 +98,7 @@ status.stalemate: "Game ended - Draw"
 record.title: "Record"
 record.empty: "No moves recorded."
 record.clock: "{elapsed} / {total}"
+record.branchAction: "Branch from action"
 record.currentAction: "Current action"
 record.jumpToAction: "Jump to action"
 

@@ -5,7 +5,7 @@ import { getBoardRenderLayers } from '@engine/board'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, LabelVisibility, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { Easing } from '@engine/easing'
 import { isModifierKeyEvent, isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
-import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove, type StoredGameState } from '@engine/gameState'
+import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove, type StoredGameState, type StoredRecordLine } from '@engine/gameState'
 import { GameLayout, type ViewportInsets } from '@engine/layout'
 import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
@@ -167,6 +167,16 @@ interface PendingCheck {
   fromBoard: { l: number, m: number }
   toBoard: { l: number, m: number }
 }
+interface RecordLine {
+  id: number
+  parent: {
+    lineId: number
+    beforeActionIndex: number
+  } | null
+  actions: Action[]
+  branchLineIdsBeforeAction: Map<number, number[]>
+  depth: number
+}
 interface GameEndBackgroundAnimation {
   from: number
   to: number
@@ -197,6 +207,7 @@ export class Game extends Disposable(Empty) {
     this.showOpponentMoveRange = config.showOpponentMoveRange ?? true
     this.fiveDPGNOptions = config.fiveDPGNOptions ?? {}
     this.layout.setViewPlayer(this.viewPlayer)
+    this.resetRecordTree([])
   }
 
   public readonly logger: Logger
@@ -213,6 +224,9 @@ export class Game extends Disposable(Empty) {
   private viewPlayer: Player = Player.W
   private actionIndex = 0
   private actions: Action[] = []
+  private recordLines = new Map<number, RecordLine>()
+  private activeRecordLineId = 0
+  private nextRecordLineId = 1
   private readonly pointer: PointerState = {
     screen: [0, 0],
     activePointerId: null,
@@ -357,6 +371,50 @@ export class Game extends Disposable(Empty) {
     this.syncRecord()
   }
 
+  public startRecordBranchBeforeAction(action: GameRecordAction): boolean {
+    if (this.isOnlineGame()) return false
+    if (this.isMoveAnimating() || this.pendingMoves.length > 0) return false
+    if (typeof action.recordLineId !== 'number' || typeof action.recordActionIndex !== 'number') return false
+
+    const parent = this.recordLines.get(action.recordLineId)
+    if (! parent) return false
+    const beforeActionIndex = Scalar.clamp(
+      Math.floor(action.recordActionIndex),
+      0,
+      parent.actions.length,
+    )
+    const branchLine = this.createRecordLine({
+      parent: {
+        lineId: parent.id,
+        beforeActionIndex,
+      },
+      actions: [],
+      depth: parent.depth + 1,
+    })
+    const branchIds = parent.branchLineIdsBeforeAction.get(beforeActionIndex) ?? []
+    branchIds.push(branchLine.id)
+    parent.branchLineIdsBeforeAction.set(beforeActionIndex, branchIds)
+
+    this.activeRecordLineId = branchLine.id
+    const actions = this.getRecordLineFullActions(branchLine.id)
+    this.applyRecordActionPath(actions, actions.length)
+    return true
+  }
+
+  public rollbackToRecordActionEnd(action: GameRecordAction): boolean {
+    if (action.pending) return false
+    if (typeof action.recordLineId !== 'number' || typeof action.recordActionIndex !== 'number') return false
+    if (! this.recordLines.has(action.recordLineId)) return false
+
+    const actions = this.getRecordLineFullActions(action.recordLineId)
+    const targetActionIndex = this.getRecordLinePrefixActions(action.recordLineId).length
+      + action.recordActionIndex
+      + 1
+    this.activeRecordLineId = action.recordLineId
+    this.applyRecordActionPath(actions, targetActionIndex)
+    return true
+  }
+
   public setRemotePendingMoves(moves: Move[], { animate = true }: { animate?: boolean } = {}) {
     if (this.canControlTurn()) return
     if (Move.isSameList(moves, this.getPendingMoves())) return
@@ -487,6 +545,7 @@ export class Game extends Disposable(Empty) {
       this.player = coreState.player
       this.actionIndex = coreState.actionIndex
       this.actions = actions
+      if (! this.restoreRecordTree(state, actions)) this.resetRecordTree(actions)
       this.fillMissingMoveOrders(this.multiverseCommitted, this.getCommittedMoveOrderBase())
       const preview = this.createPendingMoves(pendingMoveMoves)
       this.pendingMoves = preview.pendingMoves
@@ -517,6 +576,9 @@ export class Game extends Disposable(Empty) {
     const state: StoredGameState = {
       version: 1,
       actions: this.actions,
+      recordLines: this.serializeRecordLines(),
+      activeRecordLineId: this.activeRecordLineId,
+      nextRecordLineId: this.nextRecordLineId,
       multiverseCommitted: this.multiverseCommitted,
       multiverse: this.multiverse,
       player: this.player,
@@ -534,6 +596,178 @@ export class Game extends Disposable(Empty) {
     }
     this.syncRecord()
     this.syncStatus()
+  }
+
+  private resetRecordTree(actions: Action[]) {
+    this.recordLines.clear()
+    this.nextRecordLineId = 1
+    this.activeRecordLineId = 0
+    this.recordLines.set(0, {
+      id: 0,
+      parent: null,
+      actions: [...actions],
+      branchLineIdsBeforeAction: new Map(),
+      depth: 0,
+    })
+  }
+
+  private restoreRecordTree(state: Partial<StoredGameState>, fallbackActions: Action[]): boolean {
+    if (! state.recordLines || state.recordLines.length === 0) return false
+
+    const lines = new Map<number, RecordLine>()
+    for (const stored of state.recordLines) {
+      if (! this.isStoredRecordLine(stored)) return false
+      lines.set(stored.id, {
+        id: stored.id,
+        parent: stored.parent,
+        actions: [...stored.actions],
+        branchLineIdsBeforeAction: new Map(stored.branchLineIdsBeforeAction),
+        depth: stored.depth,
+      })
+    }
+    if (! lines.has(0)) return false
+
+    const activeRecordLineId = state.activeRecordLineId ?? 0
+    if (! lines.has(activeRecordLineId)) return false
+
+    this.recordLines = lines
+    this.activeRecordLineId = activeRecordLineId
+    this.nextRecordLineId = Math.max(
+      state.nextRecordLineId ?? 1,
+      ...[...lines.keys()].map(id => id + 1),
+    )
+
+    if (! isActionPrefix(fallbackActions, this.getRecordLineFullActions(this.activeRecordLineId))) {
+      this.resetRecordTree(fallbackActions)
+      return false
+    }
+    return true
+  }
+
+  private isStoredRecordLine(line: unknown): line is StoredRecordLine {
+    if (! line || typeof line !== 'object') return false
+    const value = line as Partial<StoredRecordLine>
+    return typeof value.id === 'number'
+      && (value.parent === null || (
+        typeof value.parent === 'object'
+        && typeof value.parent.lineId === 'number'
+        && typeof value.parent.beforeActionIndex === 'number'
+      ))
+      && Array.isArray(value.actions)
+      && Array.isArray(value.branchLineIdsBeforeAction)
+      && value.branchLineIdsBeforeAction.every(entry => (
+        Array.isArray(entry)
+        && typeof entry[0] === 'number'
+        && Array.isArray(entry[1])
+        && entry[1].every(id => typeof id === 'number')
+      ))
+      && typeof value.depth === 'number'
+  }
+
+  private serializeRecordLines(): StoredRecordLine[] {
+    return [...this.recordLines.values()].map(line => ({
+      id: line.id,
+      parent: line.parent,
+      actions: line.actions,
+      branchLineIdsBeforeAction: [...line.branchLineIdsBeforeAction.entries()],
+      depth: line.depth,
+    }))
+  }
+
+  private createRecordLine({
+    parent,
+    actions,
+    depth,
+  }: {
+    parent: RecordLine['parent']
+    actions: Action[]
+    depth: number
+  }): RecordLine {
+    const line: RecordLine = {
+      id: this.nextRecordLineId++,
+      parent,
+      actions: [...actions],
+      branchLineIdsBeforeAction: new Map(),
+      depth,
+    }
+    this.recordLines.set(line.id, line)
+    return line
+  }
+
+  private getActiveRecordLine(): RecordLine {
+    return this.recordLines.get(this.activeRecordLineId) ?? this.recordLines.get(0)!
+  }
+
+  private getRecordLinePrefixActions(lineId: number): Action[] {
+    const line = this.recordLines.get(lineId)
+    if (! line?.parent) return []
+
+    const parent = this.recordLines.get(line.parent.lineId)
+    if (! parent) return []
+
+    return [
+      ...this.getRecordLinePrefixActions(parent.id),
+      ...parent.actions.slice(0, line.parent.beforeActionIndex),
+    ]
+  }
+
+  private getRecordLineFullActions(lineId: number): Action[] {
+    const line = this.recordLines.get(lineId)
+    if (! line) return []
+
+    return [
+      ...this.getRecordLinePrefixActions(lineId),
+      ...line.actions,
+    ]
+  }
+
+  private getActiveRecordLineLocalActionIndex(): number {
+    const prefixLength = this.getRecordLinePrefixActions(this.activeRecordLineId).length
+    return Scalar.clamp(
+      this.actionIndex - prefixLength,
+      0,
+      this.getActiveRecordLine().actions.length,
+    )
+  }
+
+  private appendActionToActiveRecordLine(action: Action) {
+    const line = this.getActiveRecordLine()
+    const localActionIndex = this.getActiveRecordLineLocalActionIndex()
+    if (localActionIndex < line.actions.length) {
+      line.actions = line.actions.slice(0, localActionIndex)
+      for (const key of line.branchLineIdsBeforeAction.keys()) {
+        if (key >= localActionIndex) line.branchLineIdsBeforeAction.delete(key)
+      }
+    }
+    line.actions.push(action)
+    this.actions = this.getRecordLineFullActions(line.id)
+  }
+
+  private applyRecordActionPath(actions: Action[], actionIndex: number) {
+    const targetActionIndex = Scalar.clamp(Math.floor(actionIndex), 0, actions.length)
+    const state = CoreGameState.create(actions.slice(0, targetActionIndex))
+    this.multiverseCommitted = state.multiverseCommitted
+    this.multiverse = state.multiverse
+    this.player = state.player
+    this.actionIndex = state.actionIndex
+    this.actions = actions
+    this.syncAutomaticViewPlayer()
+    this.selectedPiece = null
+    this.hoverSquare = null
+    this.hoverPiece = null
+    this.pendingMove = null
+    this.pendingMoves = []
+    this.clearMoveAnimation()
+    this.submitRequestedDuringMoveAnimation = false
+    this.gameEndTrial = false
+    this.gameEndTrialStatus = null
+    this.cameraMotion = null
+    this.clearPointerDrag()
+    this.updateGameEndState()
+    this.syncCheckState()
+    this.persistGameState()
+    this.focusCurrentPresent()
+    this.syncToolbarButtons()
   }
 
   private isOnlineGame(): boolean {
@@ -1569,15 +1803,12 @@ export class Game extends Disposable(Empty) {
       return
     }
 
-    if (this.actionIndex < this.actions.length) {
-      this.actions = this.actions.slice(0, this.actionIndex)
-    }
     const action: Action = {
       moves: this.pendingMoves
         .filter(pendingMove => ! pendingMove.isPass)
         .map(pendingMove => pendingMove.move),
     }
-    this.actions.push(action)
+    this.appendActionToActiveRecordLine(action)
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
@@ -1646,7 +1877,7 @@ export class Game extends Disposable(Empty) {
         .filter(pendingMove => ! pendingMove.isPass)
         .map(pendingMove => pendingMove.move),
     }
-    this.actions.push(action)
+    this.appendActionToActiveRecordLine(action)
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
@@ -1677,28 +1908,85 @@ export class Game extends Disposable(Empty) {
   }
 
   public getFiveDPGNExport(): GameExportRequest {
-    const actions = buildGameRecordActions(this.actions, this.fiveDPGNOptions)
-    const pendingMoves = this.getPendingMoves()
-    const pendingActions = pendingMoves.length > 0
-      ? buildGameRecordActions([
-          ...this.actions.slice(0, this.actionIndex),
-          { moves: pendingMoves },
-        ], this.fiveDPGNOptions).slice(this.actionIndex).map(action => ({
-          ...action,
-          pending: true,
-        }))
-      : []
-
     return {
       text: FiveDPGN.exportGameState({ actions: this.actions }, this.fiveDPGNOptions),
       hasPendingMoves: this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
-      actions: [
-        ...actions.slice(0, this.actionIndex),
-        ...pendingActions,
-        ...actions.slice(this.actionIndex),
-      ],
+      actions: this.buildRecordActionsForDisplay(),
     }
+  }
+
+  private buildRecordActionsForDisplay(): GameRecordAction[] {
+    return this.buildRecordLineActionsForDisplay(0, [])
+  }
+
+  private buildRecordLineActionsForDisplay(lineId: number, prefixActions: Action[]): GameRecordAction[] {
+    const line = this.recordLines.get(lineId)
+    if (! line) return []
+
+    const rows: GameRecordAction[] = []
+    const activePendingLocalActionIndex = line.id === this.activeRecordLineId && this.pendingMoves.length > 0
+      ? this.getActiveRecordLineLocalActionIndex()
+      : null
+    const lineRows = buildGameRecordActions([
+      ...prefixActions,
+      ...line.actions,
+    ], this.fiveDPGNOptions)
+
+    for (let actionIndex = 0; actionIndex <= line.actions.length; actionIndex += 1) {
+      const branchIds = line.branchLineIdsBeforeAction.get(actionIndex) ?? []
+      const branchPrefixActions = [
+        ...prefixActions,
+        ...line.actions.slice(0, actionIndex),
+      ]
+      for (const branchId of branchIds) {
+        rows.push(...this.buildRecordLineActionsForDisplay(branchId, branchPrefixActions))
+      }
+
+      if (activePendingLocalActionIndex === actionIndex) {
+        const pendingMoves = this.getPendingMoves()
+        const pendingRows = buildGameRecordActions([
+          ...branchPrefixActions,
+          { moves: pendingMoves },
+        ], this.fiveDPGNOptions)
+        const pendingRow = pendingRows.at(-1)
+        if (pendingRow) {
+          rows.push({
+            ...pendingRow,
+            recordKey: `${line.id}:${actionIndex}:pending`,
+            recordLineId: line.id,
+            recordActionIndex: actionIndex,
+            branchDepth: line.depth,
+            current: true,
+            pending: true,
+          })
+        }
+      }
+
+      if (actionIndex >= line.actions.length) continue
+
+      const row = lineRows[prefixActions.length + actionIndex]
+      if (! row) continue
+
+      rows.push({
+        ...row,
+        recordKey: `${line.id}:${actionIndex}`,
+        recordLineId: line.id,
+        recordActionIndex: actionIndex,
+        branchDepth: line.depth,
+        current: this.isCurrentRecordLineAction(line.id, actionIndex),
+      })
+    }
+
+    return rows
+  }
+
+  private isCurrentRecordLineAction(lineId: number, actionIndex: number): boolean {
+    if (this.pendingMoves.length > 0) return false
+    if (lineId !== this.activeRecordLineId) return false
+
+    const prefixLength = this.getRecordLinePrefixActions(lineId).length
+    return this.actionIndex === prefixLength + actionIndex + 1
   }
 
   public rollbackToActionEnd(actionIndex: number): boolean {
@@ -1740,6 +2028,7 @@ export class Game extends Disposable(Empty) {
 
   private loadCoreGameState(state: CoreGameState, { focus = true }: { focus?: boolean } = {}) {
     this.actions = state.actions
+    this.resetRecordTree(state.actions)
     this.multiverseCommitted = state.multiverseCommitted
     this.multiverse = state.multiverse
     this.player = state.player

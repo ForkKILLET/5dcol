@@ -98,6 +98,7 @@ status.stalemate: "对局结束 - 和棋"
 record.title: "记谱"
 record.empty: "暂无记谱。"
 record.clock: "{elapsed} / {total}"
+record.branchAction: "从 action 分支"
 record.currentAction: "当前 action"
 record.jumpToAction: "跳转到 action"
 

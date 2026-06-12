@@ -19,11 +19,25 @@ export interface PendingMove {
 export interface StoredGameState {
   version: 1
   actions?: Action[]
+  recordLines?: StoredRecordLine[]
+  activeRecordLineId?: number
+  nextRecordLineId?: number
   multiverseCommitted: Multiverse
   multiverse: Multiverse
   player: Player
   actionIndex: number
   pendingMoves: PendingMove[]
+}
+
+export interface StoredRecordLine {
+  id: number
+  parent: {
+    lineId: number
+    beforeActionIndex: number
+  } | null
+  actions: Action[]
+  branchLineIdsBeforeAction: [number, number[]][]
+  depth: number
 }
 
 export const GAME_STORAGE_KEY = '5dcol.gameState'
@@ -45,6 +59,9 @@ export const isStoredGameState = (
     && isMultiverseLike(state.multiverseCommitted)
     && isMultiverseLike(state.multiverse)
     && (state.actions === undefined || Array.isArray(state.actions))
+    && (state.recordLines === undefined || Array.isArray(state.recordLines))
+    && (state.activeRecordLineId === undefined || typeof state.activeRecordLineId === 'number')
+    && (state.nextRecordLineId === undefined || typeof state.nextRecordLineId === 'number')
     && (state.player === Player.W || state.player === Player.B)
     && typeof state.actionIndex === 'number'
     && Array.isArray(state.pendingMoves)
