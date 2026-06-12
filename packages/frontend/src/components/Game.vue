@@ -69,7 +69,6 @@ const DEFAULT_GAME_SETTINGS: GameSettings = {
   autoSwitchViewPlayer: true,
   showClock: true,
   showMoveTravelAnimation: true,
-  showOpponentMoveRange: true,
 }
 
 const messages = reactive<GameMessage[]>([])
@@ -286,7 +285,6 @@ interface GameSettings {
   autoSwitchViewPlayer: boolean
   showClock: boolean
   showMoveTravelAnimation: boolean
-  showOpponentMoveRange: boolean
 }
 interface FiveDPGNSettings {
   includePieceSymbols: boolean
@@ -2614,7 +2612,6 @@ function startLocalGame() {
     viewPlayer: viewPlayer.value,
     autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
-    showOpponentMoveRange: gameSettings.showOpponentMoveRange,
     fiveDPGNOptions: gameSettings.fiveDPGN,
     onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
@@ -2945,7 +2942,6 @@ function parseGameSettings(value: Partial<GameSettings>): GameSettings {
     autoSwitchViewPlayer: parseBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
     showClock: parseBoolean(value.showClock, DEFAULT_GAME_SETTINGS.showClock),
     showMoveTravelAnimation: parseBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
-    showOpponentMoveRange: parseBoolean(value.showOpponentMoveRange, DEFAULT_GAME_SETTINGS.showOpponentMoveRange),
   }
 }
 
@@ -2983,7 +2979,7 @@ function getClockStepMs(clock: MatchClock, player: Player, now: number): number 
 }
 
 function getEffectiveShowOpponentMoveRange(settings = onlineRoomSettings.value): boolean {
-  return gameSettings.showOpponentMoveRange && (settings?.showOpponentMoveRange ?? true)
+  return settings?.showOpponentMoveRange ?? true
 }
 
 function storeOnlineSession(serverAddress: string, state: MatchGameState) {
@@ -4049,13 +4045,6 @@ watch(gameSettings, () => {
               <span>{{ t('settings.travelAnimation') }}</span>
               <GameToggle
                 v-model="gameSettings.showMoveTravelAnimation"
-                :style="menuButtonStyle"
-              />
-            </div>
-            <div class="settings-row">
-              <span>{{ t('settings.opponentMoveRange') }}</span>
-              <GameToggle
-                v-model="gameSettings.showOpponentMoveRange"
                 :style="menuButtonStyle"
               />
             </div>

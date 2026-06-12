@@ -1116,7 +1116,7 @@ export class Game extends Disposable(Empty) {
     if (! this.canControlTurn()) return false
     if (this.hoverCheckWarning) return true
 
-    if (this.selectedPiece && this.hoverSquare) {
+    if (this.selectedPiece?.player === this.player && this.hoverSquare) {
       const { l, m, coord } = this.hoverSquare
       const { player, targets } = this.selectedPiece
       if (targets.some(target => (
@@ -1124,9 +1124,9 @@ export class Game extends Disposable(Empty) {
       ))) return true
     }
 
-    const selection = this.hoverPiece?.player === this.player
-      ? this.hoverPiece
-      : this.getPieceSelectionAtScreen(this.pointer.screen)
+    if (this.hoverPiece) return true
+
+    const selection = this.getInspectablePieceSelectionAtScreen(this.pointer.screen)
     return selection !== null
   }
 
@@ -1356,7 +1356,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private selectPieceAt(screen: Vec2) {
-    const selection = this.getPieceSelectionAtScreen(screen)
+    const selection = this.getInspectablePieceSelectionAtScreen(screen)
     if (! selection) return
     this.selectedPiece = selection
     this.playUISound()
@@ -1414,6 +1414,7 @@ export class Game extends Disposable(Empty) {
 
   private tryCreateMoveAt(screen: Vec2): boolean {
     if (! this.selectedPiece) return false
+    if (this.selectedPiece.player !== this.player) return false
     const wasGameEndStatus = this.gameEndStatus
     const wasGameEnded = wasGameEndStatus !== null
 
@@ -2160,6 +2161,15 @@ export class Game extends Disposable(Empty) {
     const hit = this.getPlayableBoardSquareAtScreen(screen)
     if (! hit) return null
     return this.getPieceSelectionFromHit(hit)
+  }
+
+  private getInspectablePieceSelectionAtScreen(screen: Vec2): PieceSelection | null {
+    const selection = this.getPieceSelectionAtScreen(screen)
+    if (selection) return selection
+
+    return this.showOpponentMoveRange
+      ? this.getPendingOpponentPiecePreviewAtScreen(screen)
+      : null
   }
 
   private getPieceSelectionFromHit(hit: BoardSquareHit, player = this.player): PieceSelection | null {
