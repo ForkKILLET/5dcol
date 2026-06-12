@@ -2521,6 +2521,15 @@ function getOrAddMatchServer(address: string): MatchServerState {
   return server
 }
 
+function isShortcutBlocked(e: KeyboardEvent): boolean {
+  return (
+    e.repeat
+    || isModifierKeyEvent(e)
+    || isTextInputEvent(e)
+    || dialogMode.value !== 'none'
+  )
+}
+
 function handleWindowKeyDown(e: KeyboardEvent) {
   if (! loading.value && ! gameStarted.value) startAmbience()
 
@@ -2536,25 +2545,16 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   }
 
   if (
-    e.key === ','
-    && ! e.repeat
+    e.key === '`'
     && ! loading.value
-    && ! isModifierKeyEvent(e)
-    && ! isTextInputEvent(e)
-    && dialogMode.value === 'none'
+    && ! isShortcutBlocked(e)
   ) {
     e.preventDefault()
     openSettingsDialog()
     return
   }
 
-  if (
-    e.repeat
-    || ! gameStarted.value
-    || isModifierKeyEvent(e)
-    || isTextInputEvent(e)
-    || dialogMode.value !== 'none'
-  ) return
+  if (! gameStarted.value || isShortcutBlocked(e)) return
 
   switch (e.key) {
     case 'r':

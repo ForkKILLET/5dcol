@@ -36,15 +36,15 @@ dialog.helpPlaceholder: ""
 dialog.helpText: |
   快捷键
 
-  Z / Backspace：撤销小步
-  Enter / F：提交回合或结束对局
+  Z / 退格：撤销小步
+  F / 回车：提交回合或结束对局
   右键：取消选择
   WASD：平移视口
   Q / E：缩小 / 放大
   R：显示或隐藏记谱面板
   C：显示或隐藏棋钟
   U：翻转视角
-  ,：打开设置
+  `：打开设置
   Esc：打开或关闭局内菜单
 
   记谱和文件

@@ -37,14 +37,14 @@ dialog.helpText: |
   Shortcuts
 
   Z / Backspace: Undo move
-  Enter / F: Submit moves or finish game
+  F / Enter: Submit moves or finish game
   Right click: Deselect
   WASD: Pan viewport
   Q / E: Zoom out / in
   R: Toggle record panel
   C: Toggle clock
   U: Flip view
-  ,: Open settings
+  `: Open settings
   Esc: Open or close the in-game menu
 
   Record and files
