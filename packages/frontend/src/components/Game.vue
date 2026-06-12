@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
+import { I18nT, useI18n } from 'vue-i18n'
 import { Player } from '@5dcol/core'
 import type { Action } from '@5dcol/core'
 import {
@@ -33,7 +34,7 @@ import {
   type RendererPreference,
 } from '@engine/rendererFactory'
 import { type LoopingSound, SoundManager } from '@engine/sound'
-import { createTranslator, getDefaultLanguage, isLanguage, LANGUAGES, type Language } from '@/i18n'
+import { getDefaultLanguage, isLanguage, LANGUAGES, type Language } from '@/i18n'
 import { readStorageJson, removeStorageValue, useStorageReactive, useStorageRef } from '@/composables/storage'
 import Card from './Card.vue'
 import GameButton from './GameButton.vue'
@@ -222,6 +223,8 @@ const spectatorDeductionStartActionIndex = ref<number | null>(null)
 
 const query = new URLSearchParams(window.location.search)
 const DOCUMENT_TITLE = '5D Chess Online'
+const ORIGINAL_GAME_TITLE = '5D Chess With Multiverse Time Travel'
+const ORIGINAL_GAME_STEAM_URL = 'https://store.steampowered.com/app/1349230/5D_Chess_With_Multiverse_Time_Travel/'
 const MATCH_REFRESH_INTERVAL_MS = 5000
 const ONLINE_RECONNECT_DELAY_MS = 1000
 const MAIN_MENU_PERF_LOG_INTERVAL_FRAMES = 120
@@ -297,20 +300,25 @@ interface RecordRowSection {
 }
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
 const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
-const t = computed(() => createTranslator(language.value))
+
+const { t, locale } = useI18n({ useScope: 'global' })
+watch(language, value => {
+  locale.value = value
+}, { immediate: true })
+
 const gameStatusText = computed(() => {
-  if (gameStatus.value.kind === 'stalemate') return t.value('status.stalemate')
+  if (gameStatus.value.kind === 'stalemate') return t('status.stalemate')
 
   const player = gameStatus.value.player === Player.B
-    ? t.value('player.black')
-    : t.value('player.white')
+    ? t('player.black')
+    : t('player.white')
   if (onlineRoomStatus.value !== null && onlinePlayer.value === null) {
-    return t.value('status.turnSpectator', { player })
+    return t('status.turnSpectator', { player })
   }
   const owner = ! onlineSession.value || gameStatus.value.player === onlinePlayer.value
-    ? t.value('status.owner.your')
-    : t.value('status.owner.their')
-  return t.value(
+    ? t('status.owner.your')
+    : t('status.owner.their')
+  return t(
     gameStatus.value.kind === 'checkmate' ? 'status.checkmate' : 'status.turn',
     { owner, player },
   )
@@ -320,30 +328,30 @@ const onlineStatusText = computed(() => {
 
   let status = ''
   if (onlineError.value) {
-    status = t.value('online.error', { message: onlineError.value })
+    status = t('online.error', { message: onlineError.value })
   }
   else if (onlineRoomStatus.value === 'finished') {
-    status = t.value('online.finished')
+    status = t('online.finished')
   }
   else if (onlineConnectionStatus.value === 'offline' || onlinePresence.value?.self === 'offline') {
-    status = t.value('online.youOffline')
+    status = t('online.youOffline')
   }
   else if (onlineRoomReady.value && onlinePresence.value?.opponent !== 'online') {
-    status = t.value('online.opponentOffline')
+    status = t('online.opponentOffline')
   }
   else if (! onlineRoomReady.value) {
-    status = t.value('online.waiting')
+    status = t('online.waiting')
   }
   else {
     switch (onlineConnectionStatus.value) {
       case 'connecting':
-        status = t.value('online.connecting')
+        status = t('online.connecting')
         break
       case 'reconnecting':
-        status = t.value('online.reconnecting')
+        status = t('online.reconnecting')
         break
       case 'connected':
-        status = t.value('online.playingAs')
+        status = t('online.playingAs')
         break
     }
   }
@@ -353,7 +361,7 @@ const onlineStatusText = computed(() => {
 
 function appendOnlineSpectatorCount(status: string) {
   if (! status || onlineSpectatorCount.value <= 0) return status
-  return `${status} - ${t.value('online.spectators', { count: onlineSpectatorCount.value })}`
+  return `${status} - ${t('online.spectators', { count: onlineSpectatorCount.value })}`
 }
 
 const clockRows = computed(() => {
@@ -364,7 +372,7 @@ const clockRows = computed(() => {
     const totalMs = onlineClock.value!.playerTotalsMs[player] + stepMs
     return {
       player,
-      label: player === Player.W ? t.value('player.white') : t.value('player.black'),
+      label: player === Player.W ? t('player.white') : t('player.black'),
       step: formatDuration(stepMs),
       total: formatDuration(totalMs),
       active: onlineClock.value!.currentPlayer === player,
@@ -385,14 +393,14 @@ const hasUnfinishedOnlineGame = computed(() => (
 ))
 const languageOptions = computed(() => LANGUAGES.map(value => ({
   value,
-  label: t.value(`language.${value}`),
+  label: t(`language.${value}`),
 })))
 const rendererStatusText = computed(() => {
-  if (activeRendererBackend.value === 'webgl') return t.value('settings.rendererStatusWebGL')
-  if (rendererFallbackReason.value === 'unsupported') return t.value('settings.rendererStatusCanvasUnsupported')
-  if (rendererFallbackReason.value === 'create-failed') return t.value('settings.rendererStatusCanvasFailed')
-  if (activeRendererBackend.value === 'canvas') return t.value('settings.rendererStatusCanvas')
-  return t.value('settings.rendererStatusPending')
+  if (activeRendererBackend.value === 'webgl') return t('settings.rendererStatusWebGL')
+  if (rendererFallbackReason.value === 'unsupported') return t('settings.rendererStatusCanvasUnsupported')
+  if (rendererFallbackReason.value === 'create-failed') return t('settings.rendererStatusCanvasFailed')
+  if (activeRendererBackend.value === 'canvas') return t('settings.rendererStatusCanvas')
+  return t('settings.rendererStatusPending')
 })
 
 const primaryButtons = computed(() => (
@@ -461,7 +469,7 @@ const menuButtonStyle = computed(() => getPresetButtonStyle(
   viewHoverButtonPreset.value,
 ))
 const mainMenuStartText = computed(() => (
-  hasSavedGame.value ? t.value('main.resume') : t.value('main.start')
+  hasSavedGame.value ? t('main.resume') : t('main.start')
 ))
 const mainMenuVisible = computed(() => ! loading.value && ! gameStarted.value)
 const mainMenuAnnihilationVisible = computed(() => mainMenuAnnihilationScore.value > 0)
@@ -515,11 +523,17 @@ const uiStyle = computed(() => {
     '--main-title-primary-shadow-y': `${mainMenuLayout.value.titlePrimaryShadowY}px`,
     '--main-title-secondary-shadow-x': `${mainMenuLayout.value.titleSecondaryShadowX}px`,
     '--main-title-secondary-shadow-y': `${mainMenuLayout.value.titleSecondaryShadowY}px`,
+    '--main-title-tertiary-shadow-x': `${mainMenuLayout.value.titleTertiaryShadowX}px`,
+    '--main-title-tertiary-shadow-y': `${mainMenuLayout.value.titleTertiaryShadowY}px`,
     '--main-menu-button-width': `${mainMenuLayout.value.buttonWidth}px`,
     '--main-menu-button-height': `${mainMenuLayout.value.buttonHeight}px`,
     '--main-menu-button-font-size': `${mainMenuLayout.value.buttonFontSize}px`,
     '--main-menu-button-gap': `${mainMenuLayout.value.buttonGap}px`,
     '--main-menu-buttons-top': `${mainMenuLayout.value.buttonsTop}px`,
+    '--main-menu-disclaimer-left': `${mainMenuLayout.value.disclaimerLeft}px`,
+    '--main-menu-disclaimer-top': `${mainMenuLayout.value.disclaimerTop}px`,
+    '--main-menu-disclaimer-width': `${mainMenuLayout.value.disclaimerWidth}px`,
+    '--main-menu-disclaimer-font-size': `${mainMenuLayout.value.disclaimerFontSize}px`,
   }
 })
 
@@ -538,11 +552,17 @@ interface MainMenuLayout {
   titlePrimaryShadowY: number
   titleSecondaryShadowX: number
   titleSecondaryShadowY: number
+  titleTertiaryShadowX: number
+  titleTertiaryShadowY: number
   buttonWidth: number
   buttonHeight: number
   buttonFontSize: number
   buttonGap: number
   buttonsTop: number
+  disclaimerLeft: number
+  disclaimerTop: number
+  disclaimerWidth: number
+  disclaimerFontSize: number
   arrowWidth: number
   arrowHeight: number
   arrowBorderWidth: number
@@ -565,11 +585,17 @@ const MAIN_MENU_BASE_LAYOUT: MainMenuLayout = {
   titlePrimaryShadowY: 4,
   titleSecondaryShadowX: 2,
   titleSecondaryShadowY: 2,
+  titleTertiaryShadowX: 1,
+  titleTertiaryShadowY: 1,
   buttonWidth: 220,
   buttonHeight: Sizes.ButtonHeight,
   buttonFontSize: Sizes.ButtonFontSize,
   buttonGap: Sizes.ButtonContentGap * 1.5,
   buttonsTop: 430,
+  disclaimerLeft: 430,
+  disclaimerTop: 885,
+  disclaimerWidth: 980,
+  disclaimerFontSize: 24,
   arrowWidth: 300,
   arrowHeight: 945,
   arrowBorderWidth: 4,
@@ -700,11 +726,17 @@ function scaleMainMenuLayout(
     titlePrimaryShadowY: layout.titlePrimaryShadowY * scale,
     titleSecondaryShadowX: layout.titleSecondaryShadowX * scale,
     titleSecondaryShadowY: layout.titleSecondaryShadowY * scale,
+    titleTertiaryShadowX: layout.titleTertiaryShadowX * scale,
+    titleTertiaryShadowY: layout.titleTertiaryShadowY * scale,
     buttonWidth: layout.buttonWidth * scale,
     buttonHeight: layout.buttonHeight * scale,
     buttonFontSize: layout.buttonFontSize * scale,
     buttonGap: layout.buttonGap * scale,
     buttonsTop: layout.buttonsTop * scale,
+    disclaimerLeft: layout.disclaimerLeft * scale,
+    disclaimerTop: layout.disclaimerTop * scale,
+    disclaimerWidth: layout.disclaimerWidth * scale,
+    disclaimerFontSize: layout.disclaimerFontSize * scale,
     arrowWidth: layout.arrowWidth * scale,
     arrowHeight: layout.arrowHeight * scale,
     arrowBorderWidth: layout.arrowBorderWidth * scale,
@@ -972,30 +1004,30 @@ function clickToolbarButton(button: GameToolbarButton) {
 }
 
 function getButtonText(button: GameToolbarButton): string {
-  return t.value(button.labelKey, button.labelParams)
+  return t(button.labelKey, button.labelParams)
 }
 
 function getMatchStatusText(status: MatchServerState['status']) {
   switch (status) {
     case 'idle':
-      return t.value('match.status.idle')
+      return t('match.status.idle')
     case 'connecting':
-      return t.value('match.status.connecting')
+      return t('match.status.connecting')
     case 'connected':
-      return t.value('match.status.connected')
+      return t('match.status.connected')
     case 'failed':
-      return t.value('match.status.failed')
+      return t('match.status.failed')
   }
 }
 
 function getMatchRoomStatusText(status: MatchRoomStatus) {
   switch (status) {
     case 'waiting':
-      return t.value('match.roomStatus.waiting')
+      return t('match.roomStatus.waiting')
     case 'playing':
-      return t.value('match.roomStatus.playing')
+      return t('match.roomStatus.playing')
     case 'finished':
-      return t.value('match.roomStatus.finished')
+      return t('match.roomStatus.finished')
   }
 }
 
@@ -1018,7 +1050,7 @@ function getMatchRoomSortRank(status: MatchRoomStatus) {
 }
 
 function getMatchRoomStatusSuffix(room: MatchServerState['rooms'][number]) {
-  return t.value('match.roomStatusSuffix', {
+  return t('match.roomStatusSuffix', {
     date: getMatchRoomDate(room),
     actions: String(room.actionCount),
     status: getMatchRoomStatusText(room.status),
@@ -1026,20 +1058,20 @@ function getMatchRoomStatusSuffix(room: MatchServerState['rooms'][number]) {
 }
 
 function getMatchRoomSettingsMeta(room: MatchServerState['rooms'][number]) {
-  return t.value('match.roomSettingsMeta', {
+  return t('match.roomSettingsMeta', {
     settings: getMatchRoomSettingsLabel(room),
   })
 }
 
 function getMatchRoomSettingsLabel(room: MatchServerState['rooms'][number]) {
   const enabled = [
-    room.private ? t.value('match.setting.private') : '',
-    room.settings.showOpponentMoves ? t.value('match.setting.liveMoves') : '',
-    room.settings.showOpponentMoveRange ? t.value('match.setting.moveRange') : '',
-    room.settings.canReplay ? t.value('match.setting.replay') : '',
+    room.private ? t('match.setting.private') : '',
+    room.settings.showOpponentMoves ? t('match.setting.liveMoves') : '',
+    room.settings.showOpponentMoveRange ? t('match.setting.moveRange') : '',
+    room.settings.canReplay ? t('match.setting.replay') : '',
   ].filter(Boolean)
 
-  return enabled.length > 0 ? enabled.join(', ') : t.value('match.setting.default')
+  return enabled.length > 0 ? enabled.join(', ') : t('match.setting.default')
 }
 
 function canViewMatchRoom(room: MatchServerState['rooms'][number]) {
@@ -1052,8 +1084,8 @@ function canViewMatchRoom(room: MatchServerState['rooms'][number]) {
 
 function getViewMatchRoomLabel(room: MatchServerState['rooms'][number]) {
   return room.status === 'finished'
-    ? t.value('match.replay')
-    : t.value('match.spectate')
+    ? t('match.replay')
+    : t('match.spectate')
 }
 
 function getMatchRoomDate(room: MatchServerState['rooms'][number]) {
@@ -1061,7 +1093,7 @@ function getMatchRoomDate(room: MatchServerState['rooms'][number]) {
 }
 
 function getMatchRoomSeatLabel(seat: MatchServerState['rooms'][number]['seats'][number]) {
-  return seat?.nickname || t.value('match.anonymous')
+  return seat?.nickname || t('match.anonymous')
 }
 
 function getMatchServerDisplayAddress(server: MatchServerState) {
@@ -2326,7 +2358,7 @@ function submitImportDialog() {
 
   const error = game?.importFiveDPGNText(text)
   if (error) {
-    importError.value = error === 'Failed to import 5dpgn' ? t.value('error.importFailed') : error
+    importError.value = error === 'Failed to import 5dpgn' ? t('error.importFailed') : error
     return
   }
 
@@ -2338,10 +2370,10 @@ async function copyExportText() {
   exportCopyStatus.value = ''
   try {
     await navigator.clipboard.writeText(exportText.value)
-    exportCopyStatus.value = t.value('export.copied')
+    exportCopyStatus.value = t('export.copied')
   }
   catch {
-    exportCopyStatus.value = t.value('export.copyManual')
+    exportCopyStatus.value = t('export.copyManual')
   }
 }
 
@@ -2350,10 +2382,10 @@ async function copyShareLink(playSound = true) {
   shareCopyStatus.value = ''
   try {
     await navigator.clipboard.writeText(shareLink.value)
-    shareCopyStatus.value = t.value('share.copied')
+    shareCopyStatus.value = t('share.copied')
   }
   catch {
-    shareCopyStatus.value = t.value('share.copyManual')
+    shareCopyStatus.value = t('share.copyManual')
   }
 }
 
@@ -2412,7 +2444,7 @@ async function openSharedRoomFromHash() {
       room: null,
       roomId: payload.room,
       loading: false,
-      error: server.error || t.value('match.failedMessage'),
+      error: server.error || t('match.failedMessage'),
     }
   }
 }
@@ -3149,7 +3181,7 @@ async function init() {
     }
   }
   catch (err) {
-    loadingError.value = t.value('error.loadFailed')
+    loadingError.value = t('error.loadFailed')
     logger.error(String(err))
     console.error(err)
   }
@@ -3301,6 +3333,22 @@ watch(gameSettings, () => {
               <span>{{ t('main.github') }}</span>
             </GameButton>
           </div>
+          <i18n-t
+            keypath="main.disclaimer"
+            tag="p"
+            class="main-disclaimer"
+          >
+            <template #game>
+              <a
+                class="main-disclaimer-link"
+                :href="ORIGINAL_GAME_STEAM_URL"
+                target="_blank"
+                rel="noopener noreferrer"
+                @pointerdown.stop
+                @click.stop
+              >{{ ORIGINAL_GAME_TITLE }}</a>
+            </template>
+          </i18n-t>
         </template>
         <div
           v-else
@@ -4487,6 +4535,40 @@ canvas {
   flex-direction: column;
   gap: var(--main-menu-button-gap);
   transform: translateX(-50%);
+}
+
+.main-disclaimer {
+  position: absolute;
+  left: var(--main-menu-disclaimer-left);
+  top: var(--main-menu-disclaimer-top);
+  z-index: 1;
+  width: var(--main-menu-disclaimer-width);
+  margin: 0;
+  color: var(--main-title-color);
+  font-size: var(--main-menu-disclaimer-font-size);
+  text-align: center;
+  line-height: 1.25;
+  text-shadow:
+    var(--main-title-tertiary-shadow-x)
+    var(--main-title-tertiary-shadow-y)
+    0
+    var(--main-title-shadow-color);
+  pointer-events: none;
+  user-select: none;
+}
+
+.main-disclaimer-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: max(1px, calc(var(--main-menu-disclaimer-font-size) * 0.06));
+  text-underline-offset: 0.12em;
+  pointer-events: auto;
+}
+
+.main-disclaimer-link:hover,
+.main-disclaimer-link:focus-visible {
+  color: var(--main-arrow-fill-color);
+  outline: none;
 }
 
 .match-card {

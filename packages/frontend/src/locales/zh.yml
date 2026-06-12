@@ -27,6 +27,7 @@ main.help: "帮助"
 main.settings: "设置"
 main.github: "GitHub"
 main.annihilationScore: "已湮灭：{score}"
+main.disclaimer: "5DC OL 是由粉丝制作的开源在线版《{game}》。原作作者：Conor Petersen / Thunkspace。"
 
 dialog.languageTitle: "语言"
 dialog.helpTitle: "帮助"

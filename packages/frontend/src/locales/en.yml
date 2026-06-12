@@ -27,6 +27,7 @@ main.help: "Help"
 main.settings: "Settings"
 main.github: "GitHub"
 main.annihilationScore: "Annihilated: {score}"
+main.disclaimer: "5DC OL is a fan-made, open-source online version of {game}. Original game by Conor Petersen / Thunkspace."
 
 dialog.languageTitle: "Language"
 dialog.helpTitle: "Help"

@@ -1,3 +1,4 @@
+import { createI18n } from 'vue-i18n'
 import en from '@/locales/en.yml'
 import zh from '@/locales/zh.yml'
 
@@ -9,7 +10,7 @@ export type TranslationParams = Record<string, string | number>
 
 type Dictionary = Record<string, string>
 
-const dictionaries = {
+export const dictionaries = {
   en,
   zh,
 } satisfies Record<Language, Dictionary>
@@ -24,10 +25,11 @@ export const getDefaultLanguage = (): Language => {
   return 'en'
 }
 
-export const createTranslator = (language: Language) => (
-  key: TranslationKey,
-  params: TranslationParams = {},
-): string => {
-  const template = dictionaries[language][key] ?? dictionaries.en[key] ?? key
-  return template.replace(/\{(\w+)\}/g, (_: string, name: string) => String(params[name] ?? `{${name}}`))
-}
+export const i18n = createI18n({
+  legacy: false,
+  globalInjection: false,
+  locale: getDefaultLanguage(),
+  fallbackLocale: 'en',
+  flatJson: true,
+  messages: dictionaries,
+})
