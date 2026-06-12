@@ -89,7 +89,6 @@ const recordText = ref('')
 const recordActions = ref<GameRecordAction[]>([])
 const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
-const recordHoveredActionIndex = ref<number | null>(null)
 const secondaryMenuOpen = ref(false)
 const dialogMode = ref<'none' | 'language' | 'help' | 'settings' | 'five-dpgn-settings' | 'import' | 'export' | 'share' | 'shared-room'>('none')
 const importText = ref('')
@@ -295,7 +294,7 @@ interface FiveDPGNSettings {
 }
 interface RecordRowSection {
   id: string
-  deduction: boolean
+  kind: 'record' | 'deduction' | 'pending'
   rows: GameRecordAction[]
 }
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
@@ -428,15 +427,15 @@ const recordRows = computed(() => recordActions.value)
 const recordSections = computed(() => {
   const sections: RecordRowSection[] = []
   for (const row of recordRows.value) {
-    const deduction = isRecordDeductionAction(row)
+    const kind = getRecordSectionKind(row)
     const last = sections.at(-1)
-    if (last && last.deduction === deduction) {
+    if (last && last.kind === kind) {
       last.rows.push(row)
       continue
     }
     sections.push({
-      id: `${deduction ? 'deduction' : 'record'}-${sections.length}-${row.index}`,
-      deduction,
+      id: `${kind}-${sections.length}-${row.index}`,
+      kind,
       rows: [row],
     })
   }
@@ -505,7 +504,7 @@ const uiStyle = computed(() => {
     '--menu-card-fill-color': Color4.toRgbaString(menuCardPreset.fill),
     '--record-white-bg': Color4.toRgbaString(ButtonColors.White.border),
     '--record-white-text': Color4.toRgbaString(ButtonColors.White.text),
-    '--record-black-bg': Color4.toRgbaString(ButtonColors.Black.fill),
+    '--record-black-bg': Color4.toRgbaString(Color4.fromRgba(82, 82, 92, 1)),
     '--record-black-text': Color4.toRgbaString(ButtonColors.Black.text),
     '--game-status-color': gameStatus.value.color,
     '--game-status-shadow-color': gameStatus.value.shadowColor,
@@ -1165,12 +1164,6 @@ function updateRecord(request: GameExportRequest) {
   recordActions.value = request.actions
   recordHasPendingMoves.value = request.hasPendingMoves
   recordCurrentActionIndex.value = request.currentActionIndex
-  if (
-    recordHoveredActionIndex.value !== null
-    && ! request.actions.some(action => action.index === recordHoveredActionIndex.value)
-  ) {
-    recordHoveredActionIndex.value = null
-  }
 }
 
 function updateGameStatus(status: GameStatusView) {
@@ -1204,13 +1197,26 @@ function focusRecordSegment(segment: GameRecordMoveSegment) {
   game?.focusBoard(segment.l, segment.m)
 }
 
-function getRecordMarker(action: GameRecordAction) {
-  if (! onlineSession.value && recordHoveredActionIndex.value === action.index) return '@'
-  return action.index === recordCurrentActionIndex.value - 1 ? '*' : ''
+function isCurrentRecordAction(action: GameRecordAction) {
+  if (action.pending) return true
+  return action.index === recordCurrentActionIndex.value - 1
+}
+
+function canJumpToRecordAction(action: GameRecordAction) {
+  return ! action.pending
+    && ! onlineSession.value
+    && ! isCurrentRecordAction(action)
+}
+
+function getRecordSectionKind(action: GameRecordAction): RecordRowSection['kind'] {
+  if (action.pending) return 'pending'
+  return isRecordDeductionAction(action) ? 'deduction' : 'record'
 }
 
 function isRecordDeductionAction(action: GameRecordAction) {
   return (
+    ! action.pending
+    &&
     isOnlineSpectator.value
     && spectatorDeductionStartActionIndex.value !== null
     && action.index >= spectatorDeductionStartActionIndex.value
@@ -1218,6 +1224,7 @@ function isRecordDeductionAction(action: GameRecordAction) {
 }
 
 function rollbackToRecordAction(action: GameRecordAction) {
+  if (action.pending) return
   if (! gameStarted.value) return
   if (onlineSession.value) return
   playUISound()
@@ -3098,7 +3105,6 @@ function returnToMainMenu(
   recordActions.value = []
   recordHasPendingMoves.value = false
   recordCurrentActionIndex.value = 0
-  recordHoveredActionIndex.value = null
   recordPanelOpen.value = false
   secondaryMenuOpen.value = false
   dialogMode.value = 'none'
@@ -3792,12 +3798,6 @@ watch(gameSettings, () => {
             </GameButton>
           </div>
         </div>
-        <p
-          v-if="recordHasPendingMoves"
-          class="record-message"
-        >
-          {{ t('record.pendingNotRecorded') }}
-        </p>
         <div class="record-content">
           <div
             v-if="recordHeaders.length > 0"
@@ -3820,8 +3820,9 @@ watch(gameSettings, () => {
               :key="section.id"
               class="record-section"
               :class="{
-                'record-section--deduction': section.deduction,
-                'record-section--plain': ! section.deduction,
+                'record-section--deduction': section.kind === 'deduction',
+                'record-section--pending': section.kind === 'pending',
+                'record-section--plain': section.kind === 'record',
               }"
             >
               <div
@@ -3832,13 +3833,7 @@ watch(gameSettings, () => {
                   'record-row--black': row.player === 'b',
                   'record-row--white': row.player !== 'b',
                 }"
-                @mouseenter="recordHoveredActionIndex = row.index"
-                @mouseleave="recordHoveredActionIndex = null"
               >
-                <span
-                  class="record-marker"
-                  @click="rollbackToRecordAction(row)"
-                >{{ getRecordMarker(row) }}</span>
                 <span class="record-serial">{{ row.serial }}</span>
                 <span class="record-action">
                   <span
@@ -3865,6 +3860,26 @@ watch(gameSettings, () => {
                       {{ segment.text }}
                     </button>
                   </span>
+                </span>
+                <span class="record-action-icons">
+                  <span
+                    v-if="isCurrentRecordAction(row)"
+                    class="record-action-icon record-action-icon--current"
+                    :title="t('record.currentAction')"
+                    :aria-label="t('record.currentAction')"
+                  >
+                    <GameIcon name="current" />
+                  </span>
+                  <button
+                    v-if="canJumpToRecordAction(row)"
+                    class="record-action-icon record-action-icon--jump"
+                    type="button"
+                    :title="t('record.jumpToAction')"
+                    :aria-label="t('record.jumpToAction')"
+                    @click.stop="rollbackToRecordAction(row)"
+                  >
+                    <GameIcon name="jump" />
+                  </button>
                 </span>
               </div>
             </div>
@@ -4945,7 +4960,7 @@ canvas {
 
 .record-table {
   display: grid;
-  grid-template-columns: 20px max-content minmax(0, 1fr);
+  grid-template-columns: max-content minmax(0, 1fr) calc(var(--button-icon-size) * 2.1);
   column-gap: var(--button-content-gap);
   row-gap: calc(var(--button-content-gap) * 0.75);
 }
@@ -4954,16 +4969,25 @@ canvas {
   display: contents;
 }
 
-.record-section--deduction {
+.record-section--deduction,
+.record-section--pending {
   box-sizing: border-box;
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: 20px max-content minmax(0, 1fr);
+  grid-template-columns: max-content minmax(0, 1fr) calc(var(--button-icon-size) * 2.1);
   column-gap: var(--button-content-gap);
   row-gap: calc(var(--button-content-gap) * 0.75);
   margin: calc(var(--button-content-gap) * 0.25) 0;
   padding-left: calc(var(--button-content-gap) * 1.35);
-  border-left: 3px solid var(--main-arrow-fill-color);
+  border-left: 3px solid;
+}
+
+.record-section--deduction {
+  border-left-color: var(--main-arrow-fill-color);
+}
+
+.record-section--pending {
+  border-left-color: rgb(220 206 96);
 }
 
 .record-row {
@@ -4974,7 +4998,7 @@ canvas {
   align-items: baseline;
   padding: 2px var(--button-content-gap);
   border-radius: 8px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .record-row--white {
@@ -4987,13 +5011,6 @@ canvas {
   color: var(--record-black-text);
 }
 
-.record-marker {
-  min-width: 20px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  white-space: nowrap;
-}
-
 .record-serial {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -5004,6 +5021,49 @@ canvas {
   display: grid;
   row-gap: calc(var(--button-content-gap) * 0.35);
   min-width: 0;
+}
+
+.record-action-icons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--button-content-gap) * 0.45);
+  align-self: center;
+  min-width: 0;
+}
+
+.record-action-icon {
+  display: inline-grid;
+  place-items: center;
+  width: calc(var(--button-icon-size) * 0.85);
+  height: calc(var(--button-icon-size) * 0.85);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.record-action-icon--current {
+  opacity: 0.82;
+}
+
+.record-action-icon--jump {
+  opacity: 0;
+  cursor: pointer;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.record-row:hover .record-action-icon--jump,
+.record-row:focus-within .record-action-icon--jump {
+  opacity: 0.72;
+  pointer-events: auto;
+}
+
+.record-action-icon--jump:hover,
+.record-action-icon--jump:focus-visible {
+  opacity: 1;
+  outline: none;
 }
 
 .record-clock {

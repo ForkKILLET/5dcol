@@ -2627,6 +2627,7 @@ export namespace FiveDPGN {
   ): string => {
     const formattedActions = formatActions(actions, options)
     const lines = [
+      '[Mode "5D"]',
       '[Board "Standard"]',
       '',
       ...formattedActions.map(action => `${action.serial} ${action.moves.map(move => move.text).join(' ')}`),

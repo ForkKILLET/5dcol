@@ -6,6 +6,7 @@ export interface GameRecordAction {
   player: 'w' | 'b'
   clock: GameRecordClock | null
   moves: GameRecordMove[]
+  pending?: boolean
 }
 
 export interface GameRecordClock {

@@ -96,9 +96,10 @@ status.checkmate: "对局结束 - {player}获胜"
 status.stalemate: "对局结束 - 和棋"
 
 record.title: "记谱"
-record.pendingNotRecorded: "未提交的小步不会记录。"
 record.empty: "暂无记谱。"
 record.clock: "{elapsed} / {total}"
+record.currentAction: "当前 action"
+record.jumpToAction: "跳转到 action"
 
 match.title: "匹配"
 match.connect: "连接"

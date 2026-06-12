@@ -1677,11 +1677,27 @@ export class Game extends Disposable(Empty) {
   }
 
   public getFiveDPGNExport(): GameExportRequest {
+    const actions = buildGameRecordActions(this.actions, this.fiveDPGNOptions)
+    const pendingMoves = this.getPendingMoves()
+    const pendingActions = pendingMoves.length > 0
+      ? buildGameRecordActions([
+          ...this.actions.slice(0, this.actionIndex),
+          { moves: pendingMoves },
+        ], this.fiveDPGNOptions).slice(this.actionIndex).map(action => ({
+          ...action,
+          pending: true,
+        }))
+      : []
+
     return {
       text: FiveDPGN.exportGameState({ actions: this.actions }, this.fiveDPGNOptions),
       hasPendingMoves: this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
-      actions: buildGameRecordActions(this.actions, this.fiveDPGNOptions),
+      actions: [
+        ...actions.slice(0, this.actionIndex),
+        ...pendingActions,
+        ...actions.slice(this.actionIndex),
+      ],
     }
   }
 
