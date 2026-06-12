@@ -114,6 +114,7 @@ export const MatchGameStateSchema = z.object({
   room: MatchRoomSchema,
   session: MatchSessionSchema.nullable(),
   presence: MatchPresenceSchema.nullable(),
+  spectatorCount: z.number().int().nonnegative().catch(0),
   actions: z.array(ActionSchema),
   currentPlayer: PlayerSchema,
   clock: MatchClockSchema,

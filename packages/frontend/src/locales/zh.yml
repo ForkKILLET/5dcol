@@ -157,6 +157,7 @@ online.connecting: "正在连接"
 online.reconnecting: "正在重连"
 online.offline: "已离线"
 online.error: "在线错误 - {message}"
+online.spectators: "{count} 人观战"
 
 export.pendingNotExported: "未提交的小步不会导出。"
 export.copied: "已复制。"

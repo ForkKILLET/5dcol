@@ -149,7 +149,9 @@ export function createBackendServer(options: BackendServerOptions) {
     reply.code(201)
     return {
       user: toUserView(user),
-      state: toGameStateView(room, session, onlineSessionCounts),
+      state: toGameStateView(room, session, onlineSessionCounts, {
+        spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
+      }),
     }
   })
 
@@ -161,7 +163,9 @@ export function createBackendServer(options: BackendServerOptions) {
       const sessionLookup = findSession(rooms, request.params.sessionId, user.id)
       if (! sessionLookup) return sendError(reply, 404, 'Session not found')
       return {
-        state: toGameStateView(sessionLookup.room, sessionLookup.session, onlineSessionCounts),
+        state: toGameStateView(sessionLookup.room, sessionLookup.session, onlineSessionCounts, {
+          spectatorCount: getRoomSpectatorCount(roomSubscribers, sessionLookup.room),
+        }),
       }
     },
   )
@@ -179,7 +183,10 @@ export function createBackendServer(options: BackendServerOptions) {
         return sendError(reply, 403, 'Room is not viewable')
       }
       return {
-        state: toGameStateView(room, session, onlineSessionCounts, request.query.userId),
+        state: toGameStateView(room, session, onlineSessionCounts, {
+          userId: request.query.userId,
+          spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
+        }),
       }
     },
   )
@@ -236,7 +243,9 @@ export function createBackendServer(options: BackendServerOptions) {
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         user: toUserView(user),
-        state: toGameStateView(room, session, onlineSessionCounts),
+        state: toGameStateView(room, session, onlineSessionCounts, {
+          spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
+        }),
       }
     },
   )
@@ -258,7 +267,9 @@ export function createBackendServer(options: BackendServerOptions) {
       storage.saveState({ rooms, users })
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
-        state: toGameStateView(room, null, onlineSessionCounts),
+        state: toGameStateView(room, null, onlineSessionCounts, {
+          spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
+        }),
       }
     },
   )
@@ -277,7 +288,9 @@ export function createBackendServer(options: BackendServerOptions) {
       storage.saveState({ rooms, users })
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
-        state: toGameStateView(room, session, onlineSessionCounts),
+        state: toGameStateView(room, session, onlineSessionCounts, {
+          spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
+        }),
       }
     },
   )
@@ -316,7 +329,9 @@ export function createBackendServer(options: BackendServerOptions) {
       storage.saveState({ rooms, users })
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
-        state: toGameStateView(room, session, onlineSessionCounts),
+        state: toGameStateView(room, session, onlineSessionCounts, {
+          spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
+        }),
       }
     },
   )
@@ -581,14 +596,18 @@ function toGameStateView(
   room: RoomState,
   session: MatchSession | null,
   onlineSessionCounts: Map<string, number>,
-  userId: string | null | undefined = null,
+  options: {
+    userId?: string | null
+    spectatorCount?: number
+  } = {},
 ): MatchGameState {
   const state = GameState.create(room.actions)
-  const viewUserId = session?.userId ?? userId ?? null
+  const viewUserId = session?.userId ?? options.userId ?? null
   return {
     room: toRoomView(room, viewUserId, onlineSessionCounts),
     session,
     presence: getMatchPresence(room, session, onlineSessionCounts),
+    spectatorCount: options.spectatorCount ?? 0,
     actions: room.actions,
     currentPlayer: state.player,
     clock: getClockView(room, state),
@@ -660,7 +679,7 @@ function subscribeRoomState(
     })
   }
   else {
-    writeRoomStateEvent(subscriber, room, onlineSessionCounts)
+    broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
   }
 
   socket.on('close', () => {
@@ -676,6 +695,9 @@ function subscribeRoomState(
         session,
       )
       broadcastClearPendingAction(roomSubscribers, room, session)
+    }
+    else {
+      broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
     }
   })
 }
@@ -750,7 +772,7 @@ function broadcastRoomState(
   if (! subscribers) return
 
   for (const subscriber of subscribers) {
-    writeRoomStateEvent(subscriber, room, onlineSessionCounts)
+    writeRoomStateEvent(roomSubscribers, subscriber, room, onlineSessionCounts)
   }
 }
 
@@ -798,6 +820,7 @@ function broadcastRoomEventToOpponents(
 }
 
 function writeRoomStateEvent(
+  roomSubscribers: Map<string, Set<RoomSubscriber>>,
   subscriber: RoomSubscriber,
   room: RoomState,
   onlineSessionCounts: Map<string, number>,
@@ -807,9 +830,25 @@ function writeRoomStateEvent(
     : null
   const event: MatchRoomStateEvent = {
     type: 'state',
-    state: toGameStateView(room, session, onlineSessionCounts),
+    state: toGameStateView(room, session, onlineSessionCounts, {
+      spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
+    }),
   }
   subscriber.socket.send(JSON.stringify(event))
+}
+
+function getRoomSpectatorCount(
+  roomSubscribers: Map<string, Set<RoomSubscriber>>,
+  room: RoomState,
+) {
+  const subscribers = roomSubscribers.get(room.id)
+  if (! subscribers) return 0
+
+  let count = 0
+  for (const subscriber of subscribers) {
+    if (subscriber.sessionId === null) count += 1
+  }
+  return count
 }
 
 function sendError(reply: FastifyReply, status: number, error: string): MatchErrorResponse {

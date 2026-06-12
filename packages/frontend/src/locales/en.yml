@@ -157,6 +157,7 @@ online.connecting: "Connecting"
 online.reconnecting: "Reconnecting"
 online.offline: "Offline"
 online.error: "Online error - {message}"
+online.spectators: "{count} spectators"
 
 export.pendingNotExported: "Pending moves are not exported."
 export.copied: "Copied."

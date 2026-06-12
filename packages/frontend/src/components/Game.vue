@@ -177,6 +177,7 @@ const onlineRoomReady = ref(false)
 const onlinePlayer = ref<Player | null>(null)
 const onlinePresence = ref<MatchPresence | null>(null)
 const onlineClock = ref<MatchClock | null>(null)
+const onlineSpectatorCount = ref(0)
 const clockNow = ref(Date.now())
 const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
 const onlineError = ref('')
@@ -317,30 +318,44 @@ const gameStatusText = computed(() => {
 const onlineStatusText = computed(() => {
   if (! gameStarted.value || ! onlineSession.value || onlinePlayer.value === null) return ''
 
+  let status = ''
   if (onlineError.value) {
-    return t.value('online.error', { message: onlineError.value })
+    status = t.value('online.error', { message: onlineError.value })
   }
-  if (onlineRoomStatus.value === 'finished') {
-    return t.value('online.finished')
+  else if (onlineRoomStatus.value === 'finished') {
+    status = t.value('online.finished')
   }
-  if (onlineConnectionStatus.value === 'offline' || onlinePresence.value?.self === 'offline') {
-    return t.value('online.youOffline')
+  else if (onlineConnectionStatus.value === 'offline' || onlinePresence.value?.self === 'offline') {
+    status = t.value('online.youOffline')
   }
-  if (onlineRoomReady.value && onlinePresence.value?.opponent !== 'online') {
-    return t.value('online.opponentOffline')
+  else if (onlineRoomReady.value && onlinePresence.value?.opponent !== 'online') {
+    status = t.value('online.opponentOffline')
   }
-  if (! onlineRoomReady.value) {
-    return t.value('online.waiting')
+  else if (! onlineRoomReady.value) {
+    status = t.value('online.waiting')
   }
-  switch (onlineConnectionStatus.value) {
-    case 'connecting':
-      return t.value('online.connecting')
-    case 'reconnecting':
-      return t.value('online.reconnecting')
-    case 'connected':
-      return t.value('online.playingAs')
+  else {
+    switch (onlineConnectionStatus.value) {
+      case 'connecting':
+        status = t.value('online.connecting')
+        break
+      case 'reconnecting':
+        status = t.value('online.reconnecting')
+        break
+      case 'connected':
+        status = t.value('online.playingAs')
+        break
+    }
   }
+
+  return appendOnlineSpectatorCount(status)
 })
+
+function appendOnlineSpectatorCount(status: string) {
+  if (! status || onlineSpectatorCount.value <= 0) return status
+  return `${status} - ${t.value('online.spectators', { count: onlineSpectatorCount.value })}`
+}
+
 const clockRows = computed(() => {
   if (! gameStarted.value || ! onlineSession.value || ! gameSettings.showClock || ! onlineClock.value) return []
 
@@ -2590,6 +2605,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   onlineRoomSettings.value = state.room.settings
   onlineRoomReady.value = state.room.status === 'playing'
   onlineClock.value = state.clock
+  onlineSpectatorCount.value = state.spectatorCount
   onlinePlayer.value = state.session?.player ?? null
   if (state.session) updateViewPlayer(state.session.player)
   onlinePresence.value = state.presence
@@ -2656,6 +2672,7 @@ function applyOnlineGameState(
   onlineRoomSettings.value = state.room.settings
   onlineRoomReady.value = state.room.status === 'playing'
   onlineClock.value = state.clock
+  onlineSpectatorCount.value = state.spectatorCount
   if (gameStarted.value && ! wasReady && onlineRoomReady.value) {
     soundManager?.play('bell.ogg')
   }
@@ -3035,6 +3052,7 @@ function returnToMainMenu(
   onlineConnectionStatus.value = 'offline'
   onlineError.value = ''
   onlineClock.value = null
+  onlineSpectatorCount.value = 0
   onlineActionsSignature = ''
   onlineLiveActions = []
   onlineLiveActionCount.value = 0
