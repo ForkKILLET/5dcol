@@ -2,7 +2,9 @@
 
 Backend server for 5DC OL online matches.
 
-The initial server exposes an HTTP protocol for match-room discovery, session recovery, and authoritative action submission.
+The server uses Fastify for HTTP routes, WebSocket room updates, CORS, and
+authoritative online-match state. Match data is persisted with Drizzle on
+Node's built-in SQLite driver.
 
 ```sh
 pnpm -F @5dcol/backend dev
@@ -10,8 +12,16 @@ pnpm -F @5dcol/backend dev
 
 The default debug server listens on `localhost:5161`.
 
-Match rooms are persisted to `data/rooms.json` by default. Set `MATCH_DATA_FILE`
-to use another path.
+Environment variables:
 
-Room state updates are pushed through Server-Sent Events at
-`/rooms/:roomId/events?sessionId=...`.
+- `PORT`: backend port.
+- `HOST`: backend host.
+- `NAME`: advertised server name.
+- `MATCH_DATABASE_FILE`: SQLite database path.
+- `MATCH_LEGACY_DATA_FILE`: optional legacy JSON room-data path for migration.
+
+Room state updates are pushed through WebSocket at:
+
+```text
+/rooms/:roomId/events?sessionId=...&userId=...
+```
