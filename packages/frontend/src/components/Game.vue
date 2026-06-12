@@ -65,6 +65,7 @@ const DEFAULT_GAME_SETTINGS: GameSettings = {
   soundVolume: 1,
   renderer: 'auto',
   fiveDPGN: DEFAULT_FIVE_DPGN_SETTINGS,
+  autoFullscreen: true,
   autoSwitchViewPlayer: true,
   showClock: true,
   showMoveTravelAnimation: true,
@@ -281,6 +282,7 @@ interface GameSettings {
   soundVolume: number
   renderer: RendererPreference
   fiveDPGN: FiveDPGNSettings
+  autoFullscreen: boolean
   autoSwitchViewPlayer: boolean
   showClock: boolean
   showMoveTravelAnimation: boolean
@@ -2561,6 +2563,7 @@ function isMobile() {
 }
 
 async function enterImmersiveModeIfNeeded() {
+  if (! gameSettings.autoFullscreen) return
   if (! isMobile()) return
 
   if (! document.fullscreenElement) {
@@ -2938,6 +2941,7 @@ function parseGameSettings(value: Partial<GameSettings>): GameSettings {
     soundVolume: parseVolume(value.soundVolume),
     renderer: parseRendererPreference(value.renderer, DEFAULT_GAME_SETTINGS.renderer),
     fiveDPGN: parseFiveDPGNSettings(value.fiveDPGN),
+    autoFullscreen: parseBoolean(value.autoFullscreen, DEFAULT_GAME_SETTINGS.autoFullscreen),
     autoSwitchViewPlayer: parseBoolean(value.autoSwitchViewPlayer, DEFAULT_GAME_SETTINGS.autoSwitchViewPlayer),
     showClock: parseBoolean(value.showClock, DEFAULT_GAME_SETTINGS.showClock),
     showMoveTravelAnimation: parseBoolean(value.showMoveTravelAnimation, DEFAULT_GAME_SETTINGS.showMoveTravelAnimation),
@@ -4026,6 +4030,13 @@ watch(gameSettings, () => {
                 <span class="settings-status">{{ rendererStatusText }}</span>
                 <span class="settings-note">{{ t('settings.rendererRestartHint') }}</span>
               </div>
+            </div>
+            <div class="settings-row">
+              <span>{{ t('settings.autoFullscreen') }}</span>
+              <GameToggle
+                v-model="gameSettings.autoFullscreen"
+                :style="menuButtonStyle"
+              />
             </div>
             <div class="settings-row">
               <span>{{ t('settings.autoSwitchView') }}</span>
