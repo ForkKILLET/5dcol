@@ -769,6 +769,7 @@ export namespace Board {
       && Board.getPiece({ x: 7, y }, board) === rook
       && Board.getPiece({ x: 5, y }, board) === Piece.E
       && Board.getPiece({ x: 6, y }, board) === Piece.E
+      && isCastlingPathSafe(board, player, y, [4, 5, 6])
   }
 
   const canCastleQueenSide = (board: Board, player: Player): boolean => {
@@ -782,6 +783,17 @@ export namespace Board {
       && Board.getPiece({ x: 1, y }, board) === Piece.E
       && Board.getPiece({ x: 2, y }, board) === Piece.E
       && Board.getPiece({ x: 3, y }, board) === Piece.E
+      && isCastlingPathSafe(board, player, y, [4, 3, 2])
+  }
+
+  const isCastlingPathSafe = (
+    board: Board,
+    player: Player,
+    y: number,
+    xs: number[],
+  ): boolean => {
+    const attacker = Players.opponent(player)
+    return xs.every(x => ! Board.isSquareUnderAttack(board, { x, y }, attacker))
   }
 
   const getPawnDirection = (player: Player): number => (
