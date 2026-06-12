@@ -129,6 +129,7 @@ interface MoveAnimation {
   startedAt: number
   cameraCenter: Vec2
   cameraScale: number
+  viewportFollowDisabled: boolean
   travelLoop: LoopingSound | null
   travelHitPlayed: boolean
 }
@@ -751,6 +752,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private panViewportByScreenDelta(lastScreen: Vec2, screen: Vec2) {
+    this.disableMoveAnimationViewportFollow()
     const worldLast = this.renderer.screenToWorld(lastScreen)
     const worldCurrent = this.renderer.screenToWorld(screen)
     const delta = Vec2.sub(worldCurrent, worldLast)
@@ -838,6 +840,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private panCameraByKeyboard(direction: Vec2) {
+    this.disableMoveAnimationViewportFollow()
     const camera = this.renderer.getCamera()
     const step = CameraControl.KeyboardPanStep / camera.scale
     const targetCenter = this.cameraMotion?.targetCenter ?? camera.center
@@ -849,6 +852,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private zoomCameraByStep(step: number) {
+    this.disableMoveAnimationViewportFollow()
     const camera = this.renderer.getCamera()
     const targetCenter = this.cameraMotion?.targetCenter ?? camera.center
     const targetScale = this.cameraMotion?.targetScale ?? camera.scale
@@ -909,6 +913,12 @@ export class Game extends Disposable(Empty) {
       center: viewport ? this.layout.clampCameraCenterToViewport(targetCenter, viewport) : targetCenter,
     })
     this.syncCameraMotion()
+  }
+
+  private disableMoveAnimationViewportFollow() {
+    if (this.moveAnimation && this.isMoveAnimating()) {
+      this.moveAnimation.viewportFollowDisabled = true
+    }
   }
 
   public focusTurn(l: number, m: number, options: ViewportFocusOptions = {}) {
@@ -1390,6 +1400,7 @@ export class Game extends Disposable(Empty) {
       startedAt: performance.now(),
       cameraCenter: [...this.renderer.getCamera().center],
       cameraScale: this.renderer.getCamera().scale,
+      viewportFollowDisabled: false,
       travelLoop: null,
       travelHitPlayed: false,
     }
@@ -1453,6 +1464,7 @@ export class Game extends Disposable(Empty) {
       startedAt: performance.now(),
       cameraCenter: [...this.renderer.getCamera().center],
       cameraScale: this.renderer.getCamera().scale,
+      viewportFollowDisabled: false,
       travelLoop: null,
       travelHitPlayed: false,
     }
@@ -2719,6 +2731,7 @@ export class Game extends Disposable(Empty) {
 
   private followPendingBoardAnimation(pendingMove: PendingMove, progress: number) {
     if (! this.moveAnimation) return
+    if (this.moveAnimation.viewportFollowDisabled) return
     if (pendingMove.isPass) return
 
     const [fromPos, fromSize] = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
@@ -2737,6 +2750,7 @@ export class Game extends Disposable(Empty) {
 
   private followTravelAnimationViewport(pendingMove: PendingMove, progress: number) {
     if (! this.moveAnimation) return
+    if (this.moveAnimation.viewportFollowDisabled) return
     if (! this.showMoveTravelAnimation) return
 
     const sourceOldRect = this.layout.getBoardRect(pendingMove.from.l, pendingMove.from.m)
