@@ -4,7 +4,7 @@
   "description": "An open-source web implementation of 5D Chess.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "tokei": "tokei -t TypeScript,CSS,GLSL,Vue"
   },
   "keywords": [],
   "author": "",

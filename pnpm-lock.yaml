@@ -72,6 +72,9 @@ importers:
       vue-i18n:
         specifier: ^11.4.5
         version: 11.4.5(vue@3.5.35(typescript@5.9.3))
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@modyfi/vite-plugin-yaml':
         specifier: ^1.1.1

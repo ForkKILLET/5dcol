@@ -1,12 +1,17 @@
+import { z } from 'zod'
 import type { AssetLoadProgressCallback } from '@engine/assets'
 import { CanvasRenderer } from '@engine/canvas/renderer'
 import type { Logger } from '@engine/logger'
 import type { Renderer } from '@engine/renderer'
 import { WebGLRenderer } from '@engine/webgl/renderer'
 
-export type RendererBackend = 'canvas' | 'webgl'
-export type RendererPreference = 'auto' | RendererBackend
-export type RendererFallbackReason = 'unsupported' | 'create-failed'
+export const RendererBackendSchema = z.enum(['canvas', 'webgl'])
+export const RendererPreferenceSchema = z.enum(['auto', 'canvas', 'webgl'])
+export const RendererFallbackReasonSchema = z.enum(['unsupported', 'create-failed'])
+
+export type RendererBackend = z.infer<typeof RendererBackendSchema>
+export type RendererPreference = z.infer<typeof RendererPreferenceSchema>
+export type RendererFallbackReason = z.infer<typeof RendererFallbackReasonSchema>
 
 export interface CreateRendererOptions {
   backend: RendererPreference
@@ -74,13 +79,11 @@ export function parseRendererPreference(
   value: unknown,
   fallback: RendererPreference = 'auto',
 ): RendererPreference {
-  return value === 'auto' || value === 'webgl' || value === 'canvas'
-    ? value
-    : fallback
+  const result = RendererPreferenceSchema.safeParse(value)
+  return result.success ? result.data : fallback
 }
 
 export function parseRendererPreferenceParam(value: string | null): RendererPreference | null {
-  return value === 'auto' || value === 'webgl' || value === 'canvas'
-    ? value
-    : null
+  const result = RendererPreferenceSchema.safeParse(value)
+  return result.success ? result.data : null
 }

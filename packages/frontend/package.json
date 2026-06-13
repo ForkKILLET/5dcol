@@ -15,7 +15,8 @@
     "@5dcol/core": "workspace:*",
     "@5dcol/shared": "workspace:*",
     "vue": "^3.5.35",
-    "vue-i18n": "^11.4.5"
+    "vue-i18n": "^11.4.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@modyfi/vite-plugin-yaml": "^1.1.1",
