@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type {
   GameRecordAction,
@@ -37,6 +37,16 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n({ useScope: 'global' })
+const recordContent = ref<HTMLElement | null>(null)
+
+const currentCursorKey = computed(() => (
+  props.rows.find(row => isCurrentRecordRow(row))?.recordKey ?? ''
+))
+
+watch(currentCursorKey, async () => {
+  await nextTick()
+  scrollCurrentCursorIntoView()
+}, { immediate: true })
 
 const recordHeaders = computed(() => (
   props.recordText
@@ -142,6 +152,33 @@ function getRecordRowClasses(row: GameRecordRow) {
     'record-row--cursor-interactive': isCursor && hasHoverRecordCursorIcon(row),
   }
 }
+
+function scrollCurrentCursorIntoView() {
+  const container = recordContent.value
+  if (! container || ! currentCursorKey.value) return
+
+  const current = container.querySelector<HTMLElement>('[data-current-record-cursor="true"]')
+  if (! current) return
+
+  const containerRect = container.getBoundingClientRect()
+  const currentRect = current.getBoundingClientRect()
+  const padding = 8
+  const overflowTop = currentRect.top - containerRect.top - padding
+  const overflowBottom = currentRect.bottom - containerRect.bottom + padding
+
+  if (overflowTop < 0) {
+    container.scrollBy({
+      top: overflowTop,
+      behavior: 'smooth',
+    })
+  }
+  else if (overflowBottom > 0) {
+    container.scrollBy({
+      top: overflowBottom,
+      behavior: 'smooth',
+    })
+  }
+}
 </script>
 
 <template>
@@ -164,7 +201,10 @@ function getRecordRowClasses(row: GameRecordRow) {
         </GameButton>
       </div>
     </div>
-    <div class="record-content">
+    <div
+      ref="recordContent"
+      class="record-content"
+    >
       <div
         v-if="recordHeaders.length > 0"
         class="record-headers"
@@ -198,6 +238,7 @@ function getRecordRowClasses(row: GameRecordRow) {
             :key="getRecordRowKey(row)"
             class="record-row"
             :class="getRecordRowClasses(row)"
+            :data-current-record-cursor="isCurrentRecordRow(row) ? 'true' : undefined"
           >
             <template v-if="isRecordActionRow(row)">
               <span class="record-serial">{{ row.serial }}</span>

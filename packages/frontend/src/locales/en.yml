@@ -43,6 +43,9 @@ dialog.helpText: |
   WASD: Pan viewport
   Q / E: Zoom out / in
   R: Toggle record panel
+  [ / ]: Jump to previous / next cursor in the current record block
+  Shift + [ / ]: Jump to start / end of the current record block
+  \: Enter or cycle the variation at the current record cursor
   C: Toggle clock
   U: Flip view
   `: Open settings
@@ -50,7 +53,11 @@ dialog.helpText: |
 
   Record and files
 
-  The Record panel shows live 5dpgn notation. Use Import and Export in that panel to load or copy a game. Record entries can be clicked to focus the related board. Clicking a record marker rolls back to that action; submitting from a rollback state overwrites later history.
+  The Record panel shows live 5dpgn notation. Move segments can be clicked to focus their boards. Cursor tags mark exact positions between actions; use the jump icon or the record shortcuts to move through the current block, jump to block boundaries, or enter/cycle variations.
+
+  Submitting from an earlier cursor follows the matching future action when one exists. If the move is different, it creates a purple branch instead of deleting later history. The delete-following-history icon trims future actions from a cursor. Pending moves are shown with a yellow marker, and spectator deductions or branches are shown with purple markers.
+
+  Use Import and Export in the Record panel to load or copy 5dpgn. Export can output either the current linear line up to the cursor or the full record tree.
 dialog.importTitle: "Import 5dpgn"
 dialog.exportTitle: "Export 5dpgn"
 dialog.shareRoomTitle: "Share room"

@@ -169,6 +169,10 @@ interface PendingCheck {
   fromBoard: { l: number, m: number }
   toBoard: { l: number, m: number }
 }
+interface RecordCursorTarget {
+  recordLineId: number
+  recordActionIndex: number
+}
 interface RecordLine {
   id: number
   parent: {
@@ -387,6 +391,20 @@ export class Game extends Disposable(Empty) {
     const target = this.resolveRecordCursorTarget(cursor)
     if (! target) return false
 
+    return this.rollbackToRecordCursorTarget(target)
+  }
+
+  public cycleRecordCursorVariation(): boolean {
+    if (this.isOnlineGame()) return false
+    if (this.pendingMoves.length > 0) return false
+
+    const target = this.getNextRecordVariationCursorTarget()
+    if (! target) return false
+
+    return this.rollbackToRecordCursorTarget(target)
+  }
+
+  private rollbackToRecordCursorTarget(target: RecordCursorTarget): boolean {
     this.deleteActiveEmptyRecordLineIfLeaving(target.recordLineId)
 
     const actions = this.getRecordLineFullActions(target.recordLineId)
@@ -712,7 +730,7 @@ export class Game extends Disposable(Empty) {
     )
   }
 
-  private resolveRecordCursorTarget(cursor: GameRecordCursor): { recordLineId: number, recordActionIndex: number } | null {
+  private resolveRecordCursorTarget(cursor: GameRecordCursor): RecordCursorTarget | null {
     const line = this.recordLines.get(cursor.recordLineId)
     if (! line) return null
 
@@ -731,6 +749,69 @@ export class Game extends Disposable(Empty) {
         line.actions.length,
       ),
     }
+  }
+
+  private getNextRecordVariationCursorTarget(): RecordCursorTarget | null {
+    const line = this.getActiveRecordLine()
+    const actionIndex = this.getActiveRecordLineLocalActionIndex()
+    const current = {
+      recordLineId: line.id,
+      recordActionIndex: actionIndex,
+    }
+
+    if (line.parent && actionIndex === 0) {
+      return this.getNextRecordVariationTarget(
+        this.getRecordVariationTargets(line.parent.lineId, line.parent.beforeActionIndex),
+        current,
+      )
+    }
+
+    return this.getNextRecordVariationTarget(
+      this.getRecordVariationTargets(line.id, actionIndex),
+      current,
+    )
+  }
+
+  private getRecordVariationTargets(lineId: number, actionIndex: number): RecordCursorTarget[] {
+    const line = this.recordLines.get(lineId)
+    if (! line) return []
+
+    const localActionIndex = Scalar.clamp(
+      Math.floor(actionIndex),
+      0,
+      line.actions.length,
+    )
+    const targets = (line.branchLineIdsBeforeAction.get(localActionIndex) ?? [])
+      .filter(branchId => this.recordLines.has(branchId))
+      .map(branchId => ({
+        recordLineId: branchId,
+        recordActionIndex: 0,
+      }))
+
+    if (localActionIndex < line.actions.length) {
+      targets.push({
+        recordLineId: line.id,
+        recordActionIndex: localActionIndex,
+      })
+    }
+
+    return targets
+  }
+
+  private getNextRecordVariationTarget(
+    targets: RecordCursorTarget[],
+    current: RecordCursorTarget,
+  ): RecordCursorTarget | null {
+    if (targets.length === 0) return null
+
+    const currentIndex = targets.findIndex(target => this.isSameRecordCursorTarget(target, current))
+    const target = targets[currentIndex >= 0 ? (currentIndex + 1) % targets.length : 0]!
+    return this.isSameRecordCursorTarget(target, current) ? null : target
+  }
+
+  private isSameRecordCursorTarget(a: RecordCursorTarget, b: RecordCursorTarget): boolean {
+    return a.recordLineId === b.recordLineId
+      && a.recordActionIndex === b.recordActionIndex
   }
 
   private deleteActiveEmptyRecordLineIfLeaving(nextRecordLineId: number) {

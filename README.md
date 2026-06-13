@@ -25,10 +25,11 @@ networking, and UI details may continue to be refined.
 - Public rooms, private share-link rooms, reconnecting to unfinished online
   games, and player presence.
 - Spectating and replay for rooms that allow it.
-- Live opponent pending moves, optional opponent move-range previews, forfeit,
+- Live opponent pending moves, move-range previews on active boards, forfeit,
   and chess clocks.
-- Live 5dpgn record panel, import/export, rollback, and deduction from earlier
-  positions.
+- Live 5dpgn record panel with cursor navigation, import/export, rollback,
+  branching, and deduction from earlier positions.
+- Linear and tree-shaped record export for games with variations.
 - Readable 5dpgn display options, including piece symbols, travel markers,
   capture markers, check/mate markers, and promotion markers.
 - English and Chinese UI.
@@ -40,7 +41,7 @@ networking, and UI details may continue to be refined.
 - `@5dcol/core`: game-state model, rules, move generation, check detection,
   checkmate detection, and 5dpgn import/export utilities.
 - `@5dcol/frontend`: Vue/Vite browser frontend, DOM UI, canvas/WebGL rendering,
-  i18n, sound, local persistence, and match-room UI.
+  i18n, sound, local persistence, record-tree UI, and match-room UI.
 - `@5dcol/shared`: shared protocol types and Zod runtime schemas for frontend
   and backend communication.
 - `@5dcol/backend`: Fastify backend for online matches, WebSocket room updates,
@@ -137,4 +138,4 @@ the original 5D Chess team.
 
 ## License
 
-[MIT](../LICENSE)
+[MIT](./LICENSE)

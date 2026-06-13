@@ -43,6 +43,9 @@ dialog.helpText: |
   WASD：平移视口
   Q / E：缩小 / 放大
   R：显示或隐藏记谱面板
+  [ / ]：跳转到当前记谱块中的上 / 下一个游标
+  Shift + [ / ]：跳转到当前记谱块头 / 块尾
+  \：进入或轮换当前记谱游标上的分支
   C：显示或隐藏棋钟
   U：翻转视角
   `：打开设置
@@ -50,7 +53,11 @@ dialog.helpText: |
 
   记谱和文件
 
-  记谱面板会实时显示 5dpgn。可以在该面板中导入或导出对局。记谱中的位置可以点击，用于聚焦对应棋盘。点击记谱标记可以回溯到对应大步；在回溯状态提交会覆盖之后的历史。
+  记谱面板会实时显示 5dpgn。点击 move 片段可以聚焦对应棋盘。游标标签表示 action 之间的精确位置；可以用跳转图标或记谱快捷键在当前块中移动、跳到块头/块尾，或进入和轮换分支。
+
+  从较早的游标提交时，如果和后续 action 匹配，会直接进入那一步；如果不同，则创建紫色分支，而不是删除后续历史。删除后续图标可以从某个游标裁掉之后的历史。Pending moves 会用黄色标记，观战推演和分支会用紫色标记。
+
+  可以在记谱面板中导入或导出 5dpgn。导出支持到当前游标为止的线性记谱，也支持完整的树形记谱。
 dialog.importTitle: "导入 5dpgn"
 dialog.exportTitle: "导出 5dpgn"
 dialog.shareRoomTitle: "分享房间"
@@ -163,7 +170,7 @@ online.spectators: "{count} 人观战"
 
 export.pendingNotExported: "未提交的小步不会导出。"
 export.mode: "模式"
-export.modeLinear: "线性（到当前 cursor）"
+export.modeLinear: "线性（到当前游标）"
 export.modeTree: "树形"
 export.copied: "已复制。"
 export.copyManual: "复制失败，请选择文本并手动复制。"

@@ -478,6 +478,58 @@ function rollbackToRecordCursor(cursor: GameRecordCursor) {
   game?.rollbackToRecordCursor(cursor)
 }
 
+function isRecordCursor(row: GameRecordRow): row is GameRecordCursor {
+  return row.kind === 'cursor'
+}
+
+function jumpRecordCursor(direction: -1 | 1) {
+  if (! gameStarted.value) return
+  if (onlineSession.value) return
+
+  const cursors = recordActions.value.filter(isRecordCursor)
+  const currentIndex = cursors.findIndex(cursor => cursor.current === true)
+  if (currentIndex < 0) return
+
+  const current = cursors[currentIndex]!
+  const target = cursors.find(cursor => (
+    cursor.recordLineId === current.recordLineId
+    && cursor.recordActionIndex === current.recordActionIndex + direction
+  ))
+  if (! target) return
+
+  if (game?.rollbackToRecordCursor(target)) playUISound()
+}
+
+function jumpRecordBlockBoundary(boundary: 'start' | 'end') {
+  if (! gameStarted.value) return
+  if (onlineSession.value) return
+
+  const cursors = recordActions.value.filter(isRecordCursor)
+  const current = cursors.find(cursor => cursor.current === true)
+  if (! current) return
+
+  const blockCursors = cursors.filter(cursor => cursor.recordLineId === current.recordLineId)
+  const target = blockCursors.reduce<GameRecordCursor | null>((selected, cursor) => {
+    if (! selected) return cursor
+    return boundary === 'start'
+      ? (cursor.recordActionIndex < selected.recordActionIndex ? cursor : selected)
+      : (cursor.recordActionIndex > selected.recordActionIndex ? cursor : selected)
+  }, null)
+  if (! target) return
+  if (
+    target.recordLineId === current.recordLineId
+    && target.recordActionIndex === current.recordActionIndex
+  ) return
+
+  if (game?.rollbackToRecordCursor(target)) playUISound()
+}
+
+function cycleRecordCursorVariation() {
+  if (! gameStarted.value) return
+  if (onlineSession.value) return
+  if (game?.cycleRecordCursorVariation()) playUISound()
+}
+
 function deleteRecordFuture(cursor: GameRecordCursor) {
   if (! gameStarted.value) return
   if (onlineSession.value) return
@@ -847,6 +899,28 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   if (! gameStarted.value || isShortcutBlocked(e)) return
 
   switch (e.key) {
+    case '{':
+      e.preventDefault()
+      jumpRecordBlockBoundary('start')
+      break
+    case '}':
+      e.preventDefault()
+      jumpRecordBlockBoundary('end')
+      break
+    case '[':
+      e.preventDefault()
+      if (e.shiftKey) jumpRecordBlockBoundary('start')
+      else jumpRecordCursor(-1)
+      break
+    case ']':
+      e.preventDefault()
+      if (e.shiftKey) jumpRecordBlockBoundary('end')
+      else jumpRecordCursor(1)
+      break
+    case '\\':
+      e.preventDefault()
+      cycleRecordCursorVariation()
+      break
     case 'r':
       e.preventDefault()
       toggleRecordPanel()
