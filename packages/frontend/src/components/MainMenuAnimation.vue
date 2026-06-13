@@ -37,29 +37,9 @@ let animationStartedAt = 0
 let pieceSpawnTimer: number | null = null
 let flyingPieceId = 0
 let selectedFlyingPieceId: number | null = null
-let lastVortexBatchCount = 0
 let vortexBufferCanvas: HTMLCanvasElement | null = null
 const pieceImageCache = new Map<string, HTMLImageElement>()
 const pieceHitMaskCache = new Map<string, MainMenuPieceHitMask | null>()
-
-const query = new URLSearchParams(window.location.search)
-const MAIN_MENU_PERF_LOG_INTERVAL_FRAMES = 120
-const MAIN_MENU_PERF_KEYS = [
-  'total',
-  'resize',
-  'background',
-  'geometry',
-  'vortex',
-  'pieces',
-  'arrow',
-] as const
-
-type MainMenuPerfKey = typeof MAIN_MENU_PERF_KEYS[number]
-type MainMenuFramePerf = Record<MainMenuPerfKey, number>
-
-let perfFrames = 0
-let perfTotals = createPerfBucket()
-let perfMax = createPerfBucket()
 
 const MAIN_VORTEX_CONFIG = {
   centerXRatio: 0.5,
@@ -396,7 +376,6 @@ function remapPointForResize(
 }
 
 function drawCanvas(time: number) {
-  const totalStartedAt = performance.now()
   const canvasElement = canvas.value
   if (! canvasElement || ! props.visible) return
 
@@ -413,7 +392,6 @@ function drawCanvas(time: number) {
   }
   canvasElement.style.width = `${width}px`
   canvasElement.style.height = `${height}px`
-  const resizedAt = performance.now()
 
   const ctx = canvasElement.getContext('2d')
   if (! ctx) return
@@ -423,86 +401,11 @@ function drawCanvas(time: number) {
   ctx.clearRect(0, 0, width, height)
   ctx.fillStyle = '#7889aa'
   ctx.fillRect(0, 0, width, height)
-  const backgroundDrawnAt = performance.now()
 
   const geometry = getVortexGeometry(width, height, props.layout.scale, vortexCycle)
-  const geometryBuiltAt = performance.now()
   drawVortexLayer(ctx, geometry, width, height, dpr)
-  const vortexDrawnAt = performance.now()
   drawFlyingPieces(ctx)
-  const piecesDrawnAt = performance.now()
   if (props.mode === 'home') drawArrow(ctx, props.layout)
-  const arrowDrawnAt = performance.now()
-
-  recordFramePerf({
-    total: arrowDrawnAt - totalStartedAt,
-    resize: resizedAt - totalStartedAt,
-    background: backgroundDrawnAt - resizedAt,
-    geometry: geometryBuiltAt - backgroundDrawnAt,
-    vortex: vortexDrawnAt - geometryBuiltAt,
-    pieces: piecesDrawnAt - vortexDrawnAt,
-    arrow: arrowDrawnAt - piecesDrawnAt,
-  }, {
-    width,
-    height,
-    dpr,
-    renderScale: MAIN_VORTEX_CONFIG.renderScale,
-    tiles: geometry.tiles.length,
-    batches: lastVortexBatchCount,
-    pieces: flyingPieces.value.length,
-  })
-}
-
-function createPerfBucket(): MainMenuFramePerf {
-  return MAIN_MENU_PERF_KEYS.reduce((bucket, key) => {
-    bucket[key] = 0
-    return bucket
-  }, {} as MainMenuFramePerf)
-}
-
-function isPerfEnabled() {
-  return import.meta.env.DEV || query.get('mainMenuPerf') === '1'
-}
-
-function recordFramePerf(
-  perf: MainMenuFramePerf,
-  meta: {
-    width: number
-    height: number
-    dpr: number
-    renderScale: number
-    tiles: number
-    batches: number
-    pieces: number
-  },
-) {
-  if (! isPerfEnabled()) return
-
-  perfFrames += 1
-  for (const key of MAIN_MENU_PERF_KEYS) {
-    perfTotals[key] += perf[key]
-    perfMax[key] = Math.max(perfMax[key], perf[key])
-  }
-
-  if (perfFrames < MAIN_MENU_PERF_LOG_INTERVAL_FRAMES) return
-
-  const rows = MAIN_MENU_PERF_KEYS.reduce((table, key) => {
-    table[key] = {
-      avgMs: Number((perfTotals[key] / perfFrames).toFixed(2)),
-      maxMs: Number(perfMax[key].toFixed(2)),
-    }
-    return table
-  }, {} as Record<MainMenuPerfKey, { avgMs: number, maxMs: number }>)
-
-  console.info(
-    `[5dcol] main menu canvas perf: ${meta.width}x${meta.height} @${meta.dpr}x, `
-    + `${meta.renderScale}x vortex, ${meta.tiles} vortex tiles, ${meta.batches} batches, ${meta.pieces} pieces`,
-  )
-  console.table(rows)
-
-  perfFrames = 0
-  perfTotals = createPerfBucket()
-  perfMax = createPerfBucket()
 }
 
 function getVortexGeometry(width: number, height: number, scale: number, cycle: number): MainVortexGeometry {
@@ -683,7 +586,6 @@ function drawVortex(
 
   ctx.save()
   const batches = getVortexTileBatches(geometry.tiles)
-  lastVortexBatchCount = batches.length
   for (const batch of batches) {
     ctx.globalAlpha = config.layerOpacity * batch.opacity
     ctx.fillStyle = getVortexTileFillStyle(batch.tone)
