@@ -29,7 +29,7 @@ import {
 export type { GameToolbarButton } from '@engine/toolbar'
 export type { GameRecordAction, GameRecordCursor, GameRecordMoveSegment, GameRecordRow } from '@engine/record'
 
-export interface GameConfig {
+export interface GameContext {
   debug: boolean
   logger: Logger
   renderer: Renderer
@@ -195,20 +195,20 @@ const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
 
 export class Game extends Disposable(Empty) {
-  constructor(public readonly config: GameConfig) {
+  constructor(public readonly ctx: GameContext) {
     super()
-    this.logger = config.logger
-    this.renderer = config.renderer
-    this.soundManager = config.soundManager
-    this.layout = new GameLayout(config.renderer)
-    this.presentPainter = new PresentPainter(config.renderer, this.layout)
-    this.timelineTilesPainter = new TimelineTilesPainter(config.renderer, this.layout)
-    this.linePainter = new LinePainter(config.renderer, this.layout)
-    this.viewPlayer = config.viewPlayer ?? Player.W
-    this.autoSwitchViewPlayer = config.autoSwitchViewPlayer ?? true
-    this.showMoveTravelAnimation = config.showMoveTravelAnimation ?? true
-    this.showOpponentMoveRange = config.showOpponentMoveRange ?? true
-    this.fiveDPGNOptions = config.fiveDPGNOptions ?? {}
+    this.logger = ctx.logger
+    this.renderer = ctx.renderer
+    this.soundManager = ctx.soundManager
+    this.layout = new GameLayout(ctx.renderer)
+    this.presentPainter = new PresentPainter(ctx.renderer, this.layout)
+    this.timelineTilesPainter = new TimelineTilesPainter(ctx.renderer, this.layout)
+    this.linePainter = new LinePainter(ctx.renderer, this.layout)
+    this.viewPlayer = ctx.viewPlayer ?? Player.W
+    this.autoSwitchViewPlayer = ctx.autoSwitchViewPlayer ?? true
+    this.showMoveTravelAnimation = ctx.showMoveTravelAnimation ?? true
+    this.showOpponentMoveRange = ctx.showOpponentMoveRange ?? true
+    this.fiveDPGNOptions = ctx.fiveDPGNOptions ?? {}
     this.layout.setViewPlayer(this.viewPlayer)
     this.resetRecordTree([])
   }
@@ -281,8 +281,8 @@ export class Game extends Disposable(Empty) {
   private canvasCursor = ''
 
   public start() {
-    const restored = this.config.initialActions
-      ? this.restoreInitialActions(this.config.initialActions)
+    const restored = this.ctx.initialActions
+      ? this.restoreInitialActions(this.ctx.initialActions)
       : this.restoreGameState()
     this.renderer.start()
     if (restored) this.focusCurrentPresent({ smooth: false })
@@ -468,7 +468,7 @@ export class Game extends Disposable(Empty) {
     }
     this.viewPlayer = player
     this.layout.setViewPlayer(player)
-    this.config.onViewPlayerChange?.(player)
+    this.ctx.onViewPlayerChange?.(player)
     this.cameraMotion = null
     this.updateCameraBounds()
   }
@@ -879,15 +879,17 @@ export class Game extends Disposable(Empty) {
   }
 
   private isOnlineGame(): boolean {
-    return this.config.localPlayer !== undefined
+    return this.ctx.localPlayer !== undefined
   }
 
   private canControlTurn(): boolean {
-    return (this.config.canControlOnlineGame?.() ?? true)
+    if (this.isExternallyFinished()) return true
+
+    return (this.ctx.canControlOnlineGame?.() ?? true)
       && (
-        this.config.localPlayer === undefined
-        || this.config.localPlayer === null
-        || this.config.localPlayer === this.player
+        this.ctx.localPlayer === undefined
+        || this.ctx.localPlayer === null
+        || this.ctx.localPlayer === this.player
       )
   }
 
@@ -1356,9 +1358,6 @@ export class Game extends Disposable(Empty) {
   private render() {
     this.updateInteraction()
     this.renderMultiverse()
-    if (this.config.debug) {
-      this.renderPointer()
-    }
     this.renderViewFlipOverlay()
   }
 
@@ -1483,7 +1482,7 @@ export class Game extends Disposable(Empty) {
           piece: null,
           onClick: () => {
             this.playUISound()
-            this.config.onReturnToMainMenuRequest?.({ forfeit: false })
+            this.ctx.onReturnToMainMenuRequest?.({ forfeit: false })
           },
         } satisfies ButtonConfig
       : null
@@ -1524,7 +1523,7 @@ export class Game extends Disposable(Empty) {
           || this.submitRequestedDuringMoveAnimation,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
-        labelKey: this.config.localPlayer === null ? 'button.deduceMoves' : 'button.submitMoves',
+        labelKey: this.ctx.localPlayer === null ? 'button.deduceMoves' : 'button.submitMoves',
         piece: null,
         effect: 'pulse',
         onClick: () => {
@@ -1540,7 +1539,7 @@ export class Game extends Disposable(Empty) {
         piece: null,
         onClick: () => {
           this.playForfeitSound()
-          this.config.onReturnToMainMenuRequest?.({ forfeit: true })
+          this.ctx.onReturnToMainMenuRequest?.({ forfeit: true })
         },
       },
       {
@@ -1584,36 +1583,36 @@ export class Game extends Disposable(Empty) {
   }
 
   private syncToolbarButtons() {
-    if (! this.config.onToolbarChange) return
+    if (! this.ctx.onToolbarChange) return
 
     const buttons = this.getToolbarButtonViews()
     const signature = JSON.stringify(buttons)
     if (signature === this.toolbarSignature) return
 
     this.toolbarSignature = signature
-    this.config.onToolbarChange(buttons)
+    this.ctx.onToolbarChange(buttons)
   }
 
   private syncRecord() {
-    if (! this.config.onRecordChange) return
+    if (! this.ctx.onRecordChange) return
 
     const request = this.getFiveDPGNExport()
     const signature = JSON.stringify(request)
     if (signature === this.recordSignature) return
 
     this.recordSignature = signature
-    this.config.onRecordChange(request)
+    this.ctx.onRecordChange(request)
   }
 
   private syncStatus() {
-    if (! this.config.onStatusChange) return
+    if (! this.ctx.onStatusChange) return
 
     const status = this.getStatusView()
     const signature = JSON.stringify(status)
     if (signature === this.statusSignature) return
 
     this.statusSignature = signature
-    this.config.onStatusChange(status)
+    this.ctx.onStatusChange(status)
   }
 
   private updateGameEndState() {
@@ -1685,8 +1684,12 @@ export class Game extends Disposable(Empty) {
     return this.gameEndStatus !== null
   }
 
+  private isExternallyFinished(): boolean {
+    return this.ctx.isExternallyFinished?.() ?? false
+  }
+
   private shouldShowFinishGameButton(): boolean {
-    return this.isGameEnded() || (this.config.isExternallyFinished?.() ?? false)
+    return this.isGameEnded() || this.isExternallyFinished()
   }
 
   private handleBoardClick(screen: Vec2) {
@@ -1933,7 +1936,7 @@ export class Game extends Disposable(Empty) {
     else this.playTurnStartSound()
     this.syncCheckState()
     this.persistGameState()
-    this.config.onActionSubmitted?.(action, this.actions)
+    this.ctx.onActionSubmitted?.(action, this.actions)
   }
 
   private tryStartRemoteActionPlayback(actions: Action[]): boolean {
@@ -2158,11 +2161,11 @@ export class Game extends Disposable(Empty) {
   }
 
   private requestImportFiveDPGN() {
-    this.config.onImportRequest?.()
+    this.ctx.onImportRequest?.()
   }
 
   private requestExportFiveDPGN() {
-    this.config.onExportRequest?.(this.getFiveDPGNExport())
+    this.ctx.onExportRequest?.(this.getFiveDPGNExport())
   }
 
   private loadCoreGameState(state: CoreGameState, { focus = true }: { focus?: boolean } = {}) {
@@ -2215,7 +2218,7 @@ export class Game extends Disposable(Empty) {
   private playTurnStartSound() {
     if (this.isOnlineGame()) return
 
-    if (this.config.localPlayer === this.player) {
+    if (this.ctx.localPlayer === this.player) {
       this.soundManager.play('bell.ogg')
       return
     }
@@ -2229,7 +2232,7 @@ export class Game extends Disposable(Empty) {
   private playLocalTurnStartSoundAfterLoadedAction(previousPlayer: Player, previousActionIndex: number) {
     if (! this.isOnlineGame()) return
     if (this.isGameEnded()) return
-    if (this.config.localPlayer !== this.player) return
+    if (this.ctx.localPlayer !== this.player) return
     if (previousPlayer === this.player) return
     if (this.actionIndex <= previousActionIndex) return
 
@@ -2426,7 +2429,7 @@ export class Game extends Disposable(Empty) {
 
   private notifyPendingActionChange() {
     const moves = this.getPendingMoves()
-    this.config.onPendingActionChange?.(moves.length > 0 ? { moves } : null)
+    this.ctx.onPendingActionChange?.(moves.length > 0 ? { moves } : null)
   }
 
   private createPendingMoves(moves: Move[]): { pendingMoves: PendingMove[], multiverse: Multiverse } {
@@ -3877,19 +3880,6 @@ export class Game extends Disposable(Empty) {
       mat: Mat3.transform(pos, Sizes.PieceSize),
       textureId: PIECE_TO_TEXTURE_ID.get(piece)!,
       alpha: PIECE_GHOST_ALPHA,
-    })
-  }
-
-  private renderPointer() {
-    const camera: Camera = this.renderer.getCamera()
-    const center = this.renderer.screenToWorld(this.pointer.screen)
-    const width = Sizes.PointerDebugWidth / camera.scale
-
-    this.renderer.submit({
-      type: RenderItemType.Quad,
-      layer: RenderLayer.Debug,
-      mat: Mat3.transform(Vec2.sub(center, [width / 2, width / 2]), [width, width]),
-      color: [1, 0, 0, 0.5],
     })
   }
 }
