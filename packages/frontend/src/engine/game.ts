@@ -11,7 +11,7 @@ import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
 import { getMoveArrowMaskFill, getMoveArrowPolygon, getStraightMoveArrowPolygon } from '@engine/moveArrow'
 import { PresentPainter } from '@engine/painters/presentPainter'
-import { buildGameRecordActions, type GameRecordAction } from '@engine/record'
+import { buildGameRecordActions, type GameRecordCursor, type GameRecordRow } from '@engine/record'
 import { type Renderer, RenderItemType } from '@engine/renderer'
 import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
 import { TimelineTilesPainter } from '@engine/painters/timelineTilesPainter'
@@ -27,7 +27,7 @@ import {
 } from '@engine/toolbar'
 
 export type { GameToolbarButton } from '@engine/toolbar'
-export type { GameRecordAction, GameRecordMoveSegment } from '@engine/record'
+export type { GameRecordAction, GameRecordCursor, GameRecordMoveSegment, GameRecordRow } from '@engine/record'
 
 export interface GameConfig {
   debug: boolean
@@ -62,7 +62,7 @@ export interface GameExportRequest {
   text: string
   hasPendingMoves: boolean
   currentActionIndex: number
-  actions: GameRecordAction[]
+  actions: GameRecordRow[]
 }
 
 export interface GameStatusView {
@@ -371,46 +371,33 @@ export class Game extends Disposable(Empty) {
     this.syncRecord()
   }
 
-  public startRecordBranchBeforeAction(action: GameRecordAction): boolean {
+  public deleteRecordFutureAtCursor(cursor: GameRecordCursor): boolean {
     if (this.isOnlineGame()) return false
     if (this.isMoveAnimating() || this.pendingMoves.length > 0) return false
-    if (typeof action.recordLineId !== 'number' || typeof action.recordActionIndex !== 'number') return false
+    const target = this.resolveRecordCursorTarget(cursor)
+    if (! target) return false
+    if (! this.hasRecordFutureAt(target.recordLineId, target.recordActionIndex)) return false
 
-    const parent = this.recordLines.get(action.recordLineId)
-    if (! parent) return false
-    const beforeActionIndex = Scalar.clamp(
-      Math.floor(action.recordActionIndex),
-      0,
-      parent.actions.length,
-    )
-    const branchLine = this.createRecordLine({
-      parent: {
-        lineId: parent.id,
-        beforeActionIndex,
-      },
-      actions: [],
-      depth: parent.depth + 1,
-    })
-    const branchIds = parent.branchLineIdsBeforeAction.get(beforeActionIndex) ?? []
-    branchIds.push(branchLine.id)
-    parent.branchLineIdsBeforeAction.set(beforeActionIndex, branchIds)
-
-    this.activeRecordLineId = branchLine.id
-    const actions = this.getRecordLineFullActions(branchLine.id)
-    this.applyRecordActionPath(actions, actions.length)
+    this.deleteActiveEmptyRecordLineIfLeaving(target.recordLineId)
+    this.deleteRecordFuture(target.recordLineId, target.recordActionIndex)
+    const actions = this.getRecordLineFullActions(target.recordLineId)
+    const targetActionIndex = this.getRecordLinePrefixActions(target.recordLineId).length
+      + target.recordActionIndex
+    this.activeRecordLineId = target.recordLineId
+    this.applyRecordActionPath(actions, targetActionIndex)
     return true
   }
 
-  public rollbackToRecordActionEnd(action: GameRecordAction): boolean {
-    if (action.pending) return false
-    if (typeof action.recordLineId !== 'number' || typeof action.recordActionIndex !== 'number') return false
-    if (! this.recordLines.has(action.recordLineId)) return false
+  public rollbackToRecordCursor(cursor: GameRecordCursor): boolean {
+    const target = this.resolveRecordCursorTarget(cursor)
+    if (! target) return false
 
-    const actions = this.getRecordLineFullActions(action.recordLineId)
-    const targetActionIndex = this.getRecordLinePrefixActions(action.recordLineId).length
-      + action.recordActionIndex
-      + 1
-    this.activeRecordLineId = action.recordLineId
+    this.deleteActiveEmptyRecordLineIfLeaving(target.recordLineId)
+
+    const actions = this.getRecordLineFullActions(target.recordLineId)
+    const targetActionIndex = this.getRecordLinePrefixActions(target.recordLineId).length
+      + target.recordActionIndex
+    this.activeRecordLineId = target.recordLineId
     this.applyRecordActionPath(actions, targetActionIndex)
     return true
   }
@@ -730,17 +717,135 @@ export class Game extends Disposable(Empty) {
     )
   }
 
+  private resolveRecordCursorTarget(cursor: GameRecordCursor): { recordLineId: number, recordActionIndex: number } | null {
+    const line = this.recordLines.get(cursor.recordLineId)
+    if (! line) return null
+
+    if (line.parent && this.isEmptyRecordLineTree(line.id)) {
+      return {
+        recordLineId: line.parent.lineId,
+        recordActionIndex: line.parent.beforeActionIndex,
+      }
+    }
+
+    return {
+      recordLineId: line.id,
+      recordActionIndex: Scalar.clamp(
+        Math.floor(cursor.recordActionIndex),
+        0,
+        line.actions.length,
+      ),
+    }
+  }
+
+  private deleteActiveEmptyRecordLineIfLeaving(nextRecordLineId: number) {
+    if (this.activeRecordLineId === nextRecordLineId) return
+    this.deleteEmptyRecordLineTree(this.activeRecordLineId)
+  }
+
+  private deleteEmptyRecordLineTree(lineId: number): boolean {
+    if (lineId === 0 || ! this.isEmptyRecordLineTree(lineId)) return false
+    this.deleteRecordLineTree(lineId)
+    if (this.activeRecordLineId === lineId) this.activeRecordLineId = 0
+    return true
+  }
+
+  private isEmptyRecordLineTree(lineId: number): boolean {
+    const line = this.recordLines.get(lineId)
+    if (! line || line.actions.length > 0) return false
+    return this.getRecordLineChildIds(line).every(childId => this.isEmptyRecordLineTree(childId))
+  }
+
+  private deleteRecordLineTree(lineId: number) {
+    const line = this.recordLines.get(lineId)
+    if (! line) return
+
+    for (const childId of this.getRecordLineChildIds(line)) {
+      this.deleteRecordLineTree(childId)
+    }
+
+    if (line.parent) {
+      const parent = this.recordLines.get(line.parent.lineId)
+      const branchIds = parent?.branchLineIdsBeforeAction.get(line.parent.beforeActionIndex)
+      if (branchIds) {
+        const nextBranchIds = branchIds.filter(id => id !== line.id)
+        if (nextBranchIds.length > 0) {
+          parent!.branchLineIdsBeforeAction.set(line.parent.beforeActionIndex, nextBranchIds)
+        }
+        else {
+          parent!.branchLineIdsBeforeAction.delete(line.parent.beforeActionIndex)
+        }
+      }
+    }
+
+    this.recordLines.delete(lineId)
+  }
+
+  private getRecordLineChildIds(line: RecordLine): number[] {
+    return [...line.branchLineIdsBeforeAction.values()].flat()
+  }
+
   private appendActionToActiveRecordLine(action: Action) {
     const line = this.getActiveRecordLine()
     const localActionIndex = this.getActiveRecordLineLocalActionIndex()
-    if (localActionIndex < line.actions.length) {
-      line.actions = line.actions.slice(0, localActionIndex)
-      for (const key of line.branchLineIdsBeforeAction.keys()) {
-        if (key >= localActionIndex) line.branchLineIdsBeforeAction.delete(key)
-      }
+    const nextAction = line.actions[localActionIndex]
+    if (nextAction && Action.isSame(nextAction, action)) {
+      this.actions = this.getRecordLineFullActions(line.id)
+      return
     }
+
+    const branchIds = line.branchLineIdsBeforeAction.get(localActionIndex) ?? []
+    const matchingBranchId = branchIds.find((branchId) => {
+      const branchLine = this.recordLines.get(branchId)
+      const branchAction = branchLine?.actions[0]
+      return branchAction ? Action.isSame(branchAction, action) : false
+    })
+    if (matchingBranchId !== undefined) {
+      this.activeRecordLineId = matchingBranchId
+      this.actions = this.getRecordLineFullActions(matchingBranchId)
+      return
+    }
+
+    if (localActionIndex < line.actions.length || branchIds.length > 0) {
+      const branchLine = this.createRecordLine({
+        parent: {
+          lineId: line.id,
+          beforeActionIndex: localActionIndex,
+        },
+        actions: [action],
+        depth: line.depth + 1,
+      })
+      branchIds.push(branchLine.id)
+      line.branchLineIdsBeforeAction.set(localActionIndex, branchIds)
+      this.activeRecordLineId = branchLine.id
+      this.actions = this.getRecordLineFullActions(branchLine.id)
+      return
+    }
+
     line.actions.push(action)
     this.actions = this.getRecordLineFullActions(line.id)
+  }
+
+  private hasRecordFutureAt(lineId: number, actionIndex: number): boolean {
+    const line = this.recordLines.get(lineId)
+    if (! line) return false
+    return actionIndex < line.actions.length
+      || [...line.branchLineIdsBeforeAction.keys()].some(key => key >= actionIndex)
+  }
+
+  private deleteRecordFuture(lineId: number, actionIndex: number) {
+    const line = this.recordLines.get(lineId)
+    if (! line) return
+
+    line.actions = line.actions.slice(0, actionIndex)
+    for (const key of [...line.branchLineIdsBeforeAction.keys()]) {
+      if (key < actionIndex) continue
+      const branchIds = line.branchLineIdsBeforeAction.get(key) ?? []
+      for (const branchId of branchIds) {
+        this.deleteRecordLineTree(branchId)
+      }
+      line.branchLineIdsBeforeAction.delete(key)
+    }
   }
 
   private applyRecordActionPath(actions: Action[], actionIndex: number) {
@@ -1916,16 +2021,19 @@ export class Game extends Disposable(Empty) {
     }
   }
 
-  private buildRecordActionsForDisplay(): GameRecordAction[] {
+  private buildRecordActionsForDisplay(): GameRecordRow[] {
     return this.buildRecordLineActionsForDisplay(0, [])
   }
 
-  private buildRecordLineActionsForDisplay(lineId: number, prefixActions: Action[]): GameRecordAction[] {
+  private buildRecordLineActionsForDisplay(lineId: number, prefixActions: Action[]): GameRecordRow[] {
     const line = this.recordLines.get(lineId)
     if (! line) return []
 
-    const rows: GameRecordAction[] = []
+    const rows: GameRecordRow[] = []
     const activePendingLocalActionIndex = line.id === this.activeRecordLineId && this.pendingMoves.length > 0
+      ? this.getActiveRecordLineLocalActionIndex()
+      : null
+    const currentCursorLocalActionIndex = line.id === this.activeRecordLineId && this.pendingMoves.length === 0
       ? this.getActiveRecordLineLocalActionIndex()
       : null
     const lineRows = buildGameRecordActions([
@@ -1934,6 +2042,19 @@ export class Game extends Disposable(Empty) {
     ], this.fiveDPGNOptions)
 
     for (let actionIndex = 0; actionIndex <= line.actions.length; actionIndex += 1) {
+      const hasFuture = this.hasRecordFutureAt(line.id, actionIndex)
+      if (line.id === 0 || actionIndex > 0 || hasFuture) {
+        rows.push({
+          kind: 'cursor',
+          recordKey: `${line.id}:cursor:${actionIndex}`,
+          recordLineId: line.id,
+          recordActionIndex: actionIndex,
+          branchDepth: line.depth,
+          hasFuture,
+          current: currentCursorLocalActionIndex === actionIndex,
+        })
+      }
+
       const branchIds = line.branchLineIdsBeforeAction.get(actionIndex) ?? []
       const branchPrefixActions = [
         ...prefixActions,
@@ -1957,7 +2078,6 @@ export class Game extends Disposable(Empty) {
             recordLineId: line.id,
             recordActionIndex: actionIndex,
             branchDepth: line.depth,
-            current: true,
             pending: true,
           })
         }
@@ -1974,19 +2094,10 @@ export class Game extends Disposable(Empty) {
         recordLineId: line.id,
         recordActionIndex: actionIndex,
         branchDepth: line.depth,
-        current: this.isCurrentRecordLineAction(line.id, actionIndex),
       })
     }
 
     return rows
-  }
-
-  private isCurrentRecordLineAction(lineId: number, actionIndex: number): boolean {
-    if (this.pendingMoves.length > 0) return false
-    if (lineId !== this.activeRecordLineId) return false
-
-    const prefixLength = this.getRecordLinePrefixActions(lineId).length
-    return this.actionIndex === prefixLength + actionIndex + 1
   }
 
   public rollbackToActionEnd(actionIndex: number): boolean {

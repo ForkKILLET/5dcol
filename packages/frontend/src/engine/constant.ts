@@ -87,6 +87,7 @@ export namespace Sizes {
   export const ButtonIconSize = 28
   export const ButtonContentGap = 8
   export const RecordPanelWidth = 300
+  export const RecordBlockBorderWidth = 3
 
   export const PresentWidth = 104
   export const PresentBorder = 3

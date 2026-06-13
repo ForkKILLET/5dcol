@@ -1,6 +1,7 @@
 import { Coord, FiveDPGN, Player, type Action } from '@5dcol/core'
 
 export interface GameRecordAction {
+  kind: 'action'
   index: number
   serial: string
   player: 'w' | 'b'
@@ -10,9 +11,20 @@ export interface GameRecordAction {
   recordLineId?: number
   recordActionIndex?: number
   branchDepth?: number
-  current?: boolean
   pending?: boolean
 }
+
+export interface GameRecordCursor {
+  kind: 'cursor'
+  recordKey: string
+  recordLineId: number
+  recordActionIndex: number
+  branchDepth: number
+  hasFuture?: boolean
+  current?: boolean
+}
+
+export type GameRecordRow = GameRecordAction | GameRecordCursor
 
 export interface GameRecordClock {
   elapsed: string
@@ -36,6 +48,7 @@ export const buildGameRecordActions = (
   FiveDPGN.formatActions(actions, options).map((action) => {
     const sourceAction = actions[action.index]
     return {
+      kind: 'action',
       index: action.index,
       serial: action.serial,
       player: action.player,
