@@ -31,6 +31,14 @@ p {
   line-height: 1;
 }
 
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--button-content-gap) * 2);
+  width: 100%;
+}
+
 .settings-list {
   display: flex;
   flex-direction: column;

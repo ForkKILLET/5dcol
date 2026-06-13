@@ -3,6 +3,7 @@ import type { StyleValue } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FiveDPGNSettings } from '@/composables/settings'
 import GameButton from './GameButton.vue'
+import GameDialog from './GameDialog.vue'
 import GameToggle from './GameToggle.vue'
 
 const props = defineProps<{
@@ -26,12 +27,12 @@ function setBooleanSetting(
 </script>
 
 <template>
-  <div
-    class="dialog-card dialog-card--narrow"
-    :style="buttonStyle"
-    @click.stop
+  <GameDialog
+    narrow
+    :title="t('dialog.fiveDPGNSettingsTitle')"
+    :button-style="buttonStyle"
+    @close="emit('close')"
   >
-    <h2 class="dialog-title">{{ t('dialog.fiveDPGNSettingsTitle') }}</h2>
     <div class="settings-list settings-list--narrow">
       <div class="settings-row">
         <span>{{ t('settings.fiveDPGNPieceSymbols') }}</span>
@@ -74,21 +75,21 @@ function setBooleanSetting(
         />
       </div>
     </div>
-    <div class="dialog-actions">
+    <template #actions>
       <GameButton
-        size="secondary"
+        size="small"
         :style="buttonStyle"
         @click="emit('back')"
       >
         <span>{{ t('button.back') }}</span>
       </GameButton>
       <GameButton
-        size="secondary"
+        size="small"
         :style="buttonStyle"
         @click="emit('close')"
       >
         <span>{{ t('button.close') }}</span>
       </GameButton>
-    </div>
-  </div>
+    </template>
+  </GameDialog>
 </template>

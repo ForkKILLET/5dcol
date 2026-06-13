@@ -19,6 +19,7 @@ button.returnToLive: "Return to live"
 button.back: "Back"
 button.enterGame: "Enter game"
 button.open: "Open"
+button.settings: "Settings"
 
 main.start: "Start"
 main.resume: "Resume"
@@ -163,6 +164,9 @@ online.error: "Online error - {message}"
 online.spectators: "{count} spectators"
 
 export.pendingNotExported: "Pending moves are not exported."
+export.mode: "Mode"
+export.modeLinear: "Linear to cursor"
+export.modeTree: "Tree"
 export.copied: "Copied."
 export.copyManual: "Failed to copy. Please select the text and copy it manually."
 

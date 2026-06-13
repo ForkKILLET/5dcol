@@ -2603,12 +2603,27 @@ export namespace FiveDPGN {
     board: CoordTimelike
   }
 
+  export interface ActionTree {
+    variations: ActionTreeVariation[]
+  }
+
+  export interface ActionTreeVariation {
+    action: Action
+    subtree?: ActionTree
+  }
+
   interface MoveFormatContext {
     piece: Piece
     capture: boolean
     branching: boolean
     promotion: boolean
     suffix: string
+  }
+
+  interface ActionFormatResult {
+    action: FormattedAction
+    multiverse: Multiverse
+    player: Player
   }
 
   type ResolvedExportOptions = Required<ExportOptions>
@@ -2625,12 +2640,25 @@ export namespace FiveDPGN {
     { actions }: Pick<GameState, 'actions'>,
     options: ExportOptions = {},
   ): string => {
-    const formattedActions = formatActions(actions, options)
+    return exportActionTree(actionsToTree(actions), options)
+  }
+
+  export const exportActionTree = (
+    tree: ActionTree,
+    options: ExportOptions = {},
+  ): string => {
+    const resolvedOptions = resolveExportOptions(options)
+    const body = formatActionTree(tree, {
+      actionIndex: 0,
+      multiverse: Multiverse.createInitial(),
+      options: resolvedOptions,
+      player: Player.W,
+    })
     const lines = [
       '[Mode "5D"]',
       '[Board "Standard"]',
       '',
-      ...formattedActions.map(action => `${action.serial} ${action.moves.map(move => move.text).join(' ')}`),
+      body,
     ]
     return `${lines.join('\n').trim()}\n`
   }
@@ -2644,65 +2672,162 @@ export namespace FiveDPGN {
     let player = Player.W
 
     return actions.map((action, actionIndex) => {
-      const moves: FormattedMove[] = []
+      const result = formatActionInContext(action, {
+        actionIndex,
+        markTerminalCheckmate: actionIndex === actions.length - 1,
+        multiverse,
+        options: resolvedOptions,
+        player,
+      })
+      multiverse = result.multiverse
+      player = result.player
+      return result.action
+    })
+  }
 
-      for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex ++) {
-        const move = action.moves[moveIndex]
-        const piece = getMovePiece(multiverse, move, player)
-        const context: MoveFormatContext = {
-          piece,
-          capture: isCaptureMove(multiverse, move, player, piece),
-          branching: isBranchingMove(multiverse, move, player),
-          promotion: isPromotionMove(piece, move.to),
-          suffix: '',
-        }
-        const checksBefore = resolvedOptions.includeCheckMarkers
-          ? new Set(getChecksGiven(multiverse, player).map(getMoveKey))
-          : null
+  const actionsToTree = (actions: readonly Action[]): ActionTree => {
+    const root: ActionTree = { variations: [] }
+    let tree = root
+    for (const action of actions) {
+      const subtree: ActionTree = { variations: [] }
+      tree.variations.push({ action, subtree })
+      tree = subtree
+    }
+    return root
+  }
 
-        multiverse = Multiverse.applyMove(
-          move,
-          player,
-          multiverse,
-          actionIndex * GameState.MOVE_ORDER_STRIDE + moveIndex,
-        )
-        if (
-          resolvedOptions.includeCheckMarkers
-          && getChecksGiven(multiverse, player).some(check => ! checksBefore?.has(getMoveKey(check)))
-        ) {
-          context.suffix = '+'
-        }
-        moves.push(formatMove(move, context, resolvedOptions))
+  const formatActionTree = (
+    tree: ActionTree,
+    {
+      actionIndex,
+      multiverse,
+      options,
+      player,
+    }: {
+      actionIndex: number
+      multiverse: Multiverse
+      options: ResolvedExportOptions
+      player: Player
+    },
+  ): string => {
+    const parts: string[] = []
+
+    for (let index = 0; index < tree.variations.length; index += 1) {
+      const variation = tree.variations[index]
+      const hasSubtree = Boolean(variation.subtree?.variations.length)
+      const result = formatActionInContext(variation.action, {
+        actionIndex,
+        markTerminalCheckmate: ! hasSubtree,
+        multiverse,
+        options,
+        player,
+      })
+      const actionLine = formatActionLine(result.action)
+      const subtreeText = hasSubtree
+        ? formatActionTree(variation.subtree!, {
+            actionIndex: actionIndex + 1,
+            multiverse: result.multiverse,
+            options,
+            player: result.player,
+          })
+        : ''
+      const variationText = subtreeText ? `${actionLine}\n${subtreeText}` : actionLine
+      const shouldParenthesize = tree.variations.length > 1 && index < tree.variations.length - 1
+      parts.push(shouldParenthesize ? `(${variationText})` : variationText)
+    }
+
+    return parts.join('\n')
+  }
+
+  const formatActionInContext = (
+    action: Action,
+    {
+      actionIndex,
+      markTerminalCheckmate,
+      multiverse,
+      options,
+      player,
+    }: {
+      actionIndex: number
+      markTerminalCheckmate: boolean
+      multiverse: Multiverse
+      options: ResolvedExportOptions
+      player: Player
+    },
+  ): ActionFormatResult => {
+    const moves: FormattedMove[] = []
+    let nextMultiverse = multiverse
+
+    for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex ++) {
+      const move = action.moves[moveIndex]
+      const piece = getMovePiece(nextMultiverse, move, player)
+      const context: MoveFormatContext = {
+        piece,
+        capture: isCaptureMove(nextMultiverse, move, player, piece),
+        branching: isBranchingMove(nextMultiverse, move, player),
+        promotion: isPromotionMove(piece, move.to),
+        suffix: '',
       }
+      const checksBefore = options.includeCheckMarkers
+        ? new Set(getChecksGiven(nextMultiverse, player).map(getMoveKey))
+        : null
 
-      if (resolvedOptions.includeCheckMarkers && moves.length > 0 && actionIndex === actions.length - 1) {
-        const checkmateStatus = GameState.getCheckmateStatus({
-          multiverse,
-          player: Players.opponent(player),
-        })
-        if (checkmateStatus === 'checkmate') {
-          const lastMove = moves[moves.length - 1]
-          const withoutCheck = lastMove.text.endsWith('+') ? lastMove.text.slice(0, -1) : lastMove.text
-          lastMove.text = `${withoutCheck}#`
-          const lastSegment = lastMove.segments[lastMove.segments.length - 1]
-          if (lastSegment) {
-            lastSegment.text = lastSegment.text.endsWith('+')
-              ? `${lastSegment.text.slice(0, -1)}#`
-              : `${lastSegment.text}#`
-          }
-        }
+      nextMultiverse = Multiverse.applyMove(
+        move,
+        player,
+        nextMultiverse,
+        actionIndex * GameState.MOVE_ORDER_STRIDE + moveIndex,
+      )
+      if (
+        options.includeCheckMarkers
+        && getChecksGiven(nextMultiverse, player).some(check => ! checksBefore?.has(getMoveKey(check)))
+      ) {
+        context.suffix = '+'
       }
+      moves.push(formatMove(move, context, options))
+    }
 
-      const formattedAction = {
+    if (options.includeCheckMarkers && moves.length > 0 && markTerminalCheckmate) {
+      applyTerminalCheckmateMarker(moves, nextMultiverse, player)
+    }
+
+    return {
+      action: {
         index: actionIndex,
         serial: getTurnSerial(actionIndex),
         player: player === Player.W ? 'w' as const : 'b' as const,
         moves,
-      }
-      player = Players.opponent(player)
-      return formattedAction
-    })
+      },
+      multiverse: nextMultiverse,
+      player: Players.opponent(player),
+    }
   }
+
+  const applyTerminalCheckmateMarker = (
+    moves: FormattedMove[],
+    multiverse: Multiverse,
+    player: Player,
+  ): void => {
+    const checkmateStatus = GameState.getCheckmateStatus({
+      multiverse,
+      player: Players.opponent(player),
+    })
+    if (checkmateStatus !== 'checkmate') return
+
+    const lastMove = moves[moves.length - 1]
+    const withoutCheck = lastMove.text.endsWith('+') ? lastMove.text.slice(0, -1) : lastMove.text
+    lastMove.text = `${withoutCheck}#`
+    const lastSegment = lastMove.segments[lastMove.segments.length - 1]
+    if (lastSegment) {
+      lastSegment.text = lastSegment.text.endsWith('+')
+        ? `${lastSegment.text.slice(0, -1)}#`
+        : `${lastSegment.text}#`
+    }
+  }
+
+  const formatActionLine = (action: FormattedAction): string => (
+    `${action.serial} ${action.moves.map(move => move.text).join(' ')}`
+  )
 
   export const importGameState = (input: string): GameState => {
     const actions = parseActions(input)

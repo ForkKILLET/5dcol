@@ -58,8 +58,11 @@ export interface GameReturnToMainMenuRequest {
   forfeit?: boolean
 }
 
+export type GameExportMode = 'linear' | 'tree'
+
 export interface GameExportRequest {
   text: string
+  mode: GameExportMode
   hasPendingMoves: boolean
   currentActionIndex: number
   actions: GameRecordRow[]
@@ -2012,13 +2015,38 @@ export class Game extends Disposable(Empty) {
     }
   }
 
-  public getFiveDPGNExport(): GameExportRequest {
+  public getFiveDPGNExport(mode: GameExportMode = 'tree'): GameExportRequest {
     return {
-      text: FiveDPGN.exportGameState({ actions: this.actions }, this.fiveDPGNOptions),
+      text: mode === 'tree'
+        ? FiveDPGN.exportActionTree(this.buildFiveDPGNActionTree(), this.fiveDPGNOptions)
+        : FiveDPGN.exportGameState({
+            actions: this.actions.slice(0, Scalar.clamp(this.actionIndex, 0, this.actions.length)),
+          }, this.fiveDPGNOptions),
+      mode,
       hasPendingMoves: this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
       actions: this.buildRecordActionsForDisplay(),
     }
+  }
+
+  private buildFiveDPGNActionTree(lineId = 0, actionIndex = 0): FiveDPGN.ActionTree {
+    const line = this.recordLines.get(lineId)
+    if (! line) return { variations: [] }
+
+    const variations: FiveDPGN.ActionTreeVariation[] = []
+    const branchIds = line.branchLineIdsBeforeAction.get(actionIndex) ?? []
+    for (const branchId of branchIds) {
+      variations.push(...this.buildFiveDPGNActionTree(branchId).variations)
+    }
+
+    if (actionIndex < line.actions.length) {
+      variations.push({
+        action: line.actions[actionIndex],
+        subtree: this.buildFiveDPGNActionTree(lineId, actionIndex + 1),
+      })
+    }
+
+    return { variations }
   }
 
   private buildRecordActionsForDisplay(): GameRecordRow[] {

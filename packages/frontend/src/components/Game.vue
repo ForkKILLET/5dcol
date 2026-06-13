@@ -14,7 +14,7 @@ import {
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
-import { Game, type GameExportRequest, type GameRecordCursor, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
+import { Game, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, isStoredGameState, type StoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
@@ -36,10 +36,13 @@ import {
   type StoredOnlineSession,
 } from '@/composables/match'
 import { useGameSettings } from '@/composables/settings'
+import { useDialogStack } from '@/composables/dialogStack'
 import { readStorageJson, removeStorageValue, useStorageRef } from '@/composables/storage'
 import FiveDPGNSettingsDialog from './FiveDPGNSettingsDialog.vue'
 import GameButton from './GameButton.vue'
+import GameDialog from './GameDialog.vue'
 import GameIcon from './GameIcon.vue'
+import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
 import MatchPage from './MatchPage.vue'
 import RecordPanel from './RecordPanel.vue'
@@ -69,10 +72,13 @@ const recordActions = ref<GameRecordRow[]>([])
 const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const secondaryMenuOpen = ref(false)
-const dialogMode = ref<'none' | 'language' | 'help' | 'settings' | 'five-dpgn-settings' | 'import' | 'export' | 'share' | 'shared-room'>('none')
+type DialogMode = 'language' | 'help' | 'settings' | 'five-dpgn-settings' | 'import' | 'export' | 'share' | 'shared-room'
+const dialogStack = useDialogStack<DialogMode>()
+const dialogMode = dialogStack.current
 const importText = ref('')
 const importError = ref('')
 const exportText = ref('')
+const exportMode = ref<GameExportMode>('tree')
 const exportHasPendingMoves = ref(false)
 const exportCopyStatus = ref('')
 const shareLink = ref('')
@@ -299,6 +305,13 @@ const mainMenuStartText = computed(() => (
 ))
 const mainMenuVisible = computed(() => ! loading.value && ! gameStarted.value)
 const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
+const exportTextareaLineCount = computed(() => {
+  const wrapColumn = 72
+  const lineCount = exportText.value
+    .split(/\r\n|\r|\n/)
+    .reduce((count, line) => count + Math.max(1, Math.ceil(line.length / wrapColumn)), 0)
+  return Math.max(8, lineCount)
+})
 const gameButtonScale = computed(() => (
   hasCoarsePointer.value
     ? Math.min(1, Math.max(0.62, viewportHeight.value / 720))
@@ -323,6 +336,7 @@ const uiStyle = computed(() => {
     '--button-content-gap': `${scaled(Sizes.ButtonContentGap)}px`,
     '--app-width': `${viewportWidth.value}px`,
     '--app-height': `${viewportHeight.value}px`,
+    '--export-textarea-lines': String(exportTextareaLineCount.value),
     '--button-shadow-color': Color4.toRgbaString(Colors.Shadow),
     '--button-pulse-duration': `${Animations.PulseEffectDuration * 2}ms`,
     '--overlay-mask-color': Color4.toRgbaString(Colors.OverlayMask),
@@ -507,28 +521,35 @@ function closeSecondaryMenu() {
 function openLanguageDialog() {
   playUISound()
   secondaryMenuOpen.value = false
-  dialogMode.value = 'language'
+  dialogStack.open('language')
 }
 
 function openHelpDialog() {
   playUISound()
-  dialogMode.value = 'help'
+  dialogStack.open('help')
 }
 
 function openSettingsDialog() {
   playUISound()
   secondaryMenuOpen.value = false
-  dialogMode.value = 'settings'
+  dialogStack.open('settings')
 }
 
 function openFiveDPGNSettingsDialog() {
   playUISound()
-  dialogMode.value = 'five-dpgn-settings'
+  dialogStack.push('five-dpgn-settings')
 }
 
-function returnToSettingsDialog() {
-  playUISound()
-  dialogMode.value = 'settings'
+function openFiveDPGNSettingsFromSettings() {
+  openFiveDPGNSettingsDialog()
+}
+
+function openFiveDPGNSettingsFromExport() {
+  openFiveDPGNSettingsDialog()
+}
+
+function returnFromFiveDPGNSettingsDialog() {
+  backDialog()
 }
 
 function openGitHub() {
@@ -551,28 +572,28 @@ function closeMatchPage() {
 async function returnToSharedRoom() {
   const state = sharedRoom.value
   if (! state?.room) return
-  dialogMode.value = 'none'
+  closeDialog(false)
   await returnToMatchRoom(state.server, state.room)
 }
 
 async function joinSharedRoom() {
   const state = sharedRoom.value
   if (! state?.room) return
-  dialogMode.value = 'none'
+  closeDialog(false)
   await joinMatchRoom(state.server, state.room.id)
 }
 
 async function viewSharedRoom() {
   const state = sharedRoom.value
   if (! state?.room) return
-  dialogMode.value = 'none'
+  closeDialog(false)
   await viewMatchRoom(state.server, state.room)
 }
 
 function selectLanguage(nextLanguage: Language) {
   playUISound()
   language.value = nextLanguage
-  dialogMode.value = 'none'
+  closeDialog(false)
 }
 
 function openImportDialog() {
@@ -580,16 +601,34 @@ function openImportDialog() {
   secondaryMenuOpen.value = false
   importText.value = ''
   importError.value = ''
-  dialogMode.value = 'import'
+  dialogStack.open('import')
 }
 
 function openExportDialog(request: GameExportRequest) {
   playUISound()
   secondaryMenuOpen.value = false
+  exportMode.value = request.mode
+  syncExportDialogText()
+  exportCopyStatus.value = ''
+  dialogStack.open('export')
+}
+
+function syncExportDialogText() {
+  const request = game?.getFiveDPGNExport(exportMode.value)
+  if (! request) return
+
   exportText.value = request.text
   exportHasPendingMoves.value = request.hasPendingMoves
+}
+
+function setExportMode(value: boolean | string | number | null | undefined) {
+  if (value !== 'linear' && value !== 'tree') return
+  if (exportMode.value === value) return
+
+  playUISound()
+  exportMode.value = value
   exportCopyStatus.value = ''
-  dialogMode.value = 'export'
+  syncExportDialogText()
 }
 
 async function openShareRoomDialog() {
@@ -597,16 +636,30 @@ async function openShareRoomDialog() {
   secondaryMenuOpen.value = false
   shareCopyStatus.value = ''
   shareLink.value = getCurrentRoomShareLink()
-  dialogMode.value = 'share'
+  dialogStack.open('share')
   await copyShareLink(false)
 }
 
 function closeDialog(playSound = true) {
   if (playSound && dialogMode.value !== 'none') playUISound()
-  dialogMode.value = 'none'
+  dialogStack.close()
   importError.value = ''
   exportCopyStatus.value = ''
   shareCopyStatus.value = ''
+}
+
+function backDialog() {
+  if (dialogMode.value === 'none') return
+  playUISound()
+  if (dialogMode.value === 'five-dpgn-settings' && dialogStack.previous.value === 'export') {
+    syncExportDialogText()
+  }
+  dialogStack.back()
+  if (dialogStack.stack.value.length === 0) {
+    importError.value = ''
+    exportCopyStatus.value = ''
+    shareCopyStatus.value = ''
+  }
 }
 
 function syncGameInputState() {
@@ -716,7 +769,7 @@ async function openSharedRoomFromHash() {
     loading: true,
     error: '',
   }
-  dialogMode.value = 'shared-room'
+  dialogStack.open('shared-room')
 
   try {
     const client = new MatchClient(server.address)
@@ -772,7 +825,7 @@ function handleWindowKeyDown(e: KeyboardEvent) {
 
   if (e.key === 'Escape') {
     e.preventDefault()
-    if (dialogMode.value !== 'none') closeDialog()
+    if (dialogMode.value !== 'none') backDialog()
     else if (! gameStarted.value && mainMenuMode.value === 'match') {
       if (matchPanelMode.value === 'room-settings') closeMatchRoomSettingsPanel()
       else closeMatchPage()
@@ -1262,7 +1315,7 @@ function returnToMainMenu(
   recordCurrentActionIndex.value = 0
   recordPanelOpen.value = false
   secondaryMenuOpen.value = false
-  dialogMode.value = 'none'
+  closeDialog(false)
   gameStarted.value = false
   mainMenuMode.value = 'home'
   refreshSavedGameState()
@@ -1682,320 +1735,343 @@ watch(gameSettings, () => {
         </div>
       </div>
 
-      <div
-        v-if="dialogMode !== 'none'"
-        class="dialog-backdrop"
-        @click="closeDialog()"
+      <GameDialog
+        v-if="dialogMode === 'language'"
+        narrow
+        :button-style="menuButtonStyle"
+        :title="t('dialog.languageTitle')"
+        @close="closeDialog()"
+      >
+        <div class="language-list">
+          <GameButton
+            v-for="option in languageOptions"
+            :key="option.value"
+            size="secondary"
+            :style="getPresetButtonStyle(option.value === language ? viewHoverButtonPreset : viewButtonPreset)"
+            :open="option.value === language"
+            @click="selectLanguage(option.value)"
+          >
+            <span>{{ option.label }}</span>
+          </GameButton>
+        </div>
+      </GameDialog>
+
+      <SettingsDialog
+        v-else-if="dialogMode === 'settings'"
+        :settings="gameSettings"
+        :button-style="menuButtonStyle"
+        :renderer-status-text="rendererStatusText"
+        @close="closeDialog()"
+        @open-five-dpgn="openFiveDPGNSettingsFromSettings"
+        @volume-change="playUISound"
+      />
+
+      <FiveDPGNSettingsDialog
+        v-else-if="dialogMode === 'five-dpgn-settings'"
+        :settings="gameSettings.fiveDPGN"
+        :button-style="menuButtonStyle"
+        @back="returnFromFiveDPGNSettingsDialog"
+        @close="closeDialog()"
+      />
+
+      <GameDialog
+        v-else-if="dialogMode === 'import'"
+        :button-style="menuButtonStyle"
+        :title="t('dialog.importTitle')"
+        @close="closeDialog()"
+      >
+        <textarea
+          v-model="importText"
+          class="dialog-textarea"
+          spellcheck="false"
+          autofocus
+        ></textarea>
+        <p
+          class="dialog-message dialog-message-error"
+          :class="{ 'dialog-message--empty': !importError }"
+          aria-live="polite"
+        >
+          {{ importError || t('error.importFailed') }}
+        </p>
+        <template #actions>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            @click="closeDialog()"
+          >
+            <span>{{ t('button.cancel') }}</span>
+          </GameButton>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            :disabled="importText.trim().length === 0"
+            @click="submitImportDialog"
+          >
+            <span>{{ t('button.import') }}</span>
+          </GameButton>
+        </template>
+      </GameDialog>
+
+      <GameDialog
+        v-else-if="dialogMode === 'export'"
+        card-class="dialog-card--export"
+        :button-style="menuButtonStyle"
+        :title="t('dialog.exportTitle')"
+        @close="closeDialog()"
+      >
+        <div class="export-controls">
+          <div class="settings-row">
+            <span>{{ t('export.mode') }}</span>
+            <div class="export-radio-group">
+              <GameToggle
+                :model-value="exportMode"
+                type="radio"
+                value="linear"
+                :style="menuButtonStyle"
+                @update:model-value="setExportMode"
+              >
+                <span>{{ t('export.modeLinear') }}</span>
+              </GameToggle>
+              <GameToggle
+                :model-value="exportMode"
+                type="radio"
+                value="tree"
+                :style="menuButtonStyle"
+                @update:model-value="setExportMode"
+              >
+                <span>{{ t('export.modeTree') }}</span>
+              </GameToggle>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span>{{ t('main.settings') }}</span>
+            <GameButton
+              size="small"
+              :style="menuButtonStyle"
+              @click="openFiveDPGNSettingsFromExport"
+            >
+              <span>{{ t('button.open') }}</span>
+            </GameButton>
+          </div>
+        </div>
+        <p
+          v-if="exportHasPendingMoves"
+          class="dialog-message"
+        >
+          {{ t('export.pendingNotExported') }}
+        </p>
+        <textarea
+          v-model="exportText"
+          class="dialog-textarea dialog-textarea--export"
+          readonly
+          spellcheck="false"
+        ></textarea>
+        <p
+          class="dialog-message"
+          :class="{ 'dialog-message--empty': !exportCopyStatus }"
+          aria-live="polite"
+        >
+          {{ exportCopyStatus || t('export.copied') }}
+        </p>
+        <template #actions>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            @click="copyExportText"
+          >
+            <span>{{ t('button.copy') }}</span>
+          </GameButton>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            @click="closeDialog()"
+          >
+            <span>{{ t('button.close') }}</span>
+          </GameButton>
+        </template>
+      </GameDialog>
+
+      <GameDialog
+        v-else-if="dialogMode === 'share'"
+        :button-style="menuButtonStyle"
+        :title="t('dialog.shareRoomTitle')"
+        @close="closeDialog()"
+      >
+        <textarea
+          v-model="shareLink"
+          class="dialog-textarea"
+          readonly
+          spellcheck="false"
+        ></textarea>
+        <p
+          class="dialog-message"
+          :class="{ 'dialog-message--empty': !shareCopyStatus }"
+          aria-live="polite"
+        >
+          {{ shareCopyStatus || t('share.copied') }}
+        </p>
+        <template #actions>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            @click="copyShareLink()"
+          >
+            <span>{{ t('button.copy') }}</span>
+          </GameButton>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            @click="closeDialog()"
+          >
+            <span>{{ t('button.close') }}</span>
+          </GameButton>
+        </template>
+      </GameDialog>
+
+      <GameDialog
+        v-else-if="dialogMode === 'shared-room'"
+        narrow
+        :button-style="menuButtonStyle"
+        :title="t('dialog.sharedRoomTitle')"
+        @close="closeDialog()"
       >
         <div
-          v-if="dialogMode === 'language'"
-          class="dialog-card dialog-card--narrow"
-          :style="menuButtonStyle"
-          @click.stop
+          v-if="sharedRoom?.loading"
+          class="dialog-message"
+          aria-live="polite"
         >
-          <h2 class="dialog-title">{{ t('dialog.languageTitle') }}</h2>
-          <div class="language-list">
-            <GameButton
-              v-for="option in languageOptions"
-              :key="option.value"
-              size="secondary"
-              :style="getPresetButtonStyle(option.value === language ? viewHoverButtonPreset : viewButtonPreset)"
-              :open="option.value === language"
-              @click="selectLanguage(option.value)"
-            >
-              <span>{{ option.label }}</span>
-            </GameButton>
+          {{ t('share.loadingRoom') }}
+        </div>
+        <div
+          v-else-if="sharedRoom?.room"
+          class="shared-room-content"
+        >
+          <div class="shared-room-name">{{ sharedRoom.room.name }}</div>
+          <div class="shared-room-meta">
+            {{ getMatchServerDisplayAddress(sharedRoom.server) }}
+          </div>
+          <div class="shared-room-meta">
+            <span
+              class="match-room-player"
+              :class="{ 'match-room-player--online': sharedRoom.room.seats[0]?.online }"
+            >{{ getMatchRoomSeatLabel(sharedRoom.room.seats[0]) }}</span>
+            <span>{{ t('match.playersVersusSeparator') }}</span>
+            <span
+              class="match-room-player"
+              :class="{ 'match-room-player--online': sharedRoom.room.seats[1]?.online }"
+            >{{ sharedRoom.room.seats[1] ? getMatchRoomSeatLabel(sharedRoom.room.seats[1]) : '?' }}</span>
+            <span>{{ getMatchRoomStatusSuffix(sharedRoom.room) }}</span>
+          </div>
+          <div class="shared-room-meta">
+            {{ getMatchRoomSettingsMeta(sharedRoom.room) }}
           </div>
         </div>
-
-        <SettingsDialog
-          v-else-if="dialogMode === 'settings'"
-          :settings="gameSettings"
-          :button-style="menuButtonStyle"
-          :renderer-status-text="rendererStatusText"
-          @close="closeDialog()"
-          @open-five-dpgn="openFiveDPGNSettingsDialog"
-          @volume-change="playUISound"
-        />
-
-        <FiveDPGNSettingsDialog
-          v-else-if="dialogMode === 'five-dpgn-settings'"
-          :settings="gameSettings.fiveDPGN"
-          :button-style="menuButtonStyle"
-          @back="returnToSettingsDialog"
-          @close="closeDialog()"
-        />
-
-        <div
-          v-else-if="dialogMode === 'import'"
-          class="dialog-card"
-          :style="menuButtonStyle"
-          @click.stop
-        >
-          <h2 class="dialog-title">{{ t('dialog.importTitle') }}</h2>
-          <textarea
-            v-model="importText"
-            class="dialog-textarea"
-            spellcheck="false"
-            autofocus
-          ></textarea>
-          <p
-            class="dialog-message dialog-message-error"
-            :class="{ 'dialog-message--empty': !importError }"
-            aria-live="polite"
-          >
-            {{ importError || t('error.importFailed') }}
-          </p>
-          <div class="dialog-actions">
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="closeDialog()"
-            >
-              <span>{{ t('button.cancel') }}</span>
-            </GameButton>
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              :disabled="importText.trim().length === 0"
-              @click="submitImportDialog"
-            >
-              <span>{{ t('button.import') }}</span>
-            </GameButton>
-          </div>
-        </div>
-
-        <div
-          v-else-if="dialogMode === 'export'"
-          class="dialog-card"
-          :style="menuButtonStyle"
-          @click.stop
-        >
-          <h2 class="dialog-title">{{ t('dialog.exportTitle') }}</h2>
-          <p
-            v-if="exportHasPendingMoves"
-            class="dialog-message"
-          >
-            {{ t('export.pendingNotExported') }}
-          </p>
-          <textarea
-            v-model="exportText"
-            class="dialog-textarea"
-            readonly
-            spellcheck="false"
-          ></textarea>
-          <p
-            class="dialog-message"
-            :class="{ 'dialog-message--empty': !exportCopyStatus }"
-            aria-live="polite"
-          >
-            {{ exportCopyStatus || t('export.copied') }}
-          </p>
-          <div class="dialog-actions">
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="copyExportText"
-            >
-              <span>{{ t('button.copy') }}</span>
-            </GameButton>
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="closeDialog()"
-            >
-              <span>{{ t('button.close') }}</span>
-            </GameButton>
-          </div>
-        </div>
-
-        <div
-          v-else-if="dialogMode === 'share'"
-          class="dialog-card"
-          :style="menuButtonStyle"
-          @click.stop
-        >
-          <h2 class="dialog-title">{{ t('dialog.shareRoomTitle') }}</h2>
-          <textarea
-            v-model="shareLink"
-            class="dialog-textarea"
-            readonly
-            spellcheck="false"
-          ></textarea>
-          <p
-            class="dialog-message"
-            :class="{ 'dialog-message--empty': !shareCopyStatus }"
-            aria-live="polite"
-          >
-            {{ shareCopyStatus || t('share.copied') }}
-          </p>
-          <div class="dialog-actions">
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="copyShareLink()"
-            >
-              <span>{{ t('button.copy') }}</span>
-            </GameButton>
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="closeDialog()"
-            >
-              <span>{{ t('button.close') }}</span>
-            </GameButton>
-          </div>
-        </div>
-
-        <div
-          v-else-if="dialogMode === 'shared-room'"
-          class="dialog-card dialog-card--narrow"
-          :style="menuButtonStyle"
-          @click.stop
-        >
-          <h2 class="dialog-title">{{ t('dialog.sharedRoomTitle') }}</h2>
-          <div
-            v-if="sharedRoom?.loading"
-            class="dialog-message"
-            aria-live="polite"
-          >
-            {{ t('share.loadingRoom') }}
-          </div>
-          <div
-            v-else-if="sharedRoom?.room"
-            class="shared-room-content"
-          >
-            <div class="shared-room-name">{{ sharedRoom.room.name }}</div>
-            <div class="shared-room-meta">
-              {{ getMatchServerDisplayAddress(sharedRoom.server) }}
-            </div>
-            <div class="shared-room-meta">
-              <span
-                class="match-room-player"
-                :class="{ 'match-room-player--online': sharedRoom.room.seats[0]?.online }"
-              >{{ getMatchRoomSeatLabel(sharedRoom.room.seats[0]) }}</span>
-              <span>{{ t('match.playersVersusSeparator') }}</span>
-              <span
-                class="match-room-player"
-                :class="{ 'match-room-player--online': sharedRoom.room.seats[1]?.online }"
-              >{{ sharedRoom.room.seats[1] ? getMatchRoomSeatLabel(sharedRoom.room.seats[1]) : '?' }}</span>
-              <span>{{ getMatchRoomStatusSuffix(sharedRoom.room) }}</span>
-            </div>
-            <div class="shared-room-meta">
-              {{ getMatchRoomSettingsMeta(sharedRoom.room) }}
-            </div>
-          </div>
-          <p
-            v-else
-            class="dialog-message dialog-message-error"
-            aria-live="polite"
-          >
-            {{ sharedRoom?.error || t('share.roomNotFound') }}
-          </p>
-          <div class="dialog-actions">
-            <GameButton
-              v-if="sharedRoom?.room?.ownSession && sharedRoom.room.status !== 'finished'"
-              size="secondary"
-              :style="menuButtonStyle"
-              badge="!"
-              @click="returnToSharedRoom"
-            >
-              <span>{{ t('match.returnToGame') }}</span>
-            </GameButton>
-            <GameButton
-              v-else-if="sharedRoom?.room?.status === 'waiting'"
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="joinSharedRoom"
-            >
-              <span>{{ t('match.join') }}</span>
-            </GameButton>
-            <GameButton
-              v-else-if="sharedRoom?.room && canViewMatchRoom(sharedRoom.room)"
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="viewSharedRoom"
-            >
-              <span>{{ getViewMatchRoomLabel(sharedRoom.room) }}</span>
-            </GameButton>
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="closeDialog()"
-            >
-              <span>{{ t('button.close') }}</span>
-            </GameButton>
-          </div>
-        </div>
-
-        <div
+        <p
           v-else
-          class="dialog-card dialog-card--narrow"
-          :style="menuButtonStyle"
-          @click.stop
+          class="dialog-message dialog-message-error"
+          aria-live="polite"
         >
-          <h2 class="dialog-title">{{ t('dialog.helpTitle') }}</h2>
-          <div class="help-content">{{ t('dialog.helpText') }}</div>
-          <div class="dialog-actions">
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="closeDialog()"
-            >
-              <span>{{ t('button.close') }}</span>
-            </GameButton>
-          </div>
-        </div>
-      </div>
+          {{ sharedRoom?.error || t('share.roomNotFound') }}
+        </p>
+        <template #actions>
+          <GameButton
+            v-if="sharedRoom?.room?.ownSession && sharedRoom.room.status !== 'finished'"
+            size="small"
+            :style="menuButtonStyle"
+            badge="!"
+            @click="returnToSharedRoom"
+          >
+            <span>{{ t('match.returnToGame') }}</span>
+          </GameButton>
+          <GameButton
+            v-else-if="sharedRoom?.room?.status === 'waiting'"
+            size="small"
+            :style="menuButtonStyle"
+            @click="joinSharedRoom"
+          >
+            <span>{{ t('match.join') }}</span>
+          </GameButton>
+          <GameButton
+            v-else-if="sharedRoom?.room && canViewMatchRoom(sharedRoom.room)"
+            size="small"
+            :style="menuButtonStyle"
+            @click="viewSharedRoom"
+          >
+            <span>{{ getViewMatchRoomLabel(sharedRoom.room) }}</span>
+          </GameButton>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            @click="closeDialog()"
+          >
+            <span>{{ t('button.close') }}</span>
+          </GameButton>
+        </template>
+      </GameDialog>
 
-      <div
-        v-if="loading"
-        class="dialog-backdrop loading-backdrop"
+      <GameDialog
+        v-else-if="dialogMode === 'help'"
+        narrow
+        :button-style="menuButtonStyle"
+        :title="t('dialog.helpTitle')"
+        @close="closeDialog()"
       >
-        <div
-          class="dialog-card dialog-card--narrow"
-          :style="menuButtonStyle"
+        <div class="help-content">{{ t('dialog.helpText') }}</div>
+        <template #actions>
+          <GameButton
+            size="small"
+            :style="menuButtonStyle"
+            @click="closeDialog()"
+          >
+            <span>{{ t('button.close') }}</span>
+          </GameButton>
+        </template>
+      </GameDialog>
+
+      <GameDialog
+        v-if="loading"
+        narrow
+        loading
+        :button-style="menuButtonStyle"
+        :title="t('dialog.loadingTitle')"
+        :close-on-backdrop="false"
+      >
+        <p
+          class="dialog-message"
+          :class="{ 'dialog-message-error': loadingError }"
+          aria-live="polite"
         >
-          <h2 class="dialog-title">{{ t('dialog.loadingTitle') }}</h2>
-          <p
-            class="dialog-message"
-            :class="{ 'dialog-message-error': loadingError }"
-            aria-live="polite"
-          >
-            {{ loadingError || t('dialog.loadingAssets') }}
-          </p>
-          <div
-            v-if="!loadingError"
-            class="loading-progress"
-            aria-live="polite"
-          >
-            <div>
-              {{ t('dialog.loadingGraphics', {
-                completed: String(textureLoadProgress.completed),
-                total: String(textureLoadProgress.total),
-              }) }}
-            </div>
-            <div>
-              {{ t('dialog.loadingSounds', {
-                completed: String(soundLoadProgress.completed),
-                total: String(soundLoadProgress.total),
-              }) }}
-            </div>
+          {{ loadingError || t('dialog.loadingAssets') }}
+        </p>
+        <div
+          v-if="!loadingError"
+          class="loading-progress"
+          aria-live="polite"
+        >
+          <div>
+            {{ t('dialog.loadingGraphics', {
+              completed: String(textureLoadProgress.completed),
+              total: String(textureLoadProgress.total),
+            }) }}
           </div>
-          <div
-            v-if="requiredAssetsReady && !loadingError"
-            class="dialog-actions"
-          >
-            <GameButton
-              size="secondary"
-              :style="menuButtonStyle"
-              @click="enterAfterLoading"
-            >
-              <span>{{ t('button.enterGame') }}</span>
-            </GameButton>
+          <div>
+            {{ t('dialog.loadingSounds', {
+              completed: String(soundLoadProgress.completed),
+              total: String(soundLoadProgress.total),
+            }) }}
           </div>
         </div>
-      </div>
+        <template #actions>
+          <GameButton
+            v-if="requiredAssetsReady && !loadingError"
+            size="small"
+            :style="menuButtonStyle"
+            @click="enterAfterLoading"
+          >
+            <span>{{ t('button.enterGame') }}</span>
+          </GameButton>
+        </template>
+      </GameDialog>
     </div>
   </div>
 </template>
@@ -2241,26 +2317,6 @@ canvas {
   pointer-events: auto;
 }
 
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  display: grid;
-  place-items: center;
-  box-sizing: border-box;
-  padding: var(--button-top);
-  background: var(--overlay-mask-color);
-  pointer-events: auto;
-}
-
-.loading-backdrop {
-  width: 100vw;
-  height: 100vh;
-  min-height: 100dvh;
-  min-height: 100lvh;
-  background: #8293b3;
-}
-
 .secondary-menu-card {
   position: absolute;
   left: 50%;
@@ -2278,28 +2334,6 @@ canvas {
   box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
   pointer-events: auto;
   transform: translate(-50%, -50%);
-}
-
-.dialog-card {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--button-content-gap) * 2);
-  box-sizing: border-box;
-  width: min(720px, calc(100vw - var(--button-top) * 4));
-  max-height: max(160px, calc(var(--app-height) - var(--button-top) * 2));
-  overflow: auto;
-  padding: calc(var(--button-content-gap) * 5);
-  border: var(--button-border) solid var(--menu-card-border-color);
-  border-radius: 8px;
-  background: var(--menu-card-fill-color);
-  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
-  pointer-events: auto;
-}
-
-.dialog-card--narrow {
-  align-items: center;
-  width: fit-content;
-  max-width: calc(100vw - var(--button-top) * 4);
 }
 
 .dialog-textarea {
@@ -2323,6 +2357,27 @@ canvas {
   border-color: var(--button-hover-border-color);
   background: var(--button-hover-fill-color);
   color: var(--button-hover-text-color);
+}
+
+.dialog-textarea--export {
+  height: min(
+    calc(var(--export-textarea-lines) * 1.35em + var(--button-content-gap) * 4),
+    max(220px, calc(var(--app-height) - var(--button-top) * 2 - var(--button-height) * 5 - var(--button-content-gap) * 18))
+  );
+}
+
+.export-controls {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 1.5);
+  width: min(420px, 100%);
+}
+
+.export-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: calc(var(--button-content-gap) * 1.5);
 }
 
 .dialog-message {
@@ -2390,12 +2445,6 @@ canvas {
   font-size: 18px;
   line-height: 1.35;
   white-space: pre-line;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: calc(var(--button-content-gap) * 2);
 }
 
 .language-list {

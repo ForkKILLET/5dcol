@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { RendererPreferenceSchema } from '@engine/rendererFactory'
 import type { GameSettings } from '@/composables/settings'
 import GameButton from './GameButton.vue'
+import GameDialog from './GameDialog.vue'
 import GameSlider from './GameSlider.vue'
 import GameToggle from './GameToggle.vue'
 
@@ -40,12 +41,12 @@ function setBooleanSetting(
 </script>
 
 <template>
-  <div
-    class="dialog-card dialog-card--narrow"
-    :style="buttonStyle"
-    @click.stop
+  <GameDialog
+    narrow
+    :title="t('dialog.settingsTitle')"
+    :button-style="buttonStyle"
+    @close="emit('close')"
   >
-    <h2 class="dialog-title">{{ t('dialog.settingsTitle') }}</h2>
     <div class="settings-list settings-list--narrow">
       <label class="settings-row">
         <span>{{ t('settings.soundVolume') }}</span>
@@ -131,16 +132,16 @@ function setBooleanSetting(
         </GameButton>
       </div>
     </div>
-    <div class="dialog-actions">
+    <template #actions>
       <GameButton
-        size="secondary"
+        size="small"
         :style="buttonStyle"
         @click="emit('close')"
       >
         <span>{{ t('button.close') }}</span>
       </GameButton>
-    </div>
-  </div>
+    </template>
+  </GameDialog>
 </template>
 
 <style scoped>

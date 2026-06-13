@@ -19,6 +19,7 @@ button.returnToLive: "回到实时对局"
 button.back: "返回"
 button.enterGame: "进入游戏"
 button.open: "打开"
+button.settings: "设置"
 
 main.start: "开始"
 main.resume: "继续"
@@ -163,6 +164,9 @@ online.error: "在线错误 - {message}"
 online.spectators: "{count} 人观战"
 
 export.pendingNotExported: "未提交的小步不会导出。"
+export.mode: "模式"
+export.modeLinear: "线性（到当前 cursor）"
+export.modeTree: "树形"
 export.copied: "已复制。"
 export.copyManual: "复制失败，请选择文本并手动复制。"
 
