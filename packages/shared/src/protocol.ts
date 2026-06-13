@@ -26,7 +26,6 @@ const MatchRoomSettingsObjectSchema = z.object({
   private: z.boolean().catch(false),
   saveRecordToServer: z.boolean().catch(true),
   showOpponentMoves: z.boolean().catch(false),
-  showOpponentMoveRange: z.boolean().catch(true),
 })
 
 export const MatchRoomSettingsSchema = z.preprocess((value) => {

@@ -182,7 +182,6 @@ export function useMatch(options?: UseMatchOptions) {
     const enabled = [
       room.private ? t('match.setting.private') : '',
       room.settings.showOpponentMoves ? t('match.setting.liveMoves') : '',
-      room.settings.showOpponentMoveRange ? t('match.setting.moveRange') : '',
       room.settings.canReplay ? t('match.setting.replay') : '',
     ].filter(Boolean)
 

@@ -977,7 +977,6 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     viewPlayer: viewPlayer.value,
     autoSwitchViewPlayer: false,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
-    showOpponentMoveRange: getEffectiveShowOpponentMoveRange(state.room.settings),
     fiveDPGNOptions: gameSettings.fiveDPGN,
     canControlOnlineGame: () => onlineRoomReady.value,
     isExternallyFinished: () => onlineRoomStatus.value === 'finished',
@@ -1031,7 +1030,6 @@ function applyOnlineGameState(
   onlinePresence.value = state.presence
   onlineError.value = ''
   if (state.session) storeOnlineSession(serverAddress, state)
-  game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange(state.room.settings))
   const actionsSignature = JSON.stringify(state.actions)
   if (force || actionsSignature !== onlineActionsSignature) {
     const previousLiveActionCount = onlineLiveActions.length
@@ -1233,17 +1231,12 @@ function syncGameSettings() {
   soundManager?.setVolume(gameSettings.soundVolume)
   game?.setAutoSwitchViewPlayer(onlineRoomStatus.value !== null ? false : gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
-  game?.setShowOpponentMoveRange(getEffectiveShowOpponentMoveRange())
   game?.setFiveDPGNOptions(gameSettings.fiveDPGN)
 }
 
 function getClockStepMs(clock: MatchClock, player: Player, now: number): number {
   if (clock.currentPlayer !== player || clock.turnStartedAt === null) return 0
   return Math.max(0, now - clock.turnStartedAt)
-}
-
-function getEffectiveShowOpponentMoveRange(settings = onlineRoomSettings.value): boolean {
-  return settings?.showOpponentMoveRange ?? true
 }
 
 function storeOnlineSession(serverAddress: string, state: MatchGameState) {

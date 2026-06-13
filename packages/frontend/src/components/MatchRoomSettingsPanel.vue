@@ -72,13 +72,6 @@ const { t } = useI18n({ useScope: 'global' })
           :style="buttonStyle"
         />
       </div>
-      <div class="settings-row">
-        <span>{{ t('match.setting.showOpponentMoveRange') }}</span>
-        <GameToggle
-          v-model="settings.showOpponentMoveRange"
-          :style="buttonStyle"
-        />
-      </div>
     </div>
   </div>
 </template>

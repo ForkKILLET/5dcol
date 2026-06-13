@@ -39,7 +39,6 @@ export interface GameContext {
   viewPlayer?: Player
   autoSwitchViewPlayer?: boolean
   showMoveTravelAnimation?: boolean
-  showOpponentMoveRange?: boolean
   fiveDPGNOptions?: FiveDPGN.ExportOptions
   canControlOnlineGame?: () => boolean
   isExternallyFinished?: () => boolean
@@ -207,7 +206,6 @@ export class Game extends Disposable(Empty) {
     this.viewPlayer = ctx.viewPlayer ?? Player.W
     this.autoSwitchViewPlayer = ctx.autoSwitchViewPlayer ?? true
     this.showMoveTravelAnimation = ctx.showMoveTravelAnimation ?? true
-    this.showOpponentMoveRange = ctx.showOpponentMoveRange ?? true
     this.fiveDPGNOptions = ctx.fiveDPGNOptions ?? {}
     this.layout.setViewPlayer(this.viewPlayer)
     this.resetRecordTree([])
@@ -272,7 +270,6 @@ export class Game extends Disposable(Empty) {
   private cameraMotionId = 0
   private autoSwitchViewPlayer = true
   private showMoveTravelAnimation = true
-  private showOpponentMoveRange = true
   private fiveDPGNOptions: FiveDPGN.ExportOptions = {}
 
   private animationFrame: number | null = null
@@ -361,11 +358,6 @@ export class Game extends Disposable(Empty) {
   public setShowMoveTravelAnimation(enabled: boolean) {
     this.showMoveTravelAnimation = enabled
     if (! enabled && this.moveAnimation) this.stopMoveTravelLoop(this.moveAnimation)
-  }
-
-  public setShowOpponentMoveRange(enabled: boolean) {
-    this.showOpponentMoveRange = enabled
-    if (! enabled) this.hoverPiece = null
   }
 
   public setFiveDPGNOptions(options: FiveDPGN.ExportOptions) {
@@ -1425,18 +1417,15 @@ export class Game extends Disposable(Empty) {
     }
 
     const canControlTurn = this.canControlTurn()
+    const canInspectMoveRange = ! this.gameInputDisabled
     this.hoverCheckWarning = this.gameInputDisabled || ! canControlTurn
       ? null
       : this.getCheckWarningBadgeAtScreen(this.pointer.screen)
     const hit = this.getBoardSquareAtScreen(this.pointer.screen)
     this.hoverSquare = hit ? { l: hit.l, m: hit.m, coord: hit.coord } : null
-    const playableHit = this.getPlayableBoardSquareAtScreen(this.pointer.screen)
-    this.hoverPiece = this.selectedPiece || ! playableHit || ! canControlTurn
+    this.hoverPiece = this.selectedPiece || ! canInspectMoveRange
       ? null
-      : this.getPieceSelectionFromHit(playableHit)
-    if (! this.selectedPiece && ! this.hoverPiece && canControlTurn && this.showOpponentMoveRange) {
-      this.hoverPiece = this.getPendingOpponentPiecePreviewAtScreen(this.pointer.screen)
-    }
+      : this.getPieceSelectionAtScreen(this.pointer.screen)
     this.syncCanvasCursor()
     this.syncToolbarButtons()
   }
@@ -1454,10 +1443,10 @@ export class Game extends Disposable(Empty) {
   private shouldUsePointerCursor(): boolean {
     if (this.gameInputDisabled || this.isMoveAnimating()) return false
     if (this.pointer.dragExceeded || this.pointer.pinchLastDistance !== null) return false
-    if (! this.canControlTurn()) return false
-    if (this.hoverCheckWarning) return true
+    const canControlTurn = this.canControlTurn()
+    if (canControlTurn && this.hoverCheckWarning) return true
 
-    if (this.selectedPiece?.player === this.player && this.hoverSquare) {
+    if (canControlTurn && this.selectedPiece?.player === this.player && this.hoverSquare) {
       const { l, m, coord } = this.hoverSquare
       const { player, targets } = this.selectedPiece
       if (targets.some(target => (
@@ -1489,7 +1478,7 @@ export class Game extends Disposable(Empty) {
     const leftButton: ButtonConfig = this.selectedPiece
       ? {
           id: 'deselect-piece',
-          disabled: this.isMoveAnimating() || ! this.canControlTurn(),
+          disabled: this.isMoveAnimating(),
           colorPreset: ButtonColors.Board,
           turnPlayer: this.player,
           labelKey: 'button.deselect',
@@ -1694,9 +1683,11 @@ export class Game extends Disposable(Empty) {
 
   private handleBoardClick(screen: Vec2) {
     if (this.isMoveAnimating()) return
-    if (! this.canControlTurn()) return
-    if (this.tryCreatePassAt(screen)) return
-    if (this.tryCreateMoveAt(screen)) return
+    if (this.gameInputDisabled) return
+    if (this.canControlTurn()) {
+      if (this.tryCreatePassAt(screen)) return
+      if (this.tryCreateMoveAt(screen)) return
+    }
     this.selectPieceAt(screen)
   }
 
@@ -2605,21 +2596,16 @@ export class Game extends Disposable(Empty) {
   }
 
   private getPieceSelectionAtScreen(screen: Vec2): PieceSelection | null {
-    const hit = this.getPlayableBoardSquareAtScreen(screen)
+    const hit = this.getActiveBoardSquareAtScreen(screen)
     if (! hit) return null
-    return this.getPieceSelectionFromHit(hit)
+    return this.getPieceSelectionFromHit(hit, this.getBoardPlayer(hit.m))
   }
 
   private getInspectablePieceSelectionAtScreen(screen: Vec2): PieceSelection | null {
-    const selection = this.getPieceSelectionAtScreen(screen)
-    if (selection) return selection
-
-    return this.showOpponentMoveRange
-      ? this.getPendingOpponentPiecePreviewAtScreen(screen)
-      : null
+    return this.getPieceSelectionAtScreen(screen)
   }
 
-  private getPieceSelectionFromHit(hit: BoardSquareHit, player = this.player): PieceSelection | null {
+  private getPieceSelectionFromHit(hit: BoardSquareHit, player: Player): PieceSelection | null {
     const piece = Board.getPiece(hit.coord, hit.board)
     if (Pieces.getPlayer(piece) !== player) return null
 
@@ -2639,30 +2625,17 @@ export class Game extends Disposable(Empty) {
     }
   }
 
-  private getPendingOpponentPiecePreviewAtScreen(screen: Vec2): PieceSelection | null {
-    if (this.pendingMoves.length === 0) return null
-
-    const hit = this.getBoardSquareAtScreen(screen)
-    if (! hit) return null
-    if (! this.isTemporaryBoard(hit.l, hit.m)) return null
-
-    const previewPlayer = CorePlayers.opponent(this.player)
-    if (hit.m % 2 !== previewPlayer) return null
-    if (! Multiverse.isPlayableBoard(this.multiverse, previewPlayer, {
-      l: hit.l,
-      t: Coord.turn(hit.m, previewPlayer),
-    })) return null
-
-    return this.getPieceSelectionFromHit(hit, previewPlayer)
+  private getBoardPlayer(m: number): Player {
+    return m % 2 === Player.W ? Player.W : Player.B
   }
 
-  private getPlayableBoardSquareAtScreen(screen: Vec2): BoardSquareHit | null {
+  private getActiveBoardSquareAtScreen(screen: Vec2): BoardSquareHit | null {
     const hit = this.getBoardSquareAtScreen(screen)
     if (! hit) return null
-    if (this.isTemporaryBoard(hit.l, hit.m)) return null
-    if (! Multiverse.isPlayableBoard(this.multiverse, this.player, {
+    const player = this.getBoardPlayer(hit.m)
+    if (! Multiverse.isPlayableBoard(this.multiverse, player, {
       l: hit.l,
-      t: Coord.turn(hit.m, this.player),
+      t: Coord.turn(hit.m, player),
     })) return null
     return hit
   }
@@ -3817,6 +3790,7 @@ export class Game extends Disposable(Empty) {
 
   private shouldRenderPieceGhost(l: number, m: number, coord: CoordSpacelike): boolean {
     if (! this.selectedPiece || ! this.hoverSquare) return false
+    if (! this.canControlTurn() || this.selectedPiece.player !== this.player) return false
     if (! isSameLocatedSquare(this.hoverSquare, l, m, coord)) return false
     return this.selectedPiece.targets.some(target => (
       this.isTargetAt(target, l, m, coord, this.selectedPiece!.player)
