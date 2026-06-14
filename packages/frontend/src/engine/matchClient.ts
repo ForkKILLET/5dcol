@@ -33,6 +33,8 @@ export interface MatchServerState {
   address: string
   status: MatchServerConnectionStatus
   name: string
+  version: string
+  buildDate: string
   rooms: MatchRoom[]
   error: string
 }

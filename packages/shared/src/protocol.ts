@@ -45,6 +45,8 @@ export const DEFAULT_MATCH_ROOM_SETTINGS: MatchRoomSettings = MatchRoomSettingsS
 export const MatchServerInfoSchema = z.object({
   protocolVersion: z.literal(MATCH_PROTOCOL_VERSION),
   name: z.string(),
+  version: z.string().catch(''),
+  buildDate: z.string().catch(''),
 })
 
 export type MatchServerInfo = z.infer<typeof MatchServerInfoSchema>

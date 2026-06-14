@@ -119,6 +119,8 @@ export function createBackendServer(options: BackendServerOptions) {
   app.get('/health', async (): Promise<MatchServerInfo> => ({
     protocolVersion: MATCH_PROTOCOL_VERSION,
     name: options.name ?? DEFAULT_SERVER_NAME,
+    version: __5DCOL_VERSION__,
+    buildDate: __5DCOL_BUILD_DATE__,
   }))
 
   app.get<{ Querystring: MatchRoomsRequestQuery }>('/rooms', async (request): Promise<MatchRoomsResponse> => ({

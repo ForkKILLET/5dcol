@@ -124,6 +124,8 @@ const matchServers = reactive<MatchServerState[]>(Object
     id: address,
     address,
     name,
+    version: '',
+    buildDate: '',
     status: 'idle',
     rooms: [],
     error: '',
@@ -246,6 +248,8 @@ export function useMatch(options?: UseMatchOptions) {
       address,
       status: 'idle',
       name: '',
+      version: '',
+      buildDate: '',
       rooms: [],
       error: '',
     }
@@ -315,6 +319,8 @@ export function useMatch(options?: UseMatchOptions) {
         }),
       ])
       server.name = info.name
+      server.version = info.version
+      server.buildDate = info.buildDate
       server.rooms = rooms
       server.status = 'connected'
       syncLastOnlineGameFromServer(server)
@@ -481,6 +487,8 @@ export function useMatch(options?: UseMatchOptions) {
       id: address,
       address,
       name: address.replace(/^https?:\/\//, ''),
+      version: '',
+      buildDate: '',
       status: 'idle',
       rooms: [],
       error: '',

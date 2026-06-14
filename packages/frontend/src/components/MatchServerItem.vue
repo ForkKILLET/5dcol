@@ -59,6 +59,19 @@ function getDisplayAddress(server: MatchServerState) {
   return server.address.replace(/^https?:\/\//, '')
 }
 
+function getServerBuildMeta(server: MatchServerState) {
+  const parts = []
+  if (server.version) parts.push(`v${server.version}`)
+  if (server.buildDate) parts.push(formatBuildDate(server.buildDate))
+  return parts.join(' / ')
+}
+
+function formatBuildDate(buildDate: string) {
+  const date = new Date(buildDate)
+  if (Number.isNaN(date.getTime())) return buildDate
+  return date.toLocaleDateString()
+}
+
 function forwardReturnRoom(server: MatchServerState, room: MatchRoom) {
   emit('returnRoom', server, room)
 }
@@ -95,6 +108,7 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
             {{ getStatusText(server.status) }}
           </span>
           <span v-if="server.name">{{ server.name }}</span>
+          <span v-if="getServerBuildMeta(server)">{{ getServerBuildMeta(server) }}</span>
         </div>
       </div>
       <div class="match-server-actions">
