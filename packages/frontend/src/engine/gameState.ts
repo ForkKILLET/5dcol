@@ -18,6 +18,7 @@ export interface PendingMove {
 
 export interface StoredGameState {
   version: 1
+  initialMultiverse?: Multiverse
   actions?: Action[]
   recordLines?: StoredRecordLine[]
   activeRecordLineId?: number
@@ -58,6 +59,7 @@ export const isStoredGameState = (
   state.version === 1
     && isMultiverseLike(state.multiverseCommitted)
     && isMultiverseLike(state.multiverse)
+    && (state.initialMultiverse === undefined || isMultiverseLike(state.initialMultiverse))
     && (state.actions === undefined || Array.isArray(state.actions))
     && (state.recordLines === undefined || Array.isArray(state.recordLines))
     && (state.activeRecordLineId === undefined || typeof state.activeRecordLineId === 'number')

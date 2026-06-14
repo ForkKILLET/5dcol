@@ -14,7 +14,7 @@ import {
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
-import { Game, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
+import { Game, type GameExportFormat, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, isStoredGameState, type StoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
@@ -75,11 +75,14 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'five-dpgn-settings' | 'import' | 'export' | 'share' | 'shared-room'
+type GameImportFormat = 'pgn' | 'fen'
 const dialogStack = useDialogStack<DialogMode>()
 const dialogMode = dialogStack.current
 const importText = ref('')
 const importError = ref('')
+const importFormat = ref<GameImportFormat>('pgn')
 const exportText = ref('')
+const exportFormat = ref<GameExportFormat>('pgn')
 const exportMode = ref<GameExportMode>('tree')
 const exportHasPendingMoves = ref(false)
 const exportCopyStatus = ref('')
@@ -675,6 +678,7 @@ function selectLanguage(nextLanguage: Language) {
 function openImportDialog() {
   playUISound()
   secondaryMenuOpen.value = false
+  importFormat.value = 'pgn'
   importText.value = ''
   importError.value = ''
   dialogStack.open('import')
@@ -683,6 +687,7 @@ function openImportDialog() {
 function openExportDialog(request: GameExportRequest) {
   playUISound()
   secondaryMenuOpen.value = false
+  exportFormat.value = request.format
   exportMode.value = request.mode
   syncExportDialogText()
   exportCopyStatus.value = ''
@@ -690,7 +695,7 @@ function openExportDialog(request: GameExportRequest) {
 }
 
 function syncExportDialogText() {
-  const request = game?.getFiveDPGNExport(exportMode.value)
+  const request = game?.getFiveDPGNExport(exportMode.value, exportFormat.value)
   if (! request) return
 
   exportText.value = request.text
@@ -784,7 +789,9 @@ function submitImportDialog() {
 
   const error = game?.importFiveDPGNText(text)
   if (error) {
-    importError.value = error === 'Failed to import 5dpgn' ? t('error.importFailed') : error
+    importError.value = error === 'Failed to import game record' || error === 'Failed to import 5dpgn'
+      ? t('error.importFailed')
+      : error
     return
   }
 
@@ -1689,7 +1696,7 @@ watch(dialogMode, (mode, previousMode) => {
 watch(gameSettings, () => {
   syncGameSettings()
 }, { deep: true })
-watch(exportMode, () => {
+watch([exportFormat, exportMode], () => {
   exportCopyStatus.value = ''
   syncExportDialogText()
 })
@@ -2041,6 +2048,29 @@ watch(exportMode, () => {
         :title="t('dialog.importTitle')"
         @close="closeDialog()"
       >
+        <div class="export-controls">
+          <div class="settings-row">
+            <span>{{ t('import.format') }}</span>
+            <div class="export-radio-group">
+              <GameToggle
+                v-model="importFormat"
+                type="radio"
+                value="pgn"
+                :style="menuButtonStyle"
+              >
+                <span>{{ t('import.formatPGN') }}</span>
+              </GameToggle>
+              <GameToggle
+                v-model="importFormat"
+                type="radio"
+                value="fen"
+                :style="menuButtonStyle"
+              >
+                <span>{{ t('import.formatFEN') }}</span>
+              </GameToggle>
+            </div>
+          </div>
+        </div>
         <textarea
           v-model="importText"
           class="dialog-textarea"
@@ -2082,6 +2112,30 @@ watch(exportMode, () => {
       >
         <div class="export-controls">
           <div class="settings-row">
+            <span>{{ t('export.format') }}</span>
+            <div class="export-radio-group">
+              <GameToggle
+                v-model="exportFormat"
+                type="radio"
+                value="pgn"
+                :style="menuButtonStyle"
+              >
+                <span>{{ t('export.formatPGN') }}</span>
+              </GameToggle>
+              <GameToggle
+                v-model="exportFormat"
+                type="radio"
+                value="fen"
+                :style="menuButtonStyle"
+              >
+                <span>{{ t('export.formatFEN') }}</span>
+              </GameToggle>
+            </div>
+          </div>
+          <div
+            v-if="exportFormat === 'pgn'"
+            class="settings-row"
+          >
             <span>{{ t('export.mode') }}</span>
             <div class="export-radio-group">
               <GameToggle
@@ -2102,7 +2156,10 @@ watch(exportMode, () => {
               </GameToggle>
             </div>
           </div>
-          <div class="settings-row">
+          <div
+            v-if="exportFormat === 'pgn'"
+            class="settings-row"
+          >
             <span>{{ t('main.settings') }}</span>
             <GameButton
               size="small"

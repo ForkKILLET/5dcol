@@ -57,9 +57,9 @@ dialog.helpText: |
 
   Submitting from an earlier cursor follows the matching future action when one exists. If the move is different, it creates a purple branch instead of deleting later history. The delete-following-history icon trims future actions from a cursor. Pending moves are shown with a yellow marker, and spectator deductions or branches are shown with purple markers.
 
-  Use Import and Export in the Record panel to load or copy 5dpgn. Export can output either the current linear line up to the cursor or the full record tree.
-dialog.importTitle: "Import 5dpgn"
-dialog.exportTitle: "Export 5dpgn"
+  Use Import and Export in the Record panel to load or copy PGN/FEN. Export can output either the current linear line up to the cursor or the full record tree.
+dialog.importTitle: "Import"
+dialog.exportTitle: "Export"
 dialog.shareRoomTitle: "Share room"
 dialog.sharedRoomTitle: "Shared room"
 dialog.matchRoomSettingsTitle: "Room settings"
@@ -182,7 +182,14 @@ online.spectators: "{count} spectators"
 
 notification.yourTurn: "Your turn - {player} pieces"
 
+import.format: "Format"
+import.formatPGN: "PGN"
+import.formatFEN: "FEN"
+
 export.pendingNotExported: "Pending moves are not exported."
+export.format: "Format"
+export.formatPGN: "PGN"
+export.formatFEN: "FEN"
 export.mode: "Mode"
 export.modeLinear: "Linear to cursor"
 export.modeTree: "Tree"
@@ -194,6 +201,6 @@ share.copyManual: "Failed to copy. Please select the link and copy it manually."
 share.loadingRoom: "Loading room..."
 share.roomNotFound: "Room not found or not viewable."
 
-error.importFailed: "Failed to import 5dpgn."
+error.importFailed: "Failed to import game record."
 error.saveFailed: "Failed to save game state."
 error.loadFailed: "Failed to load game assets."

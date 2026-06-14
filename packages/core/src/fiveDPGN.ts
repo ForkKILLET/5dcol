@@ -12,7 +12,7 @@ import {
   type CoordSpacelike,
   type CoordTimelike,
   type Move,
-} from './index'
+} from './index.js'
 
 const FILES = 'abcdefgh'
 const PIECE_NAMES = 'PWKCQYSNRBUD'
@@ -37,6 +37,7 @@ export interface ExportOptions {
   includeCaptureMarkers?: boolean
   includeCheckMarkers?: boolean
   includePromotionMarkers?: boolean
+  initialMultiverse?: Multiverse
   headers?: ExportHeaders
   result?: ExportResult
 }
@@ -76,6 +77,18 @@ export interface ActionTreeVariation {
   subtree?: ActionTree
 }
 
+interface ParsedGame {
+  initialMultiverse: Multiverse
+  tree: ActionTree
+}
+
+interface FENBoardBlock {
+  board: Board
+  l: number
+  t: number
+  player: Player
+}
+
 interface MoveFormatContext {
   piece: Piece
   capture: boolean
@@ -90,7 +103,8 @@ interface ActionFormatResult {
   player: Player
 }
 
-interface ResolvedExportOptions extends Required<Omit<ExportOptions, 'headers' | 'result'>> {
+interface ResolvedExportOptions extends Required<Omit<ExportOptions, 'headers' | 'result' | 'initialMultiverse'>> {
+  initialMultiverse?: Multiverse
   headers?: ExportHeaders
   result: ExportResult
 }
@@ -152,26 +166,53 @@ const DEFAULT_EXPORT_OPTIONS: ResolvedExportOptions = {
 }
 
 export const exportGameState = (
-  { actions }: Pick<GameState, 'actions'>,
+  { actions, initialMultiverse }: Pick<GameState, 'actions'> & Partial<Pick<GameState, 'initialMultiverse'>>,
   options: ExportOptions = {},
 ): string => {
-  return exportActionTree(actionsToTree(actions), options)
+  return exportActionTree(actionsToTree(actions), {
+    ...options,
+    initialMultiverse: options.initialMultiverse ?? initialMultiverse,
+  })
 }
+
+export const exportFEN = (
+  multiverse: Multiverse = Multiverse.createInitial(),
+): string => {
+  const blocks: string[] = []
+  for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
+    if (! line) continue
+    for (const [m, board] of Line.getBoardEntries(line)) {
+      if (! board) continue
+      const player = m % 2
+      blocks.push(`[${formatBoardFEN(board)}:${l}:${Coord.turn(m, player)}:${player === Player.W ? 'w' : 'b'}]`)
+    }
+  }
+  return `${blocks.join('\n')}\n`
+}
+
+const shouldExportInitialMultiverse = (multiverse: Multiverse): boolean => (
+  exportFEN(multiverse) !== exportFEN(Multiverse.createInitial())
+)
 
 export const exportActionTree = (
   tree: ActionTree,
   options: ExportOptions = {},
 ): string => {
   const resolvedOptions = resolveExportOptions(options)
+  const initialMultiverse = resolvedOptions.initialMultiverse ?? Multiverse.createInitial()
   const body = formatActionTree(tree, {
     actionIndex: 0,
-    multiverse: Multiverse.createInitial(),
+    multiverse: initialMultiverse,
     options: resolvedOptions,
     player: Player.W,
   })
+  const fenPrelude = shouldExportInitialMultiverse(initialMultiverse)
+    ? [exportFEN(initialMultiverse).trim(), '']
+    : []
   const lines = [
     ...formatHeaders(resolvedOptions),
     '',
+    ...fenPrelude,
     ...(body.trim() ? [body] : []),
     resolvedOptions.result,
   ]
@@ -183,7 +224,7 @@ export const formatActions = (
   options: ExportOptions = {},
 ): FormattedAction[] => {
   const resolvedOptions = resolveExportOptions(options)
-  let multiverse = Multiverse.createInitial()
+  let multiverse = resolvedOptions.initialMultiverse ?? Multiverse.createInitial()
   let player = Player.W
 
   return actions.map((action, actionIndex) => {
@@ -201,12 +242,15 @@ export const formatActions = (
 }
 
 export const importGameState = (input: string): GameState => {
-  return GameState.create(actionTreeToMainline(parseActionTree(input)))
+  const { initialMultiverse, tree } = parseGame(input)
+  return createGameState(initialMultiverse, actionTreeToMainline(tree))
 }
 
 export const parseActionTree = (input: string): ActionTree => {
-  return new Parser(input).parse()
+  return parseGame(input).tree
 }
+
+const parseGame = (input: string): ParsedGame => new Parser(input).parse()
 
 const actionsToTree = (actions: readonly Action[]): ActionTree => {
   const root: ActionTree = { variations: [] }
@@ -228,6 +272,37 @@ const actionTreeToMainline = (tree: ActionTree): Action[] => {
     current = variation.subtree
   }
   return actions
+}
+
+const createGameState = (initialMultiverse: Multiverse, actions: Action[]): GameState => {
+  let multiverseCommitted = initialMultiverse
+  let player = Player.W
+
+  for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
+    const action = actions[actionIndex]!
+    for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex += 1) {
+      multiverseCommitted = Multiverse.applyMove(
+        action.moves[moveIndex]!,
+        player,
+        multiverseCommitted,
+        actionIndex * GameState.MOVE_ORDER_STRIDE + moveIndex,
+      )
+    }
+    if (! Multiverse.hasSubmittedPresentMoves(multiverseCommitted, player)) {
+      throw new Error(`5dpgn action ${actionIndex + 1} does not submit the present`)
+    }
+    player = Players.opponent(player)
+  }
+
+  return {
+    initialMultiverse,
+    actions,
+    multiverseCommitted,
+    multiverse: multiverseCommitted,
+    player,
+    actionIndex: actions.length,
+    pendingMoves: [],
+  }
 }
 
 const formatActionTree = (
@@ -365,12 +440,16 @@ const formatActionLine = (action: FormattedAction): string => (
 
 class Parser {
   private cursor = 0
+  private readonly fenBlocks: FENBoardBlock[] = []
 
   constructor(private readonly input: string) {}
 
-  parse(): ActionTree {
+  parse(): ParsedGame {
     this.skipPrelude()
-    const tree = this.parseGameTree(Multiverse.createInitial(), Player.W, 0)
+    const initialMultiverse = this.fenBlocks.length > 0
+      ? createMultiverseFromFENBlocks(this.fenBlocks)
+      : Multiverse.createInitial()
+    const tree = this.parseGameTree(initialMultiverse, Player.W, 0)
     this.skipSpaceComments()
     if (this.consumeResult()) {
       this.skipSpaceComments()
@@ -378,7 +457,7 @@ class Parser {
     if (! this.isDone()) {
       throw this.error(`Unexpected 5dpgn syntax near "${this.input.slice(this.cursor, this.cursor + 32).trim()}"`)
     }
-    return tree
+    return { initialMultiverse, tree }
   }
 
   private parseGameTree(multiverse: Multiverse, player: Player, actionIndex: number): ActionTree {
@@ -519,7 +598,7 @@ class Parser {
       if (this.peek() !== '[') return
       const content = this.readBracketBlock()
       if (isBoardFenBlock(content)) {
-        throw this.error('Custom 5DFEN import is not supported yet')
+        this.fenBlocks.push(parseFENBlock(content))
       }
     }
   }
@@ -934,7 +1013,7 @@ const isBoardCreatedInSameAction = (
 }
 
 const isBoardFenBlock = (content: string): boolean => (
-  content.includes(':') && ! /^\S+\s+"[^"]*"$/.test(content)
+  /^.+:[+-]?\d+:\d+:[wb]$/.test(content)
 )
 
 const isDigit = (char: string | undefined): boolean => (
@@ -944,6 +1023,177 @@ const isDigit = (char: string | undefined): boolean => (
 const isFile = (char: string): boolean => FILES.includes(char)
 
 const isRank = (char: string): boolean => char >= '1' && char <= '8'
+
+const parseFENBlock = (content: string): FENBoardBlock => {
+  const match = /^(.*):([+-]?\d+):(\d+):([wb])$/.exec(content)
+  if (! match) throw new Error(`Invalid 5DFEN block "[${content}]"`)
+  return {
+    board: parseBoardFEN(match[1]!),
+    l: Number(match[2]),
+    t: Number(match[3]),
+    player: match[4] === 'w' ? Player.W : Player.B,
+  }
+}
+
+const createMultiverseFromFENBlocks = (blocks: FENBoardBlock[]): Multiverse => {
+  if (blocks.length === 0) return Multiverse.createInitial()
+
+  const lMin = Math.min(...blocks.map(block => block.l))
+  const lMax = Math.max(...blocks.map(block => block.l))
+  const lOffset = Math.max(Multiverse.LINE_OFFSET_INITIAL, -lMin)
+  const lines: Line[] = []
+  const blocksByLine = new Map<number, Array<{ m: number, board: Board }>>()
+
+  for (const block of blocks) {
+    const m = Coord.time(block.t, block.player)
+    const lineBlocks = blocksByLine.get(block.l) ?? []
+    lineBlocks.push({ m, board: block.board })
+    blocksByLine.set(block.l, lineBlocks)
+  }
+
+  for (const [l, lineBlocks] of blocksByLine) {
+    const boards: Board[] = []
+    for (const { m, board } of lineBlocks) {
+      boards[m] = board
+    }
+    lines[l + lOffset] = {
+      boards,
+      mStart: Math.min(...lineBlocks.map(block => block.m)),
+    }
+  }
+
+  return {
+    lines,
+    lOffset,
+    lFurthestB: lMin + lOffset,
+    lFurthestW: lMax + lOffset,
+    lastMove: null,
+  }
+}
+
+const parseBoardFEN = (fen: string): Board => {
+  const rows = fen.split('/')
+  if (rows.length !== 8) throw new Error(`Invalid 5DFEN board "${fen}"`)
+
+  const pieces = Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => Piece.E))
+  const unmoved = new Set<string>()
+
+  for (let y = 0; y < rows.length; y += 1) {
+    let x = 0
+    for (let index = 0; index < rows[y]!.length; index += 1) {
+      const char = rows[y]![index]!
+      if (/[1-8]/.test(char)) {
+        x += Number(char)
+        continue
+      }
+
+      const piece = fenCharToPiece(char)
+      if (piece === null) throw new Error(`Unsupported 5DFEN piece "${char}"`)
+      if (x >= 8) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
+      pieces[x]![y] = piece
+      if (rows[y]![index + 1] === '*') {
+        unmoved.add(`${x},${y}`)
+        index += 1
+      }
+      x += 1
+    }
+    if (x !== 8) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
+  }
+
+  return {
+    pieces,
+    canCastleQW: hasUnmovedPiece(pieces, unmoved, 4, 7, Piece.KW) && hasUnmovedPiece(pieces, unmoved, 0, 7, Piece.RW),
+    canCastleKW: hasUnmovedPiece(pieces, unmoved, 4, 7, Piece.KW) && hasUnmovedPiece(pieces, unmoved, 7, 7, Piece.RW),
+    canCastleQB: hasUnmovedPiece(pieces, unmoved, 4, 0, Piece.KB) && hasUnmovedPiece(pieces, unmoved, 0, 0, Piece.RB),
+    canCastleKB: hasUnmovedPiece(pieces, unmoved, 4, 0, Piece.KB) && hasUnmovedPiece(pieces, unmoved, 7, 0, Piece.RB),
+    createdBy: null,
+    createdByPlayer: null,
+    createdByRole: null,
+    createdByOrder: null,
+  }
+}
+
+const hasUnmovedPiece = (
+  pieces: Piece[][],
+  unmoved: Set<string>,
+  x: number,
+  y: number,
+  piece: Piece,
+): boolean => (
+  pieces[x]?.[y] === piece && unmoved.has(`${x},${y}`)
+)
+
+const formatBoardFEN = (board: Board): string => {
+  const rows: string[] = []
+  for (let y = 0; y < 8; y += 1) {
+    let row = ''
+    let empty = 0
+    for (let x = 0; x < 8; x += 1) {
+      const piece = Board.getPiece({ x, y }, board)
+      if (piece === Piece.E) {
+        empty += 1
+        continue
+      }
+
+      if (empty > 0) {
+        row += String(empty)
+        empty = 0
+      }
+      row += pieceToFenChar(piece)
+      if (shouldMarkUnmoved(board, piece, x, y)) row += '*'
+    }
+    if (empty > 0) row += String(empty)
+    rows.push(row)
+  }
+  return rows.join('/')
+}
+
+const shouldMarkUnmoved = (board: Board, piece: Piece, x: number, y: number): boolean => {
+  if (piece === Piece.KW && x === 4 && y === 7) return board.canCastleQW || board.canCastleKW
+  if (piece === Piece.RW && x === 0 && y === 7) return board.canCastleQW
+  if (piece === Piece.RW && x === 7 && y === 7) return board.canCastleKW
+  if (piece === Piece.KB && x === 4 && y === 0) return board.canCastleQB || board.canCastleKB
+  if (piece === Piece.RB && x === 0 && y === 0) return board.canCastleQB
+  if (piece === Piece.RB && x === 7 && y === 0) return board.canCastleKB
+  return false
+}
+
+const fenCharToPiece = (char: string): Piece | null => {
+  switch (char) {
+    case 'P': return Piece.PW
+    case 'R': return Piece.RW
+    case 'N': return Piece.NW
+    case 'B': return Piece.BW
+    case 'Q': return Piece.QW
+    case 'K': return Piece.KW
+    case 'p': return Piece.PB
+    case 'r': return Piece.RB
+    case 'n': return Piece.NB
+    case 'b': return Piece.BB
+    case 'q': return Piece.QB
+    case 'k': return Piece.KB
+    default: return null
+  }
+}
+
+const pieceToFenChar = (piece: Piece): string => {
+  switch (piece) {
+    case Piece.PW: return 'P'
+    case Piece.RW: return 'R'
+    case Piece.NW: return 'N'
+    case Piece.BW: return 'B'
+    case Piece.QW: return 'Q'
+    case Piece.KW: return 'K'
+    case Piece.PB: return 'p'
+    case Piece.RB: return 'r'
+    case Piece.NB: return 'n'
+    case Piece.BB: return 'b'
+    case Piece.QB: return 'q'
+    case Piece.KB: return 'k'
+    default:
+      throw new Error(`Unsupported 5DFEN piece ${piece}`)
+  }
+}
 
 const formatHeaders = (options: ResolvedExportOptions): string[] => {
   const headers = new Map<string, string>()

@@ -57,9 +57,9 @@ dialog.helpText: |
 
   从较早的游标提交时，如果和后续 action 匹配，会直接进入那一步；如果不同，则创建紫色分支，而不是删除后续历史。删除后续图标可以从某个游标裁掉之后的历史。Pending moves 会用黄色标记，观战推演和分支会用紫色标记。
 
-  可以在记谱面板中导入或导出 5dpgn。导出支持到当前游标为止的线性记谱，也支持完整的树形记谱。
-dialog.importTitle: "导入 5dpgn"
-dialog.exportTitle: "导出 5dpgn"
+  可以在记谱面板中导入或导出 PGN/FEN。导出支持到当前游标为止的线性记谱，也支持完整的树形记谱。
+dialog.importTitle: "导入"
+dialog.exportTitle: "导出"
 dialog.shareRoomTitle: "分享房间"
 dialog.sharedRoomTitle: "分享的房间"
 dialog.matchRoomSettingsTitle: "房间设置"
@@ -182,7 +182,14 @@ online.spectators: "{count} 人观战"
 
 notification.yourTurn: "你的回合 - {player}执棋"
 
+import.format: "格式"
+import.formatPGN: "PGN"
+import.formatFEN: "FEN"
+
 export.pendingNotExported: "未提交的小步不会导出。"
+export.format: "格式"
+export.formatPGN: "PGN"
+export.formatFEN: "FEN"
 export.mode: "模式"
 export.modeLinear: "线性（到当前游标）"
 export.modeTree: "树形"
@@ -194,6 +201,6 @@ share.copyManual: "复制失败，请选择链接并手动复制。"
 share.loadingRoom: "正在加载房间..."
 share.roomNotFound: "找不到房间，或房间不可查看。"
 
-error.importFailed: "导入 5dpgn 失败。"
+error.importFailed: "导入棋谱失败。"
 error.saveFailed: "保存对局状态失败。"
 error.loadFailed: "加载游戏资源失败。"

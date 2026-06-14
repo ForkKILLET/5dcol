@@ -1382,6 +1382,7 @@ export namespace Multiverse {
 }
 
 export interface GameState {
+  initialMultiverse: Multiverse
   actions: Action[]
   multiverseCommitted: Multiverse
   multiverse: Multiverse
@@ -2274,8 +2275,12 @@ const findMatching = (
 export namespace GameState {
   export const MOVE_ORDER_STRIDE = 1000000
 
-  export const create = (actions: Action[] = [], pendingMoves: Move[] = []): GameState => {
-    let multiverseCommitted = Multiverse.createInitial()
+  export const create = (
+    actions: Action[] = [],
+    pendingMoves: Move[] = [],
+    initialMultiverse: Multiverse = Multiverse.createInitial(),
+  ): GameState => {
+    let multiverseCommitted = initialMultiverse
     let player = Player.W
 
     actions.forEach((action, actionIndex) => {
@@ -2301,6 +2306,7 @@ export namespace GameState {
     )
 
     return {
+      initialMultiverse,
       actions,
       multiverseCommitted,
       multiverse,
@@ -2561,4 +2567,4 @@ export namespace GameState {
   const formatCoord = ({ l, t, x, y }: Coord): string => `(${l}T${t})${String.fromCharCode(97 + x)}${8 - y}`
 }
 
-export * as FiveDPGN from './fiveDPGN'
+export * as FiveDPGN from './fiveDPGN.js'

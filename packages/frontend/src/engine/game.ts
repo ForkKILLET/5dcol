@@ -58,10 +58,12 @@ export interface GameReturnToMainMenuRequest {
   forfeit?: boolean
 }
 
+export type GameExportFormat = 'pgn' | 'fen'
 export type GameExportMode = 'linear' | 'tree'
 
 export interface GameExportRequest {
   text: string
+  format: GameExportFormat
   mode: GameExportMode
   hasPendingMoves: boolean
   currentActionIndex: number
@@ -224,7 +226,8 @@ export class Game extends Disposable(Empty) {
   public readonly timelineTilesPainter: TimelineTilesPainter
   public readonly linePainter: LinePainter
 
-  private multiverseCommitted = Multiverse.createInitial()
+  private initialMultiverse = Multiverse.createInitial()
+  private multiverseCommitted = this.initialMultiverse
   private multiverse = this.multiverseCommitted
   private player: Player = Player.W
   private viewPlayer: Player = Player.W
@@ -509,7 +512,7 @@ export class Game extends Disposable(Empty) {
 
     const previousPlayer = this.player
     const previousActionIndex = this.actionIndex
-    this.loadCoreGameState(CoreGameState.create(actions), { focus })
+    this.loadCoreGameState(CoreGameState.create(actions, [], this.initialMultiverse), { focus })
     this.playLocalTurnStartSoundAfterLoadedAction(previousPlayer, previousActionIndex)
     this.syncToolbarButtons()
     this.syncRecord()
@@ -536,12 +539,15 @@ export class Game extends Disposable(Empty) {
       }
 
       const actions = state.actions ?? CoreGameState.extractActions(state.multiverseCommitted)
+      const initialMultiverse = state.initialMultiverse
+        ?? (actions.length === 0 ? state.multiverseCommitted : Multiverse.createInitial())
       const actionIndex = Scalar.clamp(Math.floor(state.actionIndex), 0, actions.length)
       const pendingMoveMoves = state.pendingMoves
         .filter(pendingMove => ! pendingMove.isPass)
         .map(pendingMove => pendingMove.move)
-      const coreState = CoreGameState.create(actions.slice(0, actionIndex), pendingMoveMoves)
+      const coreState = CoreGameState.create(actions.slice(0, actionIndex), pendingMoveMoves, initialMultiverse)
 
+      this.initialMultiverse = coreState.initialMultiverse
       this.multiverseCommitted = coreState.multiverseCommitted
       this.player = coreState.player
       this.actionIndex = coreState.actionIndex
@@ -576,6 +582,7 @@ export class Game extends Disposable(Empty) {
 
     const state: StoredGameState = {
       version: 1,
+      initialMultiverse: this.initialMultiverse,
       actions: this.actions,
       recordLines: this.serializeRecordLines(),
       activeRecordLineId: this.activeRecordLineId,
@@ -927,7 +934,8 @@ export class Game extends Disposable(Empty) {
 
   private applyRecordActionPath(actions: Action[], actionIndex: number) {
     const targetActionIndex = Scalar.clamp(Math.floor(actionIndex), 0, actions.length)
-    const state = CoreGameState.create(actions.slice(0, targetActionIndex))
+    const state = CoreGameState.create(actions.slice(0, targetActionIndex), [], this.initialMultiverse)
+    this.initialMultiverse = state.initialMultiverse
     this.multiverseCommitted = state.multiverseCommitted
     this.multiverse = state.multiverse
     this.player = state.player
@@ -2087,20 +2095,29 @@ export class Game extends Disposable(Empty) {
       return null
     }
     catch (error) {
-      return error instanceof Error ? error.message : 'Failed to import 5dpgn'
+      return error instanceof Error ? error.message : 'Failed to import game record'
     }
   }
 
-  public getFiveDPGNExport(mode: GameExportMode = 'tree'): GameExportRequest {
-    const options = this.getFiveDPGNExportOptions()
+  public getFiveDPGNExport(
+    mode: GameExportMode = 'tree',
+    format: GameExportFormat = 'pgn',
+  ): GameExportRequest {
+    const options: FiveDPGN.ExportOptions = {
+      ...this.getFiveDPGNExportOptions(),
+      initialMultiverse: this.initialMultiverse,
+    }
     return {
-      text: mode === 'tree'
-        ? FiveDPGN.exportActionTree(this.buildFiveDPGNActionTree(), options)
-        : FiveDPGN.exportGameState({
-            actions: this.actions.slice(0, Scalar.clamp(this.actionIndex, 0, this.actions.length)),
-          }, options),
+      text: format === 'fen'
+        ? FiveDPGN.exportFEN(this.multiverse)
+        : mode === 'tree'
+          ? FiveDPGN.exportActionTree(this.buildFiveDPGNActionTree(), options)
+          : FiveDPGN.exportGameState({
+              actions: this.actions.slice(0, Scalar.clamp(this.actionIndex, 0, this.actions.length)),
+            }, options),
+      format,
       mode,
-      hasPendingMoves: this.pendingMoves.length > 0,
+      hasPendingMoves: format === 'pgn' && this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
       actions: this.buildRecordActionsForDisplay(),
     }
@@ -2151,7 +2168,10 @@ export class Game extends Disposable(Empty) {
     const lineRows = buildGameRecordActions([
       ...prefixActions,
       ...line.actions,
-    ], this.fiveDPGNOptions)
+    ], {
+      ...this.fiveDPGNOptions,
+      initialMultiverse: this.initialMultiverse,
+    })
 
     for (let actionIndex = 0; actionIndex <= line.actions.length; actionIndex += 1) {
       const hasFuture = this.hasRecordFutureAt(line.id, actionIndex)
@@ -2181,7 +2201,10 @@ export class Game extends Disposable(Empty) {
         const pendingRows = buildGameRecordActions([
           ...branchPrefixActions,
           { moves: pendingMoves },
-        ], this.fiveDPGNOptions)
+        ], {
+          ...this.fiveDPGNOptions,
+          initialMultiverse: this.initialMultiverse,
+        })
         const pendingRow = pendingRows.at(-1)
         if (pendingRow) {
           rows.push({
@@ -2216,7 +2239,8 @@ export class Game extends Disposable(Empty) {
     if (this.isMoveAnimating()) return false
 
     const targetActionIndex = Scalar.clamp(Math.floor(actionIndex), 0, this.actions.length)
-    const state = CoreGameState.create(this.actions.slice(0, targetActionIndex))
+    const state = CoreGameState.create(this.actions.slice(0, targetActionIndex), [], this.initialMultiverse)
+    this.initialMultiverse = state.initialMultiverse
     this.multiverseCommitted = state.multiverseCommitted
     this.multiverse = state.multiverse
     this.player = state.player
@@ -2250,6 +2274,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private loadCoreGameState(state: CoreGameState, { focus = true }: { focus?: boolean } = {}) {
+    this.initialMultiverse = state.initialMultiverse
     this.actions = state.actions
     this.resetRecordTree(state.actions)
     this.multiverseCommitted = state.multiverseCommitted
