@@ -41,6 +41,8 @@ export interface GameContext {
   showMoveTravelAnimation?: boolean
   fiveDPGNOptions?: FiveDPGN.ExportOptions
   getFiveDPGNExportMetadata?: () => Pick<FiveDPGN.ExportOptions, 'headers' | 'result'>
+  getUISoundVolume?: () => number
+  getBellSoundVolume?: () => number
   canControlOnlineGame?: () => boolean
   isExternallyFinished?: () => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
@@ -2310,29 +2312,29 @@ export class Game extends Disposable(Empty) {
   }
 
   private playUISound() {
-    this.soundManager.play('lightswitch.ogg')
+    this.soundManager.play('lightswitch.ogg', { volume: this.getUISoundVolume() })
   }
 
   private playUndoSound() {
-    this.soundManager.play('guiro_long.ogg')
+    this.soundManager.play('guiro_long.ogg', { volume: this.getUISoundVolume() })
   }
 
   private playForfeitSound() {
-    this.soundManager.play('timpani_hit_a2.ogg')
+    this.soundManager.play('timpani_hit_a2.ogg', { volume: this.getUISoundVolume() })
   }
 
   private playTurnStartSound() {
     if (this.isOnlineGame()) return
 
     if (this.ctx.localPlayer === this.player) {
-      this.soundManager.play('bell.ogg')
+      this.soundManager.play('bell.ogg', { volume: this.getBellSoundVolume() })
       return
     }
 
     this.soundManager.playSequence([
       { name: 'timpani_hit_c3.ogg', nextAfter: 0.5 },
       'timpani_hit_e3.ogg',
-    ])
+    ], { volume: this.getBellSoundVolume() })
   }
 
   private playLocalTurnStartSoundAfterLoadedAction(previousPlayer: Player, previousActionIndex: number) {
@@ -2349,7 +2351,15 @@ export class Game extends Disposable(Empty) {
     this.soundManager.playSequence([
       { name: 'timpani_hit_c3.ogg', nextAfter: 0.5 },
       'fanfare.ogg',
-    ])
+    ], { volume: this.getBellSoundVolume() })
+  }
+
+  private getUISoundVolume(): number {
+    return this.ctx.getUISoundVolume?.() ?? 1
+  }
+
+  private getBellSoundVolume(): number {
+    return this.ctx.getBellSoundVolume?.() ?? 1
   }
 
   private syncAutomaticViewPlayer() {
@@ -2684,14 +2694,14 @@ export class Game extends Disposable(Empty) {
     const inTravel = sourceProgress >= 1 && travelProgress < 1
 
     if (inTravel && ! animation.travelLoop) {
-      animation.travelLoop = this.soundManager.playLoop('timpani_roll_f3.ogg')
+      animation.travelLoop = this.soundManager.playLoop('timpani_roll_f3.ogg', { volume: this.getBellSoundVolume() })
     }
 
     if (travelProgress < 1) return
 
     this.stopMoveTravelLoop(animation)
     if (! animation.travelHitPlayed && sourceProgress >= 1) {
-      this.soundManager.play('timpani_hit_f3.ogg')
+      this.soundManager.play('timpani_hit_f3.ogg', { volume: this.getBellSoundVolume() })
       animation.travelHitPlayed = true
     }
   }

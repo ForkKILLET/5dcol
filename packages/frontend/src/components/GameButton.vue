@@ -3,6 +3,7 @@ const props = withDefaults(defineProps<{
   badge?: string
   disabled?: boolean
   pressed?: boolean
+  pressedIndicator?: boolean
   pulsing?: boolean
   shape?: 'pill' | 'circle'
   size?: 'default' | 'main' | 'secondary' | 'small' | 'tiny' | 'icon'
@@ -11,6 +12,7 @@ const props = withDefaults(defineProps<{
   badge: '',
   disabled: false,
   pressed: undefined,
+  pressedIndicator: true,
   pulsing: false,
   shape: 'pill',
   size: 'default',
@@ -25,7 +27,7 @@ const props = withDefaults(defineProps<{
       `game-button--${props.size}`,
       `game-button--${props.shape}`,
       {
-        'has-pressed-indicator': pressed !== undefined && shape === 'pill',
+        'has-pressed-indicator': pressed !== undefined && pressedIndicator && shape === 'pill',
         'is-pressed': pressed === true,
         'is-pulsing': pulsing && !disabled,
       },
@@ -35,7 +37,7 @@ const props = withDefaults(defineProps<{
     :type="type"
   >
     <span
-      v-if="pressed !== undefined && shape === 'pill'"
+      v-if="pressed !== undefined && pressedIndicator && shape === 'pill'"
       class="game-button-pressed-indicator"
       aria-hidden="true"
     ></span>
@@ -208,6 +210,11 @@ const props = withDefaults(defineProps<{
 }
 
 .game-button:not(:disabled):active {
+  box-shadow: none;
+  transform: translateY(var(--button-shadow-offset));
+}
+
+.game-button.is-pressed:not(.has-pressed-indicator) {
   box-shadow: none;
   transform: translateY(var(--button-shadow-offset));
 }

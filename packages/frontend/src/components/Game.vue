@@ -39,7 +39,6 @@ import { useGameSettings } from '@/composables/settings'
 import { useDialogStack } from '@/composables/dialogStack'
 import { readStorageJson, removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
-import FiveDPGNSettingsDialog from './FiveDPGNSettingsDialog.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameIcon from './GameIcon.vue'
@@ -75,10 +74,12 @@ const recordActions = ref<GameRecordRow[]>([])
 const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const secondaryMenuOpen = ref(false)
-type DialogMode = 'language' | 'help' | 'settings' | 'five-dpgn-settings' | 'import' | 'export' | 'share' | 'shared-room'
+type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
+type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'fiveDPGN'
 const dialogStack = useDialogStack<DialogMode>()
 const dialogMode = dialogStack.current
+const settingsDialogInitialTab = ref<SettingsDialogTab>('volume')
 const importText = ref('')
 const importError = ref('')
 const importFormat = ref<GameImportFormat>('pgn')
@@ -133,6 +134,7 @@ let game: Game | null = null
 let gameRenderer: Renderer | null = null
 let soundManager: SoundManager | null = null
 let ambienceLoop: LoopingSound | null = null
+let ambienceVolumeApplied: number | null = null
 let onlinePollTimer: number | null = null
 let onlineReconnectTimer: number | null = null
 let clockTimer: number | null = null
@@ -492,7 +494,7 @@ function toggleClockPanel() {
 }
 
 function playMainMenuAnnihilateSound() {
-  soundManager?.play('vibraslap_short.ogg')
+  soundManager?.play('vibraslap_short.ogg', { volume: gameSettings.uiVolume })
 }
 
 function focusRecordSegment(segment: GameRecordMoveSegment) {
@@ -611,27 +613,25 @@ function openHelpDialog() {
   dialogStack.open('help')
 }
 
-function openSettingsDialog() {
+function openSettingsDialog(initialTab: SettingsDialogTab = 'volume') {
   playUISound()
   secondaryMenuOpen.value = false
+  settingsDialogInitialTab.value = initialTab
   dialogStack.push('settings')
 }
 
-function openFiveDPGNSettingsDialog() {
-  playUISound()
-  dialogStack.push('five-dpgn-settings')
-}
+function toggleSettingsDialog() {
+  if (dialogMode.value === 'settings') {
+    playUISound()
+    closeDialog()
+    return
+  }
 
-function openFiveDPGNSettingsFromSettings() {
-  openFiveDPGNSettingsDialog()
+  openSettingsDialog()
 }
 
 function openFiveDPGNSettingsFromExport() {
-  openFiveDPGNSettingsDialog()
-}
-
-function returnFromFiveDPGNSettingsDialog() {
-  backDialog()
+  openSettingsDialog('fiveDPGN')
 }
 
 function openGitHub() {
@@ -725,7 +725,7 @@ function closeDialog(playSound = true) {
 function backDialog() {
   if (dialogMode.value === 'none') return
   playUISound()
-  if (dialogMode.value === 'five-dpgn-settings' && dialogStack.previous.value === 'export') {
+  if (dialogMode.value === 'settings' && dialogStack.previous.value === 'export') {
     syncExportDialogText()
   }
   dialogStack.back()
@@ -936,10 +936,13 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   if (
     e.key === '`'
     && ! loading.value
-    && ! isShortcutBlocked(e)
+    && ! e.repeat
+    && ! isModifierKeyEvent(e)
+    && ! isTextInputEvent(e)
+    && (dialogMode.value === 'none' || dialogMode.value === 'settings')
   ) {
     e.preventDefault()
-    openSettingsDialog()
+    toggleSettingsDialog()
     return
   }
 
@@ -988,7 +991,12 @@ function updateViewPlayer(player: Player) {
 }
 
 function playUISound() {
-  soundManager?.play('lightswitch.ogg')
+  soundManager?.play('lightswitch.ogg', { volume: gameSettings.uiVolume })
+  if (! loading.value) startAmbience()
+}
+
+function playBellSound() {
+  soundManager?.play('bell.ogg', { volume: gameSettings.bellVolume })
   if (! loading.value) startAmbience()
 }
 
@@ -1057,6 +1065,8 @@ function startLocalGame() {
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
     onReturnToMainMenuRequest: returnToMainMenu,
+    getUISoundVolume: () => gameSettings.uiVolume,
+    getBellSoundVolume: () => gameSettings.bellVolume,
   })
   gameStarted.value = true
   syncGameInputState()
@@ -1116,6 +1126,8 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
     onReturnToMainMenuRequest: returnToMainMenu,
+    getUISoundVolume: () => gameSettings.uiVolume,
+    getBellSoundVolume: () => gameSettings.bellVolume,
     onActionSubmitted: (action, actions) => {
       if (! state.session) {
         spectatorDeductionStartActionIndex.value ??= actions.length - 1
@@ -1202,7 +1214,7 @@ function alertOwnTurn(state: MatchGameState) {
   if (! isOwnTurnInState(state)) return
 
   if (gameSettings.turnAlertSound) {
-    soundManager?.play('bell.ogg')
+    soundManager?.play('bell.ogg', { volume: gameSettings.bellVolume })
   }
 
   if (gameSettings.turnAlertNotification) {
@@ -1398,7 +1410,11 @@ function getHasSavedGame() {
 }
 
 function syncGameSettings() {
-  soundManager?.setVolume(gameSettings.soundVolume)
+  soundManager?.setVolume(1)
+  if (ambienceLoop && ambienceVolumeApplied !== gameSettings.ambienceVolume) {
+    stopAmbience()
+    startAmbience()
+  }
   game?.setAutoSwitchViewPlayer(onlineRoomStatus.value !== null ? false : gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
   game?.setFiveDPGNOptions(gameSettings.fiveDPGN)
@@ -1553,12 +1569,14 @@ function clickReturnToMainMenuButton() {
 function startAmbience() {
   if (loading.value || ambienceLoop || ! soundManager) return
   if (! soundManager.has('ambience.ogg')) return
-  ambienceLoop = soundManager?.playLoop('ambience.ogg', { volume: 0.35 }) ?? null
+  ambienceVolumeApplied = gameSettings.ambienceVolume
+  ambienceLoop = soundManager?.playLoop('ambience.ogg', { volume: ambienceVolumeApplied }) ?? null
 }
 
 function stopAmbience() {
   ambienceLoop?.stop()
   ambienceLoop = null
+  ambienceVolumeApplied = null
 }
 
 function syncDocumentTitle() {
@@ -2064,18 +2082,11 @@ watch([exportFormat, exportMode], () => {
         v-else-if="dialogMode === 'settings'"
         :settings="gameSettings"
         :button-style="menuButtonStyle"
+        :initial-tab="settingsDialogInitialTab"
         :renderer-status-text="rendererStatusText"
+        @bell-volume-change="playBellSound"
         @close="closeDialog()"
-        @open-five-dpgn="openFiveDPGNSettingsFromSettings"
         @volume-change="playUISound"
-      />
-
-      <FiveDPGNSettingsDialog
-        v-else-if="dialogMode === 'five-dpgn-settings'"
-        :settings="gameSettings.fiveDPGN"
-        :button-style="menuButtonStyle"
-        @back="returnFromFiveDPGNSettingsDialog"
-        @close="closeDialog()"
       />
 
       <GameDialog

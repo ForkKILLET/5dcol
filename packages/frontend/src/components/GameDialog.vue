@@ -180,6 +180,11 @@ function trapTab(e: KeyboardEvent) {
   width: min(840px, calc(100vw - var(--button-top) * 4));
 }
 
+.dialog-card--settings {
+  width: min(920px, calc(100vw - var(--button-top) * 4));
+  height: min(620px, calc(var(--app-height) - var(--button-top) * 2));
+}
+
 .dialog-card--narrow {
   align-items: center;
   width: fit-content;

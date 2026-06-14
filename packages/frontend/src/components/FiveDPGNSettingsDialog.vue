@@ -2,11 +2,11 @@
 import type { StyleValue } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FiveDPGNSettings } from '@/composables/settings'
+import FiveDPGNSettingsFields from './FiveDPGNSettingsFields.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
-import GameToggle from './GameToggle.vue'
 
-const props = defineProps<{
+defineProps<{
   buttonStyle: StyleValue
   settings: FiveDPGNSettings
 }>()
@@ -26,43 +26,11 @@ const { t } = useI18n({ useScope: 'global' })
     :button-style="buttonStyle"
     @close="emit('close')"
   >
-    <div class="settings-list settings-list--narrow">
-      <div class="settings-row">
-        <span>{{ t('settings.fiveDPGNPieceSymbols') }}</span>
-        <GameToggle
-          v-model="settings.includePieceSymbols"
-          :style="buttonStyle"
-        />
-      </div>
-      <div class="settings-row">
-        <span>{{ t('settings.fiveDPGNTravelMarkers') }}</span>
-        <GameToggle
-          v-model="settings.includeTravelMarkers"
-          :style="buttonStyle"
-        />
-      </div>
-      <div class="settings-row">
-        <span>{{ t('settings.fiveDPGNCaptureMarkers') }}</span>
-        <GameToggle
-          v-model="settings.includeCaptureMarkers"
-          :style="buttonStyle"
-        />
-      </div>
-      <div class="settings-row">
-        <span>{{ t('settings.fiveDPGNCheckMarkers') }}</span>
-        <GameToggle
-          v-model="settings.includeCheckMarkers"
-          :style="buttonStyle"
-        />
-      </div>
-      <div class="settings-row">
-        <span>{{ t('settings.fiveDPGNPromotionMarkers') }}</span>
-        <GameToggle
-          v-model="settings.includePromotionMarkers"
-          :style="buttonStyle"
-        />
-      </div>
-    </div>
+    <FiveDPGNSettingsFields
+      class="settings-list--narrow"
+      :settings="settings"
+      :button-style="buttonStyle"
+    />
     <template #actions>
       <GameButton
         size="small"

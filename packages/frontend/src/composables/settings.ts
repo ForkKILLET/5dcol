@@ -9,10 +9,10 @@ const BooleanWithDefault = (fallback: boolean) => z.boolean().catch(fallback)
 export const ThemeColorSchema = z.enum(['white', 'black', 'view', 'system'])
 export type ThemeColor = z.infer<typeof ThemeColorSchema>
 
-const VolumeSchema = z
+const VolumeSchema = (fallback: number) => z
   .number()
   .refine(Number.isFinite)
-  .catch(1)
+  .catch(fallback)
   .transform(value => Math.min(1, Math.max(0, value)))
 
 export const FiveDPGNSettingsSchema = z.preprocess(
@@ -31,9 +31,22 @@ export type FiveDPGNSettings = z.infer<typeof FiveDPGNSettingsSchema>
 export const DEFAULT_FIVE_DPGN_SETTINGS: FiveDPGNSettings = FiveDPGNSettingsSchema.parse({})
 
 export const GameSettingsSchema = z.preprocess(
-  value => value && typeof value === 'object' ? value : {},
+  value => {
+    const settings = value && typeof value === 'object'
+      ? value as Record<string, unknown>
+      : {}
+    const legacySoundVolume = VolumeSchema(1).parse(settings.soundVolume)
+    return {
+      ...settings,
+      ambienceVolume: settings.ambienceVolume ?? legacySoundVolume * 0.35,
+      uiVolume: settings.uiVolume ?? legacySoundVolume,
+      bellVolume: settings.bellVolume ?? legacySoundVolume,
+    }
+  },
   z.object({
-    soundVolume: VolumeSchema,
+    ambienceVolume: VolumeSchema(0.35),
+    uiVolume: VolumeSchema(1),
+    bellVolume: VolumeSchema(1),
     themeColor: ThemeColorSchema.catch('view' satisfies ThemeColor),
     renderer: RendererPreferenceSchema.catch('auto' satisfies RendererPreference),
     fiveDPGN: FiveDPGNSettingsSchema.catch(() => FiveDPGNSettingsSchema.parse({})),
