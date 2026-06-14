@@ -2,8 +2,7 @@
 import { computed, ref } from 'vue'
 import type { StyleValue } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RendererPreferenceSchema } from '@engine/rendererFactory'
-import { ThemeColorSchema, type GameSettings } from '@/composables/settings'
+import { type GameSettings } from '@/composables/settings'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameSlider from './GameSlider.vue'
@@ -24,34 +23,6 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'global' })
 const initialRenderer = ref(props.settings.renderer)
 const rendererChanged = computed(() => props.settings.renderer !== initialRenderer.value)
-
-function setSoundVolume(value: number) {
-  props.settings.soundVolume = value
-}
-
-function setRenderer(value: boolean | string | number | null | undefined) {
-  const result = RendererPreferenceSchema.safeParse(value)
-  if (result.success) props.settings.renderer = result.data
-}
-
-function setThemeColor(value: boolean | string | number | null | undefined) {
-  const result = ThemeColorSchema.safeParse(value)
-  if (result.success) props.settings.themeColor = result.data
-}
-
-function setBooleanSetting(
-  key:
-    | 'autoFullscreen'
-    | 'autoSwitchViewPlayer'
-    | 'showMoveTravelAnimation'
-    | 'turnAlertSound'
-    | 'turnAlertTitle'
-    | 'turnAlertNotification',
-  value: boolean | string | number | null | undefined,
-) {
-  props.settings[key] = value === true
-}
-
 </script>
 
 <template>
@@ -65,13 +36,12 @@ function setBooleanSetting(
       <label class="settings-row">
         <span>{{ t('settings.soundVolume') }}</span>
         <GameSlider
-          :model-value="settings.soundVolume"
+          v-model="settings.soundVolume"
           :aria-label="t('settings.soundVolume')"
           :style="buttonStyle"
           :min="0"
           :max="1"
           :step="0.01"
-          @update:model-value="setSoundVolume"
           @change="emit('volumeChange')"
         />
       </label>
@@ -79,38 +49,34 @@ function setBooleanSetting(
         <span>{{ t('settings.themeColor') }}</span>
         <div class="settings-radio-group">
           <GameToggle
-            :model-value="settings.themeColor"
+            v-model="settings.themeColor"
             type="radio"
             value="white"
             :style="buttonStyle"
-            @update:model-value="setThemeColor"
           >
             <span>{{ t('settings.themeColorWhite') }}</span>
           </GameToggle>
           <GameToggle
-            :model-value="settings.themeColor"
+            v-model="settings.themeColor"
             type="radio"
             value="black"
             :style="buttonStyle"
-            @update:model-value="setThemeColor"
           >
             <span>{{ t('settings.themeColorBlack') }}</span>
           </GameToggle>
           <GameToggle
-            :model-value="settings.themeColor"
+            v-model="settings.themeColor"
             type="radio"
             value="view"
             :style="buttonStyle"
-            @update:model-value="setThemeColor"
           >
             <span>{{ t('settings.themeColorView') }}</span>
           </GameToggle>
           <GameToggle
-            :model-value="settings.themeColor"
+            v-model="settings.themeColor"
             type="radio"
             value="system"
             :style="buttonStyle"
-            @update:model-value="setThemeColor"
           >
             <span>{{ t('settings.themeColorSystem') }}</span>
           </GameToggle>
@@ -121,29 +87,26 @@ function setBooleanSetting(
         <div class="settings-renderer-control">
           <div class="settings-radio-group">
             <GameToggle
-              :model-value="settings.renderer"
+              v-model="settings.renderer"
               type="radio"
               value="auto"
               :style="buttonStyle"
-              @update:model-value="setRenderer"
             >
               <span>{{ t('settings.rendererAuto') }}</span>
             </GameToggle>
             <GameToggle
-              :model-value="settings.renderer"
+              v-model="settings.renderer"
               type="radio"
               value="webgl"
               :style="buttonStyle"
-              @update:model-value="setRenderer"
             >
               <span>{{ t('settings.rendererWebGL') }}</span>
             </GameToggle>
             <GameToggle
-              :model-value="settings.renderer"
+              v-model="settings.renderer"
               type="radio"
               value="canvas"
               :style="buttonStyle"
-              @update:model-value="setRenderer"
             >
               <span>{{ t('settings.rendererCanvas') }}</span>
             </GameToggle>
@@ -157,48 +120,42 @@ function setBooleanSetting(
       <div class="settings-row">
         <span>{{ t('settings.autoFullscreen') }}</span>
         <GameToggle
-          :model-value="settings.autoFullscreen"
+          v-model="settings.autoFullscreen"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('autoFullscreen', value)"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('settings.autoSwitchView') }}</span>
         <GameToggle
-          :model-value="settings.autoSwitchViewPlayer"
+          v-model="settings.autoSwitchViewPlayer"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('autoSwitchViewPlayer', value)"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('settings.travelAnimation') }}</span>
         <GameToggle
-          :model-value="settings.showMoveTravelAnimation"
+          v-model="settings.showMoveTravelAnimation"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('showMoveTravelAnimation', value)"
         />
       </div>
       <div class="settings-row settings-row--renderer">
         <span>{{ t('settings.turnAlerts') }}</span>
         <div class="settings-alert-group">
           <GameToggle
-            :model-value="settings.turnAlertSound"
+            v-model="settings.turnAlertSound"
             :style="buttonStyle"
-            @update:model-value="value => setBooleanSetting('turnAlertSound', value)"
           >
             <span>{{ t('settings.turnAlertSound') }}</span>
           </GameToggle>
           <GameToggle
-            :model-value="settings.turnAlertTitle"
+            v-model="settings.turnAlertTitle"
             :style="buttonStyle"
-            @update:model-value="value => setBooleanSetting('turnAlertTitle', value)"
           >
             <span>{{ t('settings.turnAlertTitle') }}</span>
           </GameToggle>
           <GameToggle
-            :model-value="settings.turnAlertNotification"
+            v-model="settings.turnAlertNotification"
             :style="buttonStyle"
-            @update:model-value="value => setBooleanSetting('turnAlertNotification', value)"
           >
             <span>{{ t('settings.turnAlertNotification') }}</span>
           </GameToggle>

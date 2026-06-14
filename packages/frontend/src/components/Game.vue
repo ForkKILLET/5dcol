@@ -693,16 +693,6 @@ function syncExportDialogText() {
   exportHasPendingMoves.value = request.hasPendingMoves
 }
 
-function setExportMode(value: boolean | string | number | null | undefined) {
-  if (value !== 'linear' && value !== 'tree') return
-  if (exportMode.value === value) return
-
-  playUISound()
-  exportMode.value = value
-  exportCopyStatus.value = ''
-  syncExportDialogText()
-}
-
 async function openShareRoomDialog() {
   playUISound()
   secondaryMenuOpen.value = false
@@ -1626,6 +1616,10 @@ watch(dialogMode, (mode, previousMode) => {
 watch(gameSettings, () => {
   syncGameSettings()
 }, { deep: true })
+watch(exportMode, () => {
+  exportCopyStatus.value = ''
+  syncExportDialogText()
+})
 </script>
 
 <template>
@@ -2018,20 +2012,18 @@ watch(gameSettings, () => {
             <span>{{ t('export.mode') }}</span>
             <div class="export-radio-group">
               <GameToggle
-                :model-value="exportMode"
+                v-model="exportMode"
                 type="radio"
                 value="linear"
                 :style="menuButtonStyle"
-                @update:model-value="setExportMode"
               >
                 <span>{{ t('export.modeLinear') }}</span>
               </GameToggle>
               <GameToggle
-                :model-value="exportMode"
+                v-model="exportMode"
                 type="radio"
                 value="tree"
                 :style="menuButtonStyle"
-                @update:model-value="setExportMode"
               >
                 <span>{{ t('export.modeTree') }}</span>
               </GameToggle>

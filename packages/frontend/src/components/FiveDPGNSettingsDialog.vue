@@ -17,13 +17,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n({ useScope: 'global' })
-
-function setBooleanSetting(
-  key: keyof FiveDPGNSettings,
-  value: boolean | string | number | null | undefined,
-) {
-  props.settings[key] = value === true
-}
 </script>
 
 <template>
@@ -37,41 +30,36 @@ function setBooleanSetting(
       <div class="settings-row">
         <span>{{ t('settings.fiveDPGNPieceSymbols') }}</span>
         <GameToggle
-          :model-value="settings.includePieceSymbols"
+          v-model="settings.includePieceSymbols"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('includePieceSymbols', value)"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('settings.fiveDPGNTravelMarkers') }}</span>
         <GameToggle
-          :model-value="settings.includeTravelMarkers"
+          v-model="settings.includeTravelMarkers"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('includeTravelMarkers', value)"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('settings.fiveDPGNCaptureMarkers') }}</span>
         <GameToggle
-          :model-value="settings.includeCaptureMarkers"
+          v-model="settings.includeCaptureMarkers"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('includeCaptureMarkers', value)"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('settings.fiveDPGNCheckMarkers') }}</span>
         <GameToggle
-          :model-value="settings.includeCheckMarkers"
+          v-model="settings.includeCheckMarkers"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('includeCheckMarkers', value)"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('settings.fiveDPGNPromotionMarkers') }}</span>
         <GameToggle
-          :model-value="settings.includePromotionMarkers"
+          v-model="settings.includePromotionMarkers"
           :style="buttonStyle"
-          @update:model-value="value => setBooleanSetting('includePromotionMarkers', value)"
         />
       </div>
     </div>
