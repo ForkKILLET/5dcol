@@ -41,6 +41,9 @@ export const GameSettingsSchema = z.preprocess(
     autoSwitchViewPlayer: BooleanWithDefault(true),
     showClock: BooleanWithDefault(true),
     showMoveTravelAnimation: BooleanWithDefault(true),
+    turnAlertSound: BooleanWithDefault(true),
+    turnAlertTitle: BooleanWithDefault(true),
+    turnAlertNotification: BooleanWithDefault(false),
   }),
 )
 

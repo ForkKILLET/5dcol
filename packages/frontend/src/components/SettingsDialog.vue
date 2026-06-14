@@ -40,7 +40,13 @@ function setThemeColor(value: boolean | string | number | null | undefined) {
 }
 
 function setBooleanSetting(
-  key: 'autoFullscreen' | 'autoSwitchViewPlayer' | 'showMoveTravelAnimation',
+  key:
+    | 'autoFullscreen'
+    | 'autoSwitchViewPlayer'
+    | 'showMoveTravelAnimation'
+    | 'turnAlertSound'
+    | 'turnAlertTitle'
+    | 'turnAlertNotification',
   value: boolean | string | number | null | undefined,
 ) {
   props.settings[key] = value === true
@@ -172,6 +178,32 @@ function setBooleanSetting(
           @update:model-value="value => setBooleanSetting('showMoveTravelAnimation', value)"
         />
       </div>
+      <div class="settings-row settings-row--renderer">
+        <span>{{ t('settings.turnAlerts') }}</span>
+        <div class="settings-alert-group">
+          <GameToggle
+            :model-value="settings.turnAlertSound"
+            :style="buttonStyle"
+            @update:model-value="value => setBooleanSetting('turnAlertSound', value)"
+          >
+            <span>{{ t('settings.turnAlertSound') }}</span>
+          </GameToggle>
+          <GameToggle
+            :model-value="settings.turnAlertTitle"
+            :style="buttonStyle"
+            @update:model-value="value => setBooleanSetting('turnAlertTitle', value)"
+          >
+            <span>{{ t('settings.turnAlertTitle') }}</span>
+          </GameToggle>
+          <GameToggle
+            :model-value="settings.turnAlertNotification"
+            :style="buttonStyle"
+            @update:model-value="value => setBooleanSetting('turnAlertNotification', value)"
+          >
+            <span>{{ t('settings.turnAlertNotification') }}</span>
+          </GameToggle>
+        </div>
+      </div>
       <div class="settings-row">
         <span>{{ t('settings.fiveDPGN') }}</span>
         <GameButton
@@ -218,6 +250,13 @@ function setBooleanSetting(
   align-items: flex-end;
   gap: calc(var(--button-content-gap) * 0.75);
   min-width: 0;
+}
+
+.settings-alert-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--button-content-gap) * 0.75);
 }
 
 .settings-status {

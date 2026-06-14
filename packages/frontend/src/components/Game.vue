@@ -259,6 +259,7 @@ const clockRows = computed(() => {
 })
 const shouldMarkTitleForTurn = computed(() => (
   gameStarted.value
+  && gameSettings.turnAlertTitle
   && ! gameStatus.value.ended
   && onlineSession.value !== null
   && onlinePlayer.value !== null
@@ -1121,7 +1122,7 @@ function applyOnlineGameState(
   onlineClock.value = state.clock
   onlineSpectatorCount.value = state.spectatorCount
   if (gameStarted.value && ! wasReady && onlineRoomReady.value) {
-    soundManager?.play('bell.ogg')
+    alertOwnTurn(state)
   }
   if (state.session) onlinePlayer.value = state.session.player
   onlinePresence.value = state.presence
@@ -1138,7 +1139,7 @@ function applyOnlineGameState(
     onlineLiveActions = state.actions
     onlineLiveActionCount.value = state.actions.length
     const receivedRemoteAction = receivedLiveActionUpdate && state.actions.length > previousLiveActionCount
-    if (receivedRemoteAction) soundManager?.play('bell.ogg')
+    if (receivedRemoteAction) alertOwnTurn(state)
 
     const isSpectatorOffLive = isOnlineSpectator.value
       && (
@@ -1162,6 +1163,45 @@ function applyOnlineGameState(
       animate: ! committedCurrentPreview && ! confirmedLocalAction,
     })
   }
+}
+
+function alertOwnTurn(state: MatchGameState) {
+  if (! isOwnTurnInState(state)) return
+
+  if (gameSettings.turnAlertSound) {
+    soundManager?.play('bell.ogg')
+  }
+
+  if (gameSettings.turnAlertNotification) {
+    void showTurnNotification(state.currentPlayer)
+  }
+}
+
+function isOwnTurnInState(state: MatchGameState): boolean {
+  return (
+    state.room.status === 'playing'
+    && state.session !== null
+    && state.currentPlayer === state.session.player
+  )
+}
+
+async function showTurnNotification(player: Player) {
+  if (documentFocused.value) return
+
+  const permission = await requestTurnNotificationPermission()
+  if (permission !== 'granted') return
+
+  const playerLabel = player === Player.B ? t('player.black') : t('player.white')
+  new Notification(DOCUMENT_TITLE, {
+    body: t('notification.yourTurn', { player: playerLabel }),
+    tag: '5dcol-your-turn',
+  })
+}
+
+async function requestTurnNotificationPermission(): Promise<NotificationPermission | null> {
+  if (! ('Notification' in window)) return null
+  if (Notification.permission !== 'default') return Notification.permission
+  return await Notification.requestPermission()
 }
 
 async function submitOnlineAction(
@@ -1568,6 +1608,9 @@ onUnmounted(() => {
 watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
+watch(() => gameSettings.turnAlertNotification, (enabled) => {
+  if (enabled) void requestTurnNotificationPermission()
+})
 watch(secondaryMenuOpen, (open) => {
   if (! open) return
   void nextTick(() => {
