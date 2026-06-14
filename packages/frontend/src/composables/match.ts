@@ -126,6 +126,7 @@ const matchServers = reactive<MatchServerState[]>(Object
     name,
     version: '',
     buildDate: '',
+    pingMs: null,
     status: 'idle',
     rooms: [],
     error: '',
@@ -250,6 +251,7 @@ export function useMatch(options?: UseMatchOptions) {
       name: '',
       version: '',
       buildDate: '',
+      pingMs: null,
       rooms: [],
       error: '',
     }
@@ -312,8 +314,8 @@ export function useMatch(options?: UseMatchOptions) {
     server.error = ''
     try {
       const client = new MatchClient(server.address)
-      const [info, rooms] = await Promise.all([
-        client.getInfo(),
+      const [{ info, pingMs }, rooms] = await Promise.all([
+        client.getInfoWithPing(),
         client.getRooms({
           userId: matchUserId.value,
         }),
@@ -321,12 +323,14 @@ export function useMatch(options?: UseMatchOptions) {
       server.name = info.name
       server.version = info.version
       server.buildDate = info.buildDate
+      server.pingMs = pingMs
       server.rooms = rooms
       server.status = 'connected'
       syncLastOnlineGameFromServer(server)
     }
     catch (err) {
       server.rooms = []
+      server.pingMs = null
       server.status = 'failed'
       server.error = err instanceof Error ? err.message : String(err)
     }
@@ -343,14 +347,23 @@ export function useMatch(options?: UseMatchOptions) {
   async function refreshMatchServerRooms(server: MatchServerState) {
     try {
       const client = new MatchClient(server.address)
-      server.rooms = await client.getRooms({
-        userId: matchUserId.value,
-      })
+      const [{ info, pingMs }, rooms] = await Promise.all([
+        client.getInfoWithPing(),
+        client.getRooms({
+          userId: matchUserId.value,
+        }),
+      ])
+      server.name = info.name
+      server.version = info.version
+      server.buildDate = info.buildDate
+      server.pingMs = pingMs
+      server.rooms = rooms
       server.error = ''
       syncLastOnlineGameFromServer(server)
     }
     catch (err) {
       server.rooms = []
+      server.pingMs = null
       server.status = 'failed'
       server.error = err instanceof Error ? err.message : String(err)
     }
@@ -489,6 +502,7 @@ export function useMatch(options?: UseMatchOptions) {
       name: address.replace(/^https?:\/\//, ''),
       version: '',
       buildDate: '',
+      pingMs: null,
       status: 'idle',
       rooms: [],
       error: '',

@@ -35,6 +35,7 @@ export interface MatchServerState {
   name: string
   version: string
   buildDate: string
+  pingMs: number | null
   rooms: MatchRoom[]
   error: string
 }
@@ -57,6 +58,15 @@ export class MatchClient {
 
   async getInfo(): Promise<MatchServerInfo> {
     return MatchServerInfoSchema.parse(await this.request('/health'))
+  }
+
+  async getInfoWithPing(): Promise<{ info: MatchServerInfo, pingMs: number }> {
+    const startedAt = performance.now()
+    const info = await this.getInfo()
+    return {
+      info,
+      pingMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    }
   }
 
   async getRooms(options: { userId?: string | null } = {}): Promise<MatchRoom[]> {

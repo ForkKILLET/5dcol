@@ -66,6 +66,10 @@ function getServerBuildMeta(server: MatchServerState) {
   return parts.join(' / ')
 }
 
+function getServerPingText(server: MatchServerState) {
+  return server.pingMs === null ? '' : t('match.ping', { ms: server.pingMs })
+}
+
 function formatBuildDate(buildDate: string) {
   const date = new Date(buildDate)
   if (Number.isNaN(date.getTime())) return buildDate
@@ -107,6 +111,7 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
           >
             {{ getStatusText(server.status) }}
           </span>
+          <span v-if="getServerPingText(server)">{{ getServerPingText(server) }}</span>
           <span v-if="server.name">{{ server.name }}</span>
           <span v-if="getServerBuildMeta(server)">{{ getServerBuildMeta(server) }}</span>
         </div>
@@ -209,8 +214,13 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
 
 .match-server-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: calc(var(--button-content-gap) * 0.75);
   min-width: 0;
+}
+
+.match-server-meta > span {
+  white-space: nowrap;
 }
 
 .match-server-actions {
