@@ -25,7 +25,7 @@ export class CanvasRenderer extends Renderer {
   private ctx: OffscreenCanvasRenderingContext2D
 
   protected getDisplaySize() {
-    const { width, height } = this.canvasDisplay.getBoundingClientRect()
+    const { width, height } = (this.canvasDisplay.parentElement ?? this.canvasDisplay).getBoundingClientRect()
     return {
       widthCss: width || window.innerWidth,
       heightCss: height || window.innerHeight,
@@ -48,8 +48,8 @@ export class CanvasRenderer extends Renderer {
       canvasDisplay.height = heightDevice
     }
 
-    canvasDisplay.style.width = `${widthCss}px`
-    canvasDisplay.style.height = `${heightCss}px`
+    canvasDisplay.style.width = '100%'
+    canvasDisplay.style.height = '100%'
   }
 
   setCursor(cursor: string): void {

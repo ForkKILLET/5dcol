@@ -49,6 +49,7 @@ import MatchPage from './MatchPage.vue'
 import RecordPanel from './RecordPanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
 
+const gameRoot = useTemplateRef('gameRoot')
 const canvas = useTemplateRef('canvas')
 const secondaryMenuCard = ref<HTMLElement | null>(null)
 
@@ -136,6 +137,8 @@ let onlinePollTimer: number | null = null
 let onlineReconnectTimer: number | null = null
 let clockTimer: number | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
+let gameResizeObserver: ResizeObserver | null = null
+let resizeFrame: number | null = null
 let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
 let onlineLiveActions: Action[] = []
@@ -754,6 +757,14 @@ function syncGameViewportInsets() {
 }
 
 function getViewportSize() {
+  const rootRect = gameRoot.value?.getBoundingClientRect()
+  if (rootRect && rootRect.width > 0 && rootRect.height > 0) {
+    return {
+      width: Math.ceil(rootRect.width),
+      height: Math.ceil(rootRect.height),
+    }
+  }
+
   const viewport = window.visualViewport
   return {
     width: Math.ceil(Math.max(
@@ -767,11 +778,22 @@ function getViewportSize() {
   }
 }
 
-function handleWindowResize() {
+function syncResize() {
+  resizeFrame = null
   const size = getViewportSize()
   viewportWidth.value = size.width
   viewportHeight.value = size.height
   syncGameViewportInsets()
+  gameRenderer?.resize()
+}
+
+function scheduleResize() {
+  if (resizeFrame !== null) return
+  resizeFrame = window.requestAnimationFrame(syncResize)
+}
+
+function handleWindowResize() {
+  scheduleResize()
 }
 
 function handleCoarsePointerChange() {
@@ -1647,6 +1669,10 @@ onMounted(() => {
   window.addEventListener('keydown', handleWindowKeyDown)
   window.addEventListener('resize', handleWindowResize)
   window.visualViewport?.addEventListener('resize', handleWindowResize)
+  if (typeof ResizeObserver !== 'undefined' && gameRoot.value) {
+    gameResizeObserver = new ResizeObserver(scheduleResize)
+    gameResizeObserver.observe(gameRoot.value)
+  }
   coarsePointerQuery.addEventListener('change', handleCoarsePointerChange)
   systemThemeQuery.addEventListener('change', handleSystemThemeChange)
   window.addEventListener('focus', handleWindowFocus)
@@ -1654,12 +1680,19 @@ onMounted(() => {
   clockTimer = window.setInterval(() => {
     clockNow.value = Date.now()
   }, 1000)
+  scheduleResize()
   void init()
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', handleWindowKeyDown)
   window.removeEventListener('resize', handleWindowResize)
   window.visualViewport?.removeEventListener('resize', handleWindowResize)
+  gameResizeObserver?.disconnect()
+  gameResizeObserver = null
+  if (resizeFrame !== null) {
+    window.cancelAnimationFrame(resizeFrame)
+    resizeFrame = null
+  }
   coarsePointerQuery.removeEventListener('change', handleCoarsePointerChange)
   systemThemeQuery.removeEventListener('change', handleSystemThemeChange)
   window.removeEventListener('focus', handleWindowFocus)
@@ -1703,7 +1736,10 @@ watch([exportFormat, exportMode], () => {
 </script>
 
 <template>
-  <div class="game">
+  <div
+    ref="gameRoot"
+    class="game"
+  >
     <canvas ref="canvas"></canvas>
     <div
       class="ui-layer"
@@ -2396,8 +2432,10 @@ watch([exportFormat, exportMode], () => {
 <style scoped>
 .game {
   position: fixed;
-  height: 100vh; /* firefox */
   inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   background-color: #8293b3;
   overflow: hidden;
   user-select: none;

@@ -128,7 +128,7 @@ export class WebGLRenderer extends Renderer {
   }
 
   protected getDisplaySize() {
-    const { width, height } = this.canvas.getBoundingClientRect()
+    const { width, height } = (this.canvas.parentElement ?? this.canvas).getBoundingClientRect()
     return {
       widthCss: width || window.innerWidth,
       heightCss: height || window.innerHeight,
@@ -147,8 +147,8 @@ export class WebGLRenderer extends Renderer {
       this.canvas.height = heightDevice
     }
 
-    this.canvas.style.width = `${widthCss}px`
-    this.canvas.style.height = `${heightCss}px`
+    this.canvas.style.width = '100%'
+    this.canvas.style.height = '100%'
     this.gl.viewport(0, 0, widthDevice, heightDevice)
   }
 
