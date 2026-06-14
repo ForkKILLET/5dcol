@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { StyleValue } from 'vue'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   buttonStyle?: StyleValue
   cardClass?: string | string[] | Record<string, boolean>
   closeOnBackdrop?: boolean
+  externalFocusSelector?: string
   loading?: boolean
   narrow?: boolean
   title?: string
@@ -12,6 +14,7 @@ withDefaults(defineProps<{
   buttonStyle: undefined,
   cardClass: '',
   closeOnBackdrop: true,
+  externalFocusSelector: '',
   loading: false,
   narrow: false,
   title: '',
@@ -20,6 +23,80 @@ withDefaults(defineProps<{
 const emit = defineEmits<{
   close: []
 }>()
+
+const dialogCard = ref<HTMLElement | null>(null)
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not(:disabled)',
+  'input:not(:disabled)',
+  'select:not(:disabled)',
+  'textarea:not(:disabled)',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+onMounted(() => {
+  void nextTick(() => {
+    dialogCard.value?.focus({ preventScroll: true })
+  })
+  document.addEventListener('keydown', handleDocumentKeyDown, true)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleDocumentKeyDown, true)
+})
+
+function getFocusableElements(): HTMLElement[] {
+  const card = dialogCard.value
+  if (! card) return []
+
+  const elements = [
+    ...Array.from(card.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)),
+    ...getExternalFocusableElements(),
+  ]
+
+  return [...new Set(elements)]
+    .filter(element => (
+      ! element.hasAttribute('disabled')
+      && element.getAttribute('aria-hidden') !== 'true'
+      && element.getClientRects().length > 0
+    ))
+}
+
+function getExternalFocusableElements(): HTMLElement[] {
+  if (! props.externalFocusSelector) return []
+  return Array.from(document.querySelectorAll<HTMLElement>(props.externalFocusSelector))
+}
+
+function handleDocumentKeyDown(e: KeyboardEvent) {
+  if (e.key !== 'Tab') return
+  trapTab(e)
+}
+
+function trapTab(e: KeyboardEvent) {
+  const card = dialogCard.value
+  if (! card) return
+
+  const focusable = getFocusableElements()
+  if (focusable.length === 0) {
+    e.preventDefault()
+    card.focus({ preventScroll: true })
+    return
+  }
+
+  const active = document.activeElement
+  const activeIndex = active instanceof HTMLElement ? focusable.indexOf(active) : -1
+
+  if (e.shiftKey) {
+    e.preventDefault()
+    const previousIndex = activeIndex > 0 ? activeIndex - 1 : focusable.length - 1
+    focusable[previousIndex]!.focus({ preventScroll: true })
+    return
+  }
+
+  e.preventDefault()
+  const nextIndex = activeIndex >= 0 && active !== card ? (activeIndex + 1) % focusable.length : 0
+  focusable[nextIndex]!.focus({ preventScroll: true })
+}
 </script>
 
 <template>
@@ -29,6 +106,7 @@ const emit = defineEmits<{
     @click="closeOnBackdrop && emit('close')"
   >
     <div
+      ref="dialogCard"
       class="dialog-card"
       :class="[
         cardClass,
@@ -37,6 +115,10 @@ const emit = defineEmits<{
         },
       ]"
       :style="buttonStyle"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="title || undefined"
+      tabindex="-1"
       @click.stop
     >
       <h2
@@ -90,6 +172,7 @@ const emit = defineEmits<{
   border-radius: 8px;
   background: var(--menu-card-fill-color);
   box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
+  outline: none;
   pointer-events: auto;
 }
 

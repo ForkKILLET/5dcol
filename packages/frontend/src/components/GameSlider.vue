@@ -176,6 +176,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 .game-slider-thumb:hover,
+.game-slider:focus .game-slider-thumb,
 .game-slider.is-dragging .game-slider-thumb {
   border-color: var(--button-hover-border-color);
   background: var(--button-hover-fill-color);

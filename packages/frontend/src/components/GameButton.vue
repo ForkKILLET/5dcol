@@ -2,7 +2,7 @@
 const props = withDefaults(defineProps<{
   badge?: string
   disabled?: boolean
-  open?: boolean
+  pressed?: boolean
   pulsing?: boolean
   shape?: 'pill' | 'circle'
   size?: 'default' | 'main' | 'secondary' | 'small' | 'tiny' | 'icon'
@@ -10,7 +10,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   badge: '',
   disabled: false,
-  open: false,
+  pressed: undefined,
   pulsing: false,
   shape: 'pill',
   size: 'default',
@@ -25,13 +25,20 @@ const props = withDefaults(defineProps<{
       `game-button--${props.size}`,
       `game-button--${props.shape}`,
       {
-        'is-open': open,
+        'has-pressed-indicator': pressed !== undefined && shape === 'pill',
+        'is-pressed': pressed === true,
         'is-pulsing': pulsing && !disabled,
       },
     ]"
+    :aria-pressed="pressed"
     :disabled="disabled"
     :type="type"
   >
+    <span
+      v-if="pressed !== undefined && shape === 'pill'"
+      class="game-button-pressed-indicator"
+      aria-hidden="true"
+    ></span>
     <slot />
     <span
       v-if="badge"
@@ -43,6 +50,8 @@ const props = withDefaults(defineProps<{
 
 <style scoped>
 .game-button {
+  --button-pressed-indicator-left: calc(var(--button-content-gap) * 1.25);
+  --button-pressed-indicator-size: 28px;
   position: relative;
   flex: 0 0 auto;
   display: inline-flex;
@@ -79,6 +88,8 @@ const props = withDefaults(defineProps<{
 }
 
 .game-button--small {
+  --button-pressed-indicator-left: 10px;
+  --button-pressed-indicator-size: 24px;
   --button-shadow-offset: var(--small-button-shadow-offset);
   width: auto;
   min-width: 96px;
@@ -90,6 +101,8 @@ const props = withDefaults(defineProps<{
 }
 
 .game-button--tiny {
+  --button-pressed-indicator-left: 8px;
+  --button-pressed-indicator-size: 20px;
   --button-shadow-offset: var(--small-button-shadow-offset);
   width: auto;
   min-width: 58px;
@@ -118,8 +131,38 @@ const props = withDefaults(defineProps<{
   font-size: 18px;
 }
 
+.game-button.has-pressed-indicator {
+  padding-left: calc(var(--button-pressed-indicator-left) + var(--button-pressed-indicator-size) + var(--button-content-gap));
+  padding-right: calc(var(--button-pressed-indicator-left) + var(--button-pressed-indicator-size) + var(--button-content-gap));
+}
+
 .game-button > :deep(*) {
   transform: translateY(var(--ui-text-y));
+}
+
+.game-button-pressed-indicator {
+  position: absolute;
+  left: var(--button-pressed-indicator-left);
+  top: 50%;
+  box-sizing: border-box;
+  width: var(--button-pressed-indicator-size);
+  height: var(--button-pressed-indicator-size);
+  border: 2px solid var(--button-border-color);
+  border-radius: 50%;
+  background: var(--button-fill-color);
+  transform: translateY(-50%);
+}
+
+.game-button.is-pressed .game-button-pressed-indicator::before {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 50%;
+  height: 50%;
+  border-radius: 50%;
+  background: var(--button-text-color);
+  content: '';
+  transform: translate(-50%, -50%);
 }
 
 .game-button-badge {
@@ -147,11 +190,21 @@ const props = withDefaults(defineProps<{
 }
 
 .game-button:not(:disabled):hover,
-.game-button:not(:disabled):focus-visible,
-.game-button.is-open {
+.game-button:not(:disabled):focus-visible {
   border-color: var(--button-hover-border-color);
   background: var(--button-hover-fill-color);
   color: var(--button-hover-text-color);
+}
+
+.game-button:not(:disabled):hover .game-button-pressed-indicator,
+.game-button:not(:disabled):focus-visible .game-button-pressed-indicator {
+  border-color: var(--button-hover-border-color);
+  background: var(--button-fill-color);
+}
+
+.game-button:not(:disabled):hover .game-button-pressed-indicator::before,
+.game-button:not(:disabled):focus-visible .game-button-pressed-indicator::before {
+  background: var(--button-hover-text-color);
 }
 
 .game-button:not(:disabled):active {

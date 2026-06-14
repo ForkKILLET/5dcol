@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
 import { Player } from '@5dcol/core'
 import type { Action } from '@5dcol/core'
@@ -50,6 +50,7 @@ import RecordPanel from './RecordPanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
 
 const canvas = useTemplateRef('canvas')
+const secondaryMenuCard = ref<HTMLElement | null>(null)
 
 const VIEW_PLAYER_STORAGE_KEY = '5dcol.viewPlayer'
 const LANGUAGE_STORAGE_KEY = '5dcol.language'
@@ -141,6 +142,14 @@ const DOCUMENT_TITLE = '5D Chess Online'
 const ORIGINAL_GAME_TITLE = '5D Chess With Multiverse Time Travel'
 const ORIGINAL_GAME_STEAM_URL = 'https://store.steampowered.com/app/1349230/5D_Chess_With_Multiverse_Time_Travel/'
 const ONLINE_RECONNECT_DELAY_MS = 1000
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not(:disabled)',
+  'input:not(:disabled)',
+  'select:not(:disabled)',
+  'textarea:not(:disabled)',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
 provide(UiSoundKey, playUISound)
 
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
@@ -583,7 +592,7 @@ function closeSecondaryMenu() {
 function openLanguageDialog() {
   playUISound()
   secondaryMenuOpen.value = false
-  dialogStack.open('language')
+  dialogStack.push('language')
 }
 
 function openHelpDialog() {
@@ -594,7 +603,7 @@ function openHelpDialog() {
 function openSettingsDialog() {
   playUISound()
   secondaryMenuOpen.value = false
-  dialogStack.open('settings')
+  dialogStack.push('settings')
 }
 
 function openFiveDPGNSettingsDialog() {
@@ -1434,6 +1443,48 @@ function handleWindowBlur() {
   documentFocused.value = false
 }
 
+function blurActiveElement() {
+  const active = document.activeElement
+  if (active instanceof HTMLElement) active.blur()
+}
+
+function getSecondaryMenuFocusableElements(): HTMLElement[] {
+  const card = secondaryMenuCard.value
+  if (! card) return []
+
+  return Array.from(card.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter(element => (
+      ! element.hasAttribute('disabled')
+      && element.getAttribute('aria-hidden') !== 'true'
+      && element.getClientRects().length > 0
+    ))
+}
+
+function trapSecondaryMenuTab(e: KeyboardEvent) {
+  const card = secondaryMenuCard.value
+  if (! card) return
+
+  const focusable = getSecondaryMenuFocusableElements()
+  if (focusable.length === 0) {
+    e.preventDefault()
+    card.focus({ preventScroll: true })
+    return
+  }
+
+  const active = document.activeElement
+  const activeIndex = active instanceof HTMLElement ? focusable.indexOf(active) : -1
+  e.preventDefault()
+
+  if (e.shiftKey) {
+    const previousIndex = activeIndex > 0 ? activeIndex - 1 : focusable.length - 1
+    focusable[previousIndex]!.focus({ preventScroll: true })
+    return
+  }
+
+  const nextIndex = activeIndex >= 0 && active !== card ? (activeIndex + 1) % focusable.length : 0
+  focusable[nextIndex]!.focus({ preventScroll: true })
+}
+
 async function loadOptionalSounds() {
   if (! soundManager) return
 
@@ -1517,6 +1568,18 @@ onUnmounted(() => {
 watch(uiOverlayOpen, syncGameInputState)
 watch(recordPanelOpen, syncGameViewportInsets)
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
+watch(secondaryMenuOpen, (open) => {
+  if (! open) return
+  void nextTick(() => {
+    secondaryMenuCard.value?.focus({ preventScroll: true })
+  })
+})
+watch(dialogMode, (mode, previousMode) => {
+  if (mode !== 'none' || previousMode === 'none' || loading.value) return
+  void nextTick(() => {
+    if (dialogMode.value === 'none') blurActiveElement()
+  })
+})
 watch(gameSettings, () => {
   syncGameSettings()
 }, { deep: true })
@@ -1667,6 +1730,7 @@ watch(gameSettings, () => {
         <GameButton
           size="icon"
           shape="circle"
+          class="language-button"
           :style="menuButtonStyle"
           :aria-label="t('dialog.languageTitle')"
           @click="openLanguageDialog"
@@ -1754,14 +1818,19 @@ watch(gameSettings, () => {
         @click="closeSecondaryMenu"
       >
         <div
+          ref="secondaryMenuCard"
           class="secondary-menu-card"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="t('button.menu')"
+          tabindex="-1"
           @click.stop
+          @keydown.tab="trapSecondaryMenuTab"
         >
           <GameButton
             size="secondary"
             :style="menuButtonStyle"
-            :open="recordPanelOpen"
-            :aria-expanded="recordPanelOpen"
+            :pressed="recordPanelOpen"
             @click="clickRecordMenuButton"
           >
             <span>{{ t('button.record') }}</span>
@@ -1769,8 +1838,7 @@ watch(gameSettings, () => {
           <GameButton
             size="secondary"
             :style="menuButtonStyle"
-            :open="gameSettings.showClock"
-            :aria-expanded="gameSettings.showClock"
+            :pressed="gameSettings.showClock"
             @click="toggleClockPanel"
           >
             <span>{{ t('button.clock') }}</span>
@@ -1830,8 +1898,8 @@ watch(gameSettings, () => {
             v-for="option in languageOptions"
             :key="option.value"
             size="secondary"
-            :style="getPresetButtonStyle(option.value === language ? themeHoverButtonPreset : themeButtonPreset)"
-            :open="option.value === language"
+            :style="getPresetButtonStyle(themeButtonPreset)"
+            :pressed="option.value === language"
             @click="selectLanguage(option.value)"
           >
             <span>{{ option.label }}</span>
@@ -2112,12 +2180,13 @@ watch(gameSettings, () => {
       </GameDialog>
 
       <GameDialog
-        v-if="loading"
+        v-if="loading && dialogMode !== 'language'"
         narrow
         loading
         :button-style="menuButtonStyle"
         :title="t('dialog.loadingTitle')"
         :close-on-backdrop="false"
+        external-focus-selector=".language-button"
       >
         <p
           class="dialog-message"
@@ -2415,6 +2484,7 @@ canvas {
   border-radius: 8px;
   background: var(--menu-card-fill-color);
   box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
+  outline: none;
   pointer-events: auto;
   transform: translate(-50%, -50%);
 }
@@ -2528,6 +2598,10 @@ canvas {
   font-size: 18px;
   line-height: 1.35;
   white-space: pre-line;
+}
+
+.language-button {
+  z-index: 11;
 }
 
 .language-list {
