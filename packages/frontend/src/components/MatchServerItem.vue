@@ -5,6 +5,7 @@ import type { MatchRoom } from '@5dcol/shared/protocol'
 import type { MatchServerState } from '@engine/matchClient'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
+import GamePanel from './GamePanel.vue'
 import MatchRoomItem from './MatchRoomItem.vue'
 
 const props = defineProps<{
@@ -103,7 +104,7 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
 </script>
 
 <template>
-  <section class="match-server">
+  <GamePanel tag="section">
     <div class="match-server-header">
       <GameButton
         size="small"
@@ -194,20 +195,10 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
     >
       {{ server.error || t('match.failedMessage') }}
     </div>
-  </section>
+  </GamePanel>
 </template>
 
 <style scoped>
-.match-server {
-  display: flex;
-  flex-direction: column;
-  gap: var(--button-content-gap);
-  padding: var(--button-content-gap);
-  border: var(--button-border) solid var(--button-border-color);
-  border-radius: 8px;
-  background: var(--button-fill-color);
-}
-
 .match-server-header {
   display: flex;
   align-items: center;

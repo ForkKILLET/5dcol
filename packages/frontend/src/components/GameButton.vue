@@ -222,7 +222,7 @@ const props = withDefaults(defineProps<{
 .game-button:disabled {
   box-shadow: none;
   transform: translateY(var(--button-shadow-offset));
-  cursor: default;
+  cursor: not-allowed;
 }
 
 .game-button.is-pulsing:not(:hover):not(:focus-visible) {

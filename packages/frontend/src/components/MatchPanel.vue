@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { MatchRoom, MatchRoomSettings } from '@5dcol/shared/protocol'
 import type { MatchServerState } from '@engine/matchClient'
 import GameButton from './GameButton.vue'
+import GamePanel from './GamePanel.vue'
 import GameTextInput from './GameTextInput.vue'
 import MatchRoomSettingsPanel from './MatchRoomSettingsPanel.vue'
 import MatchServerItem from './MatchServerItem.vue'
@@ -116,7 +117,10 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
       v-if="mode === 'servers'"
       class="match-server-list"
     >
-      <section class="match-server match-server--manual">
+      <GamePanel
+        tag="section"
+        class="match-server--manual"
+      >
         <div class="match-manual-row">
           <div class="match-control-slot match-control-slot--input">
             <GameTextInput
@@ -135,10 +139,11 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
             <span>{{ t('match.addServer') }}</span>
           </GameButton>
         </div>
-      </section>
-      <section
+      </GamePanel>
+      <GamePanel
         v-if="customRoomServer"
-        class="match-server match-server--custom-room"
+        tag="section"
+        class="match-server--custom-room"
       >
         <div class="match-room">
           <div class="match-room-main">
@@ -174,7 +179,7 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
             </GameButton>
           </div>
         </div>
-      </section>
+      </GamePanel>
       <MatchServerItem
         v-for="server in servers"
         :key="server.id"
@@ -245,16 +250,6 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
   min-height: 0;
   padding-right: calc(var(--button-content-gap) * 0.5);
   overflow: auto;
-}
-
-.match-server {
-  display: flex;
-  flex-direction: column;
-  gap: var(--button-content-gap);
-  padding: var(--button-content-gap);
-  border: var(--button-border) solid var(--button-border-color);
-  border-radius: 8px;
-  background: var(--button-fill-color);
 }
 
 .match-manual-row {

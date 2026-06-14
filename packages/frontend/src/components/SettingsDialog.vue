@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, inject, ref } from 'vue'
 import type { StyleValue } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { type GameSettings } from '@/composables/settings'
 import FiveDPGNSettingsFields from './FiveDPGNSettingsFields.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
+import GamePanel from './GamePanel.vue'
 import GameSlider from './GameSlider.vue'
+import GameTab from './GameTab.vue'
 import GameToggle from './GameToggle.vue'
+import { UiSoundKey } from '@/composables/uiSound.ts'
 
 type SettingsTab = 'volume' | 'appearance' | 'game' | 'fiveDPGN'
 
@@ -29,6 +32,14 @@ const initialRenderer = ref(props.settings.renderer)
 const activeTab = ref<SettingsTab>(props.initialTab ?? 'volume')
 const settingsTabs: SettingsTab[] = ['volume', 'appearance', 'game', 'fiveDPGN']
 const rendererChanged = computed(() => props.settings.renderer !== initialRenderer.value)
+
+const playUISound = inject(UiSoundKey)
+
+function setActiveTab(tab: SettingsTab) {
+  if (activeTab.value === tab) return
+  playUISound?.()
+  activeTab.value = tab
+}
 </script>
 
 <template>
@@ -43,19 +54,18 @@ const rendererChanged = computed(() => props.settings.renderer !== initialRender
         class="settings-tabs"
         :aria-label="t('settings.tabsLabel')"
       >
-        <GameToggle
+        <GameTab
           v-for="tab in settingsTabs"
           :key="tab"
-          v-model="activeTab"
-          type="radio"
-          :value="tab"
           :style="buttonStyle"
+          :pressed="activeTab === tab"
+          @click="setActiveTab(tab)"
         >
           <span>{{ t(`settings.tab.${tab}`) }}</span>
-        </GameToggle>
+        </GameTab>
       </nav>
 
-      <div class="settings-panel">
+      <GamePanel class="settings-panel">
         <div
           v-if="activeTab === 'volume'"
           class="settings-list"
@@ -231,7 +241,7 @@ const rendererChanged = computed(() => props.settings.renderer !== initialRender
           :settings="settings.fiveDPGN"
           :button-style="buttonStyle"
         />
-      </div>
+      </GamePanel>
     </div>
 
     <template #actions>
@@ -251,7 +261,7 @@ const rendererChanged = computed(() => props.settings.renderer !== initialRender
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: calc(var(--button-content-gap) * 4);
+  gap: calc(var(--button-content-gap) * 1.5);
   align-items: stretch;
   width: 100%;
   min-height: 0;
@@ -261,14 +271,14 @@ const rendererChanged = computed(() => props.settings.renderer !== initialRender
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: calc(var(--button-content-gap) * 2.5);
+  gap: calc(var(--button-content-gap) * 1.5);
   width: 100%;
 }
 
 .settings-panel {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding-right: calc(var(--button-content-gap) * 0.5);
   overflow: auto;
 }
 
