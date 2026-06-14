@@ -18,6 +18,7 @@ import {
   type CreateMatchRoomResponse,
   type ForfeitMatchRoomRequest,
   type ForfeitMatchRoomResponse,
+  type GetMatchServerStatsResponse,
   type GetMatchRoomStateResponse,
   type GetMatchSessionResponse,
   type JoinMatchRoomResponse,
@@ -87,7 +88,7 @@ interface WebSocketLike {
   on(event: 'message', listener: (data: unknown) => void): void
 }
 
-const DEFAULT_SERVER_NAME = '5DC OL Debug Server'
+const DEFAULT_SERVER_NAME = 'Debug Server'
 const FINISHED_ROOM_HISTORY_MS = 24 * 60 * 60 * 1000
 const FINISHED_ROOM_HISTORY_LIMIT = 10
 
@@ -120,7 +121,12 @@ export function createBackendServer(options: BackendServerOptions) {
     protocolVersion: MATCH_PROTOCOL_VERSION,
     name: options.name ?? DEFAULT_SERVER_NAME,
     version: __5DCOL_VERSION__,
+    commitHash: __5DCOL_COMMIT_HASH__,
     buildDate: __5DCOL_BUILD_DATE__,
+  }))
+
+  app.get('/stats', async (): Promise<GetMatchServerStatsResponse> => ({
+    stats: getServerStats(rooms, users, roomSubscribers, onlineSessionCounts),
   }))
 
   app.get<{ Querystring: MatchRoomsRequestQuery }>('/rooms', async (request): Promise<MatchRoomsResponse> => ({
@@ -572,6 +578,30 @@ function getListedRooms(
     .map(room => toRoomView(room, ownUserId, onlineSessionCounts))
 
   return [...activeRooms, ...finishedRooms]
+}
+
+function getServerStats(
+  rooms: RoomState[],
+  users: UserState[],
+  roomSubscribers: Map<string, Set<RoomSubscriber>>,
+  onlineSessionCounts: Map<string, number>,
+): GetMatchServerStatsResponse['stats'] {
+  const roomViews = rooms.map(getRoomStatus)
+  return {
+    roomCount: rooms.length,
+    waitingRoomCount: roomViews.filter(status => status === 'waiting').length,
+    playingRoomCount: roomViews.filter(status => status === 'playing').length,
+    finishedRoomCount: roomViews.filter(status => status === 'finished').length,
+    recordedRoomCount: rooms.filter(room => room.actions.length > 0).length,
+    actionCount: rooms.reduce((count, room) => count + room.actions.length, 0),
+    userCount: users.length,
+    onlineSessionCount: Array.from(onlineSessionCounts.values()).filter(count => count > 0).length,
+    connectionCount: Array.from(roomSubscribers.values()).reduce((count, subscribers) => count + subscribers.size, 0),
+    spectatorCount: Array.from(roomSubscribers.values()).reduce(
+      (count, subscribers) => count + Array.from(subscribers).filter(subscriber => subscriber.sessionId === null).length,
+      0,
+    ),
+  }
 }
 
 function canListRoom(room: RoomState, userId: string | null): boolean {

@@ -3,6 +3,7 @@ import {
   ForfeitMatchRoomResponseSchema,
   GetMatchRoomStateResponseSchema,
   GetMatchSessionResponseSchema,
+  GetMatchServerStatsResponseSchema,
   JoinMatchRoomResponseSchema,
   LeaveMatchRoomResponseSchema,
   MatchRoomsResponseSchema,
@@ -21,6 +22,7 @@ import type {
   MatchRoomClientEvent,
   MatchRoomEvent,
   MatchRoom,
+  MatchServerStats,
   MatchServerInfo,
   SubmitMatchActionRequest,
 } from '@5dcol/shared/protocol'
@@ -34,8 +36,10 @@ export interface MatchServerState {
   status: MatchServerConnectionStatus
   name: string
   version: string
+  commitHash: string
   buildDate: string
   pingMs: number | null
+  stats: MatchServerStats | null
   rooms: MatchRoom[]
   error: string
 }
@@ -67,6 +71,11 @@ export class MatchClient {
       info,
       pingMs: Math.max(0, Math.round(performance.now() - startedAt)),
     }
+  }
+
+  async getStats(): Promise<MatchServerStats> {
+    const response = GetMatchServerStatsResponseSchema.parse(await this.request('/stats'))
+    return response.stats
   }
 
   async getRooms(options: { userId?: string | null } = {}): Promise<MatchRoom[]> {

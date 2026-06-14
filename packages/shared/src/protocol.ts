@@ -46,10 +46,26 @@ export const MatchServerInfoSchema = z.object({
   protocolVersion: z.literal(MATCH_PROTOCOL_VERSION),
   name: z.string(),
   version: z.string().catch(''),
+  commitHash: z.string().catch(''),
   buildDate: z.string().catch(''),
 })
 
 export type MatchServerInfo = z.infer<typeof MatchServerInfoSchema>
+
+export const MatchServerStatsSchema = z.object({
+  roomCount: z.number().int().nonnegative(),
+  waitingRoomCount: z.number().int().nonnegative(),
+  playingRoomCount: z.number().int().nonnegative(),
+  finishedRoomCount: z.number().int().nonnegative(),
+  recordedRoomCount: z.number().int().nonnegative(),
+  actionCount: z.number().int().nonnegative(),
+  userCount: z.number().int().nonnegative(),
+  onlineSessionCount: z.number().int().nonnegative(),
+  connectionCount: z.number().int().nonnegative().catch(0),
+  spectatorCount: z.number().int().nonnegative(),
+})
+
+export type MatchServerStats = z.infer<typeof MatchServerStatsSchema>
 
 export const MatchRoomSeatSchema = z.object({
   player: PlayerSchema,
@@ -129,6 +145,12 @@ export const MatchRoomsResponseSchema = z.object({
 })
 
 export type MatchRoomsResponse = z.infer<typeof MatchRoomsResponseSchema>
+
+export const GetMatchServerStatsResponseSchema = z.object({
+  stats: MatchServerStatsSchema,
+})
+
+export type GetMatchServerStatsResponse = z.infer<typeof GetMatchServerStatsResponseSchema>
 
 export const MatchRoomsRequestQuerySchema = z.object({
   userId: z.string().optional(),

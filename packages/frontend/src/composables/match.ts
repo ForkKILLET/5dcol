@@ -125,8 +125,10 @@ const matchServers = reactive<MatchServerState[]>(Object
     address,
     name,
     version: '',
+    commitHash: '',
     buildDate: '',
     pingMs: null,
+    stats: null,
     status: 'idle',
     rooms: [],
     error: '',
@@ -250,8 +252,10 @@ export function useMatch(options?: UseMatchOptions) {
       status: 'idle',
       name: '',
       version: '',
+      commitHash: '',
       buildDate: '',
       pingMs: null,
+      stats: null,
       rooms: [],
       error: '',
     }
@@ -314,16 +318,19 @@ export function useMatch(options?: UseMatchOptions) {
     server.error = ''
     try {
       const client = new MatchClient(server.address)
-      const [{ info, pingMs }, rooms] = await Promise.all([
+      const [{ info, pingMs }, rooms, stats] = await Promise.all([
         client.getInfoWithPing(),
         client.getRooms({
           userId: matchUserId.value,
         }),
+        getOptionalMatchServerStats(client),
       ])
       server.name = info.name
       server.version = info.version
+      server.commitHash = info.commitHash
       server.buildDate = info.buildDate
       server.pingMs = pingMs
+      server.stats = stats
       server.rooms = rooms
       server.status = 'connected'
       syncLastOnlineGameFromServer(server)
@@ -331,6 +338,7 @@ export function useMatch(options?: UseMatchOptions) {
     catch (err) {
       server.rooms = []
       server.pingMs = null
+      server.stats = null
       server.status = 'failed'
       server.error = err instanceof Error ? err.message : String(err)
     }
@@ -347,16 +355,19 @@ export function useMatch(options?: UseMatchOptions) {
   async function refreshMatchServerRooms(server: MatchServerState) {
     try {
       const client = new MatchClient(server.address)
-      const [{ info, pingMs }, rooms] = await Promise.all([
+      const [{ info, pingMs }, rooms, stats] = await Promise.all([
         client.getInfoWithPing(),
         client.getRooms({
           userId: matchUserId.value,
         }),
+        getOptionalMatchServerStats(client),
       ])
       server.name = info.name
       server.version = info.version
+      server.commitHash = info.commitHash
       server.buildDate = info.buildDate
       server.pingMs = pingMs
+      server.stats = stats
       server.rooms = rooms
       server.error = ''
       syncLastOnlineGameFromServer(server)
@@ -364,8 +375,18 @@ export function useMatch(options?: UseMatchOptions) {
     catch (err) {
       server.rooms = []
       server.pingMs = null
+      server.stats = null
       server.status = 'failed'
       server.error = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  async function getOptionalMatchServerStats(client: MatchClient) {
+    try {
+      return await client.getStats()
+    }
+    catch {
+      return null
     }
   }
 
@@ -501,8 +522,10 @@ export function useMatch(options?: UseMatchOptions) {
       address,
       name: address.replace(/^https?:\/\//, ''),
       version: '',
+      commitHash: '',
       buildDate: '',
       pingMs: null,
+      stats: null,
       status: 'idle',
       rooms: [],
       error: '',

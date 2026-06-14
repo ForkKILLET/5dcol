@@ -59,15 +59,28 @@ function getDisplayAddress(server: MatchServerState) {
   return server.address.replace(/^https?:\/\//, '')
 }
 
-function getServerBuildMeta(server: MatchServerState) {
-  const parts = []
-  if (server.version) parts.push(`v${server.version}`)
-  if (server.buildDate) parts.push(formatBuildDate(server.buildDate))
-  return parts.join(' / ')
-}
-
 function getServerPingText(server: MatchServerState) {
   return server.pingMs === null ? '' : t('match.ping', { ms: server.pingMs })
+}
+
+function getServerStatsText(server: MatchServerState) {
+  const stats = server.stats
+  if (! stats) return ''
+  return t('match.serverStats', {
+    rooms: stats.roomCount,
+    playing: stats.playingRoomCount,
+    finished: stats.finishedRoomCount,
+  })
+}
+
+function getServerConnectionText(server: MatchServerState) {
+  const stats = server.stats
+  if (! stats) return ''
+  return t('match.connections', { count: stats.connectionCount })
+}
+
+function hasServerStaticMeta(server: MatchServerState) {
+  return Boolean(server.name || server.version || server.commitHash || server.buildDate)
 }
 
 function formatBuildDate(buildDate: string) {
@@ -105,15 +118,26 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
       <div class="match-server-main">
         <div class="match-server-address">{{ getDisplayAddress(server) }}</div>
         <div class="match-server-meta">
-          <span
-            class="match-status"
-            :class="`match-status--${server.status}`"
+          <div class="match-server-meta-line">
+            <span
+              class="match-status"
+              :class="`match-status--${server.status}`"
+            >
+              {{ getStatusText(server.status) }}
+            </span>
+            <span v-if="getServerPingText(server)">{{ getServerPingText(server) }}</span>
+            <span v-if="getServerStatsText(server)">{{ getServerStatsText(server) }}</span>
+            <span v-if="getServerConnectionText(server)">{{ getServerConnectionText(server) }}</span>
+          </div>
+          <div
+            v-if="hasServerStaticMeta(server)"
+            class="match-server-meta-line"
           >
-            {{ getStatusText(server.status) }}
-          </span>
-          <span v-if="getServerPingText(server)">{{ getServerPingText(server) }}</span>
-          <span v-if="server.name">{{ server.name }}</span>
-          <span v-if="getServerBuildMeta(server)">{{ getServerBuildMeta(server) }}</span>
+            <span v-if="server.name">{{ server.name }}</span>
+            <span v-if="server.version">v{{ server.version }}</span>
+            <span v-if="server.commitHash">{{ server.commitHash }}</span>
+            <span v-if="server.buildDate">{{ formatBuildDate(server.buildDate) }}</span>
+          </div>
         </div>
       </div>
       <div class="match-server-actions">
@@ -214,13 +238,23 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
 
 .match-server-meta {
   display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.match-server-meta-line {
+  display: flex;
   flex-wrap: wrap;
-  gap: calc(var(--button-content-gap) * 0.75);
   min-width: 0;
 }
 
-.match-server-meta > span {
+.match-server-meta-line > span {
   white-space: nowrap;
+}
+
+.match-server-meta-line > span + span::before {
+  content: "-";
+  margin: 0 calc(var(--button-content-gap) * 0.75);
 }
 
 .match-server-actions {

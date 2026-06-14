@@ -1,15 +1,27 @@
 import path from 'node:path'
-import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { defineConfig } from 'vite'
+import packageJson from './package.json'
 
 const dirname = import.meta.dirname
-const packageJson = JSON.parse(readFileSync(path.resolve(dirname, 'package.json'), 'utf8')) as {
-  version?: string
+const commitHash = getCommitHash()
+
+function getCommitHash() {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+      cwd: path.resolve(dirname, '../..'),
+      encoding: 'utf8',
+    }).trim()
+  }
+  catch {
+    return ''
+  }
 }
 
 export default defineConfig({
   define: {
-    __5DCOL_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
+    __5DCOL_VERSION__: JSON.stringify(packageJson.version),
+    __5DCOL_COMMIT_HASH__: JSON.stringify(commitHash),
     __5DCOL_BUILD_DATE__: JSON.stringify(new Date().toISOString()),
   },
   resolve: {
