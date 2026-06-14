@@ -6,6 +6,9 @@ export const SETTINGS_STORAGE_KEY = '5dcol.settings'
 
 const BooleanWithDefault = (fallback: boolean) => z.boolean().catch(fallback)
 
+export const ThemeColorSchema = z.enum(['white', 'black', 'view', 'system'])
+export type ThemeColor = z.infer<typeof ThemeColorSchema>
+
 const VolumeSchema = z
   .number()
   .refine(Number.isFinite)
@@ -31,6 +34,7 @@ export const GameSettingsSchema = z.preprocess(
   value => value && typeof value === 'object' ? value : {},
   z.object({
     soundVolume: VolumeSchema,
+    themeColor: ThemeColorSchema.catch('view' satisfies ThemeColor),
     renderer: RendererPreferenceSchema.catch('auto' satisfies RendererPreference),
     fiveDPGN: FiveDPGNSettingsSchema.catch(() => FiveDPGNSettingsSchema.parse({})),
     autoFullscreen: BooleanWithDefault(true),

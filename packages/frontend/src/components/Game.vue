@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, useTemplateRef, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
 import { Player } from '@5dcol/core'
 import type { Action } from '@5dcol/core'
@@ -38,6 +38,7 @@ import {
 import { useGameSettings } from '@/composables/settings'
 import { useDialogStack } from '@/composables/dialogStack'
 import { readStorageJson, removeStorageValue, useStorageRef } from '@/composables/storage'
+import { UiSoundKey } from '@/composables/uiSound'
 import FiveDPGNSettingsDialog from './FiveDPGNSettingsDialog.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
@@ -94,10 +95,12 @@ const gameStarted = ref(false)
 const hasSavedGame = ref(false)
 const mainMenuMode = ref<'home' | 'match'>('home')
 const coarsePointerQuery = window.matchMedia('(hover: none) and (pointer: coarse)')
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
 const initialViewportSize = getViewportSize()
 const viewportWidth = ref(initialViewportSize.width)
 const viewportHeight = ref(initialViewportSize.height)
 const hasCoarsePointer = ref(coarsePointerQuery.matches)
+const systemPrefersDark = ref(systemThemeQuery.matches)
 const onlineSession = ref<StoredOnlineSession | null>(null)
 const onlineRoomRef = ref<StoredOnlineRoom | null>(null)
 const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
@@ -138,6 +141,7 @@ const DOCUMENT_TITLE = '5D Chess Online'
 const ORIGINAL_GAME_TITLE = '5D Chess With Multiverse Time Travel'
 const ORIGINAL_GAME_STEAM_URL = 'https://store.steampowered.com/app/1349230/5D_Chess_With_Multiverse_Time_Travel/'
 const ONLINE_RECONNECT_DELAY_MS = 1000
+provide(UiSoundKey, playUISound)
 
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
@@ -288,17 +292,23 @@ const shouldShowReturnLiveButton = computed(() => (
     || recordCurrentActionIndex.value !== onlineLiveActionCount.value
   )
 ))
-const viewButtonPreset = computed(() => (
-  viewPlayer.value === Player.B
-    ? ButtonColors.Black
-    : ButtonColors.White
+const themePlayer = computed(() => {
+  if (gameSettings.themeColor === 'black') return Player.B
+  if (gameSettings.themeColor === 'white') return Player.W
+  if (gameSettings.themeColor === 'system') {
+    return systemPrefersDark.value ? Player.B : Player.W
+  }
+  return viewPlayer.value
+})
+const themeButtonPreset = computed(() => (
+  themePlayer.value === Player.B ? ButtonColors.Black : ButtonColors.White
 ))
-const viewHoverButtonPreset = computed(() => (
-  viewPlayer.value === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
+const themeHoverButtonPreset = computed(() => (
+  themePlayer.value === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
 ))
 const menuButtonStyle = computed(() => getPresetButtonStyle(
-  viewButtonPreset.value,
-  viewHoverButtonPreset.value,
+  themeButtonPreset.value,
+  themeHoverButtonPreset.value,
 ))
 const mainMenuStartText = computed(() => (
   hasSavedGame.value ? t('main.resume') : t('main.start')
@@ -318,7 +328,7 @@ const gameButtonScale = computed(() => (
     : 1
 ))
 const uiStyle = computed(() => {
-  const menuCardPreset = viewButtonPreset.value
+  const menuCardPreset = themeButtonPreset.value
   const buttonScale = gameButtonScale.value
   const scaled = (value: number) => value * buttonScale
   return {
@@ -757,6 +767,10 @@ function handleWindowResize() {
 
 function handleCoarsePointerChange() {
   hasCoarsePointer.value = coarsePointerQuery.matches
+}
+
+function handleSystemThemeChange() {
+  systemPrefersDark.value = systemThemeQuery.matches
 }
 
 function submitImportDialog() {
@@ -1473,6 +1487,7 @@ onMounted(() => {
   window.addEventListener('resize', handleWindowResize)
   window.visualViewport?.addEventListener('resize', handleWindowResize)
   coarsePointerQuery.addEventListener('change', handleCoarsePointerChange)
+  systemThemeQuery.addEventListener('change', handleSystemThemeChange)
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener('blur', handleWindowBlur)
   clockTimer = window.setInterval(() => {
@@ -1485,6 +1500,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize)
   window.visualViewport?.removeEventListener('resize', handleWindowResize)
   coarsePointerQuery.removeEventListener('change', handleCoarsePointerChange)
+  systemThemeQuery.removeEventListener('change', handleSystemThemeChange)
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener('blur', handleWindowBlur)
   stopMatchServerRefresh()
@@ -1814,7 +1830,7 @@ watch(gameSettings, () => {
             v-for="option in languageOptions"
             :key="option.value"
             size="secondary"
-            :style="getPresetButtonStyle(option.value === language ? viewHoverButtonPreset : viewButtonPreset)"
+            :style="getPresetButtonStyle(option.value === language ? themeHoverButtonPreset : themeButtonPreset)"
             :open="option.value === language"
             @click="selectLanguage(option.value)"
           >

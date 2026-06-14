@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import type { StyleValue } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RendererPreferenceSchema } from '@engine/rendererFactory'
-import type { GameSettings } from '@/composables/settings'
+import { ThemeColorSchema, type GameSettings } from '@/composables/settings'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameSlider from './GameSlider.vue'
@@ -21,6 +22,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n({ useScope: 'global' })
+const initialRenderer = ref(props.settings.renderer)
+const rendererChanged = computed(() => props.settings.renderer !== initialRenderer.value)
 
 function setSoundVolume(value: number) {
   props.settings.soundVolume = value
@@ -29,6 +32,11 @@ function setSoundVolume(value: number) {
 function setRenderer(value: boolean | string | number | null | undefined) {
   const result = RendererPreferenceSchema.safeParse(value)
   if (result.success) props.settings.renderer = result.data
+}
+
+function setThemeColor(value: boolean | string | number | null | undefined) {
+  const result = ThemeColorSchema.safeParse(value)
+  if (result.success) props.settings.themeColor = result.data
 }
 
 function setBooleanSetting(
@@ -47,7 +55,7 @@ function setBooleanSetting(
     :button-style="buttonStyle"
     @close="emit('close')"
   >
-    <div class="settings-list settings-list--narrow">
+    <div class="settings-list settings-list--narrow settings-list--main">
       <label class="settings-row">
         <span>{{ t('settings.soundVolume') }}</span>
         <GameSlider
@@ -61,6 +69,47 @@ function setBooleanSetting(
           @change="emit('volumeChange')"
         />
       </label>
+      <div class="settings-row settings-row--renderer">
+        <span>{{ t('settings.themeColor') }}</span>
+        <div class="settings-radio-group">
+          <GameToggle
+            :model-value="settings.themeColor"
+            type="radio"
+            value="white"
+            :style="buttonStyle"
+            @update:model-value="setThemeColor"
+          >
+            <span>{{ t('settings.themeColorWhite') }}</span>
+          </GameToggle>
+          <GameToggle
+            :model-value="settings.themeColor"
+            type="radio"
+            value="black"
+            :style="buttonStyle"
+            @update:model-value="setThemeColor"
+          >
+            <span>{{ t('settings.themeColorBlack') }}</span>
+          </GameToggle>
+          <GameToggle
+            :model-value="settings.themeColor"
+            type="radio"
+            value="view"
+            :style="buttonStyle"
+            @update:model-value="setThemeColor"
+          >
+            <span>{{ t('settings.themeColorView') }}</span>
+          </GameToggle>
+          <GameToggle
+            :model-value="settings.themeColor"
+            type="radio"
+            value="system"
+            :style="buttonStyle"
+            @update:model-value="setThemeColor"
+          >
+            <span>{{ t('settings.themeColorSystem') }}</span>
+          </GameToggle>
+        </div>
+      </div>
       <div class="settings-row settings-row--renderer">
         <span>{{ t('settings.renderer') }}</span>
         <div class="settings-renderer-control">
@@ -93,8 +142,10 @@ function setBooleanSetting(
               <span>{{ t('settings.rendererCanvas') }}</span>
             </GameToggle>
           </div>
-          <span class="settings-status">{{ rendererStatusText }}</span>
-          <span class="settings-note">{{ t('settings.rendererRestartHint') }}</span>
+          <span class="settings-status">
+            {{ rendererStatusText }}
+            <template v-if="rendererChanged"> - {{ t('settings.rendererRestartHint') }}</template>
+          </span>
         </div>
       </div>
       <div class="settings-row">
@@ -145,9 +196,13 @@ function setBooleanSetting(
 </template>
 
 <style scoped>
+.settings-list--main.settings-list--narrow {
+  width: min(560px, calc(100vw - var(--button-top) * 4 - var(--button-content-gap) * 10));
+}
+
 .settings-radio-group {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
   gap: calc(var(--button-content-gap) * 1.5);
@@ -165,23 +220,18 @@ function setBooleanSetting(
   min-width: 0;
 }
 
-.settings-note {
-  max-width: 240px;
-  color: var(--button-text-color);
-  font-size: 14px;
-  line-height: 1.25;
-  opacity: 0.72;
-  text-align: right;
-  white-space: normal;
-}
-
 .settings-status {
-  max-width: 260px;
   color: var(--button-text-color);
   font-size: 16px;
   line-height: 1.2;
   text-align: right;
   transform: translateY(var(--ui-text-y));
   white-space: normal;
+}
+
+@media (max-width: 680px) {
+  .settings-radio-group {
+    flex-wrap: wrap;
+  }
 }
 </style>

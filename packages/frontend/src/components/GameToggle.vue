@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed, inject } from 'vue'
+import { UiSoundKey } from '@/composables/uiSound'
+
 const model = defineModel<boolean | string | number | null>()
 
 const props = withDefaults(defineProps<{
@@ -9,19 +12,25 @@ const props = withDefaults(defineProps<{
   value: '',
 })
 
-function isChecked() {
+const playUISound = inject(UiSoundKey)
+
+const isChecked = computed(() => {
   return props.type === 'checkbox'
     ? Boolean(model.value)
     : model.value === props.value
-}
+})
 
 function toggle() {
-  if (props.type === 'checkbox') {
-    model.value = ! Boolean(model.value)
-    return
-  }
+  const previousValue = model.value
+  
+  const newValue = props.type === 'checkbox'
+    ? ! Boolean(model.value)
+    : props.value
 
-  model.value = props.value
+  if (newValue !== previousValue) {
+    model.value = newValue
+    playUISound?.()
+  }
 }
 </script>
 
@@ -29,15 +38,15 @@ function toggle() {
   <label
     class="game-toggle"
     :class="[
-      `game-toggle--${props.type}`,
-      { 'is-checked': isChecked() },
+      `game-toggle--${type}`,
+      { 'is-checked': isChecked },
     ]"
   >
     <input
       class="game-toggle-input"
-      :type="props.type"
-      :checked="isChecked()"
-      :value="props.value"
+      :type="type"
+      :checked="isChecked"
+      :value="value"
       @change="toggle"
     >
     <span class="game-toggle-mark" aria-hidden="true">

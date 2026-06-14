@@ -51,7 +51,7 @@ dialog.helpText: |
   `: Open settings
   Esc: Open or close the in-game menu
 
-  Record and files
+  Record
 
   The Record panel shows live 5dpgn notation. Move segments can be clicked to focus their boards. Cursor tags mark exact positions between actions; use the jump icon or the record shortcuts to move through the current block, jump to block boundaries, or enter/cycle variations.
 
@@ -73,6 +73,11 @@ language.en: "English"
 language.zh: "中文"
 
 settings.soundVolume: "Sound volume"
+settings.themeColor: "Theme color"
+settings.themeColorWhite: "White"
+settings.themeColorBlack: "Black"
+settings.themeColorView: "Follow view"
+settings.themeColorSystem: "Follow system"
 settings.renderer: "Renderer"
 settings.rendererAuto: "Auto"
 settings.rendererWebGL: "WebGL"

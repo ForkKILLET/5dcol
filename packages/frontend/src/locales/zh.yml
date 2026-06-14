@@ -51,7 +51,7 @@ dialog.helpText: |
   `：打开设置
   Esc：打开或关闭局内菜单
 
-  记谱和文件
+  记谱
 
   记谱面板会实时显示 5dpgn。点击 move 片段可以聚焦对应棋盘。游标标签表示 action 之间的精确位置；可以用跳转图标或记谱快捷键在当前块中移动、跳到块头/块尾，或进入和轮换分支。
 
@@ -73,6 +73,11 @@ language.en: "English"
 language.zh: "中文"
 
 settings.soundVolume: "音量"
+settings.themeColor: "主题色"
+settings.themeColorWhite: "白"
+settings.themeColorBlack: "黑"
+settings.themeColorView: "跟随视角"
+settings.themeColorSystem: "跟随系统"
 settings.renderer: "渲染器"
 settings.rendererAuto: "自动"
 settings.rendererWebGL: "WebGL"
