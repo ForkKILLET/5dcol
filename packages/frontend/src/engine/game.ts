@@ -40,6 +40,7 @@ export interface GameContext {
   autoSwitchViewPlayer?: boolean
   showMoveTravelAnimation?: boolean
   fiveDPGNOptions?: FiveDPGN.ExportOptions
+  getFiveDPGNExportMetadata?: () => Pick<FiveDPGN.ExportOptions, 'headers' | 'result'>
   canControlOnlineGame?: () => boolean
   isExternallyFinished?: () => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
@@ -2091,16 +2092,24 @@ export class Game extends Disposable(Empty) {
   }
 
   public getFiveDPGNExport(mode: GameExportMode = 'tree'): GameExportRequest {
+    const options = this.getFiveDPGNExportOptions()
     return {
       text: mode === 'tree'
-        ? FiveDPGN.exportActionTree(this.buildFiveDPGNActionTree(), this.fiveDPGNOptions)
+        ? FiveDPGN.exportActionTree(this.buildFiveDPGNActionTree(), options)
         : FiveDPGN.exportGameState({
             actions: this.actions.slice(0, Scalar.clamp(this.actionIndex, 0, this.actions.length)),
-          }, this.fiveDPGNOptions),
+          }, options),
       mode,
       hasPendingMoves: this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
       actions: this.buildRecordActionsForDisplay(),
+    }
+  }
+
+  private getFiveDPGNExportOptions(): FiveDPGN.ExportOptions {
+    return {
+      ...this.fiveDPGNOptions,
+      ...this.ctx.getFiveDPGNExportMetadata?.(),
     }
   }
 

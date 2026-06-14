@@ -2584,6 +2584,17 @@ export namespace FiveDPGN {
     includeCaptureMarkers?: boolean
     includeCheckMarkers?: boolean
     includePromotionMarkers?: boolean
+    headers?: ExportHeaders
+    result?: ExportResult
+  }
+
+  export type ExportResult = '1-0' | '0-1' | '1/2-1/2' | '*'
+
+  export type ExportHeaders = Record<string, string | number | null | undefined> | ExportHeader[]
+
+  export interface ExportHeader {
+    key: string
+    value: string | number | null | undefined
   }
 
   export interface FormattedAction {
@@ -2626,7 +2637,35 @@ export namespace FiveDPGN {
     player: Player
   }
 
-  type ResolvedExportOptions = Required<ExportOptions>
+  interface ResolvedExportOptions extends Required<Omit<ExportOptions, 'headers' | 'result'>> {
+    headers?: ExportHeaders
+    result: ExportResult
+  }
+
+  const DEFAULT_HEADER_VALUES: Record<string, string> = {
+    Event: '5D Chess Online',
+    Site: '?',
+    Date: '????.??.??',
+    Time: '??:??:??',
+    Round: '?',
+    White: 'White',
+    Black: 'Black',
+    Mode: '5D',
+    Board: 'Standard',
+  }
+
+  const HEADER_ORDER = [
+    'Event',
+    'Site',
+    'Date',
+    'Time',
+    'Round',
+    'White',
+    'Black',
+    'Result',
+    'Mode',
+    'Board',
+  ]
 
   const DEFAULT_EXPORT_OPTIONS: ResolvedExportOptions = {
     includePieceSymbols: false,
@@ -2634,6 +2673,7 @@ export namespace FiveDPGN {
     includeCaptureMarkers: false,
     includeCheckMarkers: false,
     includePromotionMarkers: false,
+    result: '*',
   }
 
   export const exportGameState = (
@@ -2655,12 +2695,12 @@ export namespace FiveDPGN {
       player: Player.W,
     })
     const lines = [
-      '[Mode "5D"]',
-      '[Board "Standard"]',
+      ...formatHeaders(resolvedOptions),
       '',
-      body,
+      ...(body.trim() ? [body] : []),
+      resolvedOptions.result,
     ]
-    return `${lines.join('\n').trim()}\n`
+    return `${lines.join('\n')}\n`
   }
 
   export const formatActions = (
@@ -2894,6 +2934,56 @@ export namespace FiveDPGN {
     input
       .replace(/^\s*\[[^\]\n]*]\s*$/gm, '')
       .replace(/\{[^{}]*}/g, ' ')
+      .replace(/(?:^|\s)(?:1-0|0-1|1\/2-1\/2|\*)\s*$/g, ' ')
+  )
+
+  const formatHeaders = (options: ResolvedExportOptions): string[] => {
+    const headers = new Map<string, string>()
+    for (const [key, value] of Object.entries(DEFAULT_HEADER_VALUES)) {
+      headers.set(key, value)
+    }
+    applyExportHeaders(headers, options.headers)
+    headers.set('Result', options.result)
+
+    const ordered: Array<{ key: string, value: string }> = []
+    for (const key of HEADER_ORDER) {
+      const value = headers.get(key)
+      if (value !== undefined) ordered.push({ key, value })
+      headers.delete(key)
+    }
+    for (const [key, value] of headers) {
+      ordered.push({ key, value })
+    }
+
+    return ordered
+      .filter(({ key }) => /^[A-Za-z0-9_]+$/.test(key))
+      .map(({ key, value }) => `[${key} "${escapeHeaderValue(value)}"]`)
+  }
+
+  const applyExportHeaders = (
+    output: Map<string, string>,
+    headers: ExportHeaders | undefined,
+  ): void => {
+    if (! headers) return
+
+    const entries = Array.isArray(headers)
+      ? headers.map(({ key, value }) => [key, value] as const)
+      : Object.entries(headers)
+
+    for (const [key, value] of entries) {
+      if (! key) continue
+      if (value === null || value === undefined) {
+        output.delete(key)
+        continue
+      }
+      output.set(key, String(value))
+    }
+  }
+
+  const escapeHeaderValue = (value: string | number): string => (
+    String(value)
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
   )
 
   const parseSquare = (file: string, rank: string): CoordSpacelike => ({

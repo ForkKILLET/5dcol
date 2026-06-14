@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
 import { Player } from '@5dcol/core'
-import type { Action } from '@5dcol/core'
+import type { Action, FiveDPGN } from '@5dcol/core'
 import {
   type MatchClock,
   type MatchGameState,
@@ -106,6 +106,10 @@ const onlineSession = ref<StoredOnlineSession | null>(null)
 const onlineRoomRef = ref<StoredOnlineRoom | null>(null)
 const onlineRoomStatus = ref<MatchRoomStatus | null>(null)
 const onlineRoomSettings = ref<MatchRoomSettings | null>(null)
+const onlineRoomSeats = ref<MatchRoom['seats'] | null>(null)
+const onlineRoomStartedAt = ref<number | null>(null)
+const onlineRoomWinner = ref<Player | null>(null)
+const onlineRoomFinishReason = ref<MatchRoom['finishReason'] | null>(null)
 const onlineRoomReady = ref(false)
 const onlinePlayer = ref<Player | null>(null)
 const onlinePresence = ref<MatchPresence | null>(null)
@@ -1019,6 +1023,7 @@ function startLocalGame() {
     autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
+    getFiveDPGNExportMetadata,
     onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
@@ -1042,6 +1047,10 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   }
   onlineRoomStatus.value = state.room.status
   onlineRoomSettings.value = state.room.settings
+  onlineRoomSeats.value = state.room.seats
+  onlineRoomStartedAt.value = state.room.startedAt ?? state.room.createdAt
+  onlineRoomWinner.value = state.room.winner
+  onlineRoomFinishReason.value = state.room.finishReason
   onlineRoomReady.value = state.room.status === 'playing'
   onlineClock.value = state.clock
   onlineSpectatorCount.value = state.spectatorCount
@@ -1066,6 +1075,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     autoSwitchViewPlayer: false,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
+    getFiveDPGNExportMetadata,
     canControlOnlineGame: () => onlineRoomReady.value,
     isExternallyFinished: () => onlineRoomStatus.value === 'finished',
     onToolbarChange: buttons => {
@@ -1108,6 +1118,10 @@ function applyOnlineGameState(
   const wasReady = onlineRoomReady.value
   onlineRoomStatus.value = state.room.status
   onlineRoomSettings.value = state.room.settings
+  onlineRoomSeats.value = state.room.seats
+  onlineRoomStartedAt.value = state.room.startedAt ?? state.room.createdAt
+  onlineRoomWinner.value = state.room.winner
+  onlineRoomFinishReason.value = state.room.finishReason
   onlineRoomReady.value = state.room.status === 'playing'
   onlineClock.value = state.clock
   onlineSpectatorCount.value = state.spectatorCount
@@ -1361,6 +1375,61 @@ function syncGameSettings() {
   game?.setFiveDPGNOptions(gameSettings.fiveDPGN)
 }
 
+function getFiveDPGNExportMetadata(): Pick<FiveDPGN.ExportOptions, 'headers' | 'result'> {
+  const exportedAt = onlineRoomStartedAt.value ?? Date.now()
+  const { date, time } = formatFiveDPGNDateTime(exportedAt)
+  return {
+    headers: {
+      Event: onlineRoomRef.value?.roomName ?? '5D Chess Online',
+      Site: getFiveDPGNSite(),
+      Date: date,
+      Time: time,
+      Round: onlineRoomRef.value?.roomId ?? '-',
+      White: getFiveDPGNPlayerName(Player.W),
+      Black: getFiveDPGNPlayerName(Player.B),
+    },
+    result: getFiveDPGNResult(),
+  }
+}
+
+function formatFiveDPGNDateTime(timestamp: number) {
+  const date = new Date(timestamp)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return {
+    date: `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())}`,
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+  }
+}
+
+function getFiveDPGNSite(): string {
+  return window.location.origin && window.location.origin !== 'null'
+    ? window.location.origin
+    : '?'
+}
+
+function getFiveDPGNPlayerName(player: Player): string {
+  const seat = onlineRoomSeats.value?.find(seat => seat?.player === player)
+  if (seat) return seat.nickname || 'Anonymous'
+  return player === Player.W ? 'White' : 'Black'
+}
+
+function getFiveDPGNResult(): FiveDPGN.ExportResult {
+  if (onlineRoomStatus.value === 'finished') {
+    if (onlineRoomFinishReason.value === 'stalemate') return '1/2-1/2'
+    if (onlineRoomWinner.value === Player.W) return '1-0'
+    if (onlineRoomWinner.value === Player.B) return '0-1'
+    return '*'
+  }
+
+  if (gameStatus.value.kind === 'stalemate') return '1/2-1/2'
+  if (gameStatus.value.kind === 'checkmate') {
+    if (gameStatus.value.player === Player.W) return '1-0'
+    if (gameStatus.value.player === Player.B) return '0-1'
+  }
+
+  return '*'
+}
+
 function getClockStepMs(clock: MatchClock, player: Player, now: number): number {
   if (clock.currentPlayer !== player || clock.turnStartedAt === null) return 0
   return Math.max(0, now - clock.turnStartedAt)
@@ -1412,6 +1481,10 @@ function returnToMainMenu(
   stopOnlineRoomStateSubscription()
   onlineRoomStatus.value = null
   onlineRoomSettings.value = null
+  onlineRoomSeats.value = null
+  onlineRoomStartedAt.value = null
+  onlineRoomWinner.value = null
+  onlineRoomFinishReason.value = null
   onlineRoomReady.value = false
   onlinePlayer.value = null
   onlinePresence.value = null
