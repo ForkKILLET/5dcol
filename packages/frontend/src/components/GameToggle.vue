@@ -5,9 +5,11 @@ import { UiSoundKey } from '@/composables/uiSound'
 const model = defineModel<boolean | string | number | null>()
 
 const props = withDefaults(defineProps<{
+  size?: 'default' | 'small'
   type?: 'checkbox' | 'radio'
   value?: string | number
 }>(), {
+  size: 'default',
   type: 'checkbox',
   value: '',
 })
@@ -38,6 +40,7 @@ function toggle() {
   <label
     class="game-toggle"
     :class="[
+      `game-toggle--${size}`,
       `game-toggle--${type}`,
       { 'is-checked': isChecked },
     ]"
@@ -65,6 +68,12 @@ function toggle() {
 .game-toggle {
   --toggle-size: 28px;
   --toggle-accent-color: rgb(39, 39, 39);
+  --toggle-check-color: var(--button-text-color);
+  --toggle-check-left: 32%;
+  --toggle-check-top: 12%;
+  --toggle-check-width: 28%;
+  --toggle-check-height: 56%;
+  --toggle-check-stroke: 4px;
   --toggle-shadow-offset: var(--small-button-shadow-offset);
   position: relative;
   display: inline-flex;
@@ -115,6 +124,19 @@ function toggle() {
   border-radius: 50%;
 }
 
+.game-toggle--small {
+  --toggle-size: 20px;
+  --toggle-check-left: 36%;
+  --toggle-check-top: 21%;
+  --toggle-check-width: 20%;
+  --toggle-check-height: 39%;
+  --toggle-check-stroke: 2.5px;
+}
+
+.game-toggle--small .game-toggle-mark {
+  border-radius: 6px;
+}
+
 .game-toggle-label {
   transform: translateY(var(--ui-text-y));
 }
@@ -132,12 +154,12 @@ function toggle() {
 
 .game-toggle--checkbox.is-checked .game-toggle-indicator::before {
   position: absolute;
-  left: 32%;
-  top: 12%;
-  width: 28%;
-  height: 56%;
-  border-right: 4px solid var(--toggle-accent-color);
-  border-bottom: 4px solid var(--toggle-accent-color);
+  left: var(--toggle-check-left);
+  top: var(--toggle-check-top);
+  width: var(--toggle-check-width);
+  height: var(--toggle-check-height);
+  border-right: var(--toggle-check-stroke) solid var(--toggle-check-color);
+  border-bottom: var(--toggle-check-stroke) solid var(--toggle-check-color);
   content: '';
   transform: rotate(42deg);
 }
