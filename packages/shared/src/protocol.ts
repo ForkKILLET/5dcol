@@ -1,14 +1,23 @@
 import { z } from 'zod'
-import type { Action, Move, Player } from '@5dcol/core'
+import type { Action, Coord, Move, Multiverse, Player } from '@5dcol/core'
 
 export const MATCH_PROTOCOL_VERSION = 1
 export const MATCH_STORAGE_VERSION = 1
 export const MATCH_ROOM_SETTINGS_STORAGE_VERSION = 1
+export const STUDY_PROTOCOL_VERSION = 1
+export const STUDY_STORAGE_VERSION = 1
 
 const PlayerSchema: z.ZodType<Player> = z.union([z.literal(0), z.literal(1)])
 const NullablePlayerSchema = PlayerSchema.nullable()
 const ActionSchema = z.custom<Action>()
 const MoveSchema = z.custom<Move>()
+const MultiverseSchema = z.custom<Multiverse>()
+const CoordSchema: z.ZodType<Coord> = z.object({
+  l: z.number().int(),
+  t: z.number().int(),
+  x: z.number().int(),
+  y: z.number().int(),
+})
 
 export const MatchRoomStatusSchema = z.enum(['waiting', 'playing', 'finished'])
 export const MatchRoomFinishReasonSchema = z.enum(['checkmate', 'stalemate', 'forfeit'])
@@ -328,3 +337,127 @@ export function parseMatchRoomEvent(value: unknown): MatchRoomEvent {
 
   return MatchRoomEventSchema.parse(data)
 }
+
+export const RecordCursorSchema = z.object({
+  recordLineId: z.number().int().nonnegative(),
+  recordActionIndex: z.number().int().nonnegative(),
+})
+
+export type RecordCursor = z.infer<typeof RecordCursorSchema>
+
+export const StoredRecordLineSchema = z.object({
+  id: z.number().int().nonnegative(),
+  parent: z.object({
+    lineId: z.number().int().nonnegative(),
+    beforeActionIndex: z.number().int().nonnegative(),
+  }).nullable(),
+  actions: z.array(ActionSchema),
+  branchLineIdsBeforeAction: z.array(z.tuple([
+    z.number().int().nonnegative(),
+    z.array(z.number().int().nonnegative()),
+  ])),
+  depth: z.number().int().nonnegative(),
+})
+
+export type StoredRecordLine = z.infer<typeof StoredRecordLineSchema>
+
+export const RecordAnnotationTargetSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('action'),
+    lineId: z.number().int().nonnegative(),
+    actionIndex: z.number().int().nonnegative(),
+    position: z.enum(['before', 'after']),
+  }),
+  z.object({
+    type: z.literal('move'),
+    lineId: z.number().int().nonnegative(),
+    actionIndex: z.number().int().nonnegative(),
+    moveIndex: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal('square'),
+    lineId: z.number().int().nonnegative(),
+    actionIndex: z.number().int().nonnegative(),
+    m: z.number().int(),
+    coord: CoordSchema,
+  }),
+  z.object({
+    type: z.literal('arrow'),
+    lineId: z.number().int().nonnegative(),
+    actionIndex: z.number().int().nonnegative(),
+    from: CoordSchema,
+    fromPlayer: PlayerSchema.optional(),
+    to: CoordSchema,
+    toPlayer: PlayerSchema.optional(),
+  }),
+  z.object({
+    type: z.literal('cursor'),
+    lineId: z.number().int().nonnegative(),
+    actionIndex: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal('line'),
+    lineId: z.number().int().nonnegative(),
+  }),
+])
+
+export type RecordAnnotationTarget = z.infer<typeof RecordAnnotationTargetSchema>
+
+export const RecordActionAnnotationTargetSchema = z.object({
+  type: z.literal('action'),
+  lineId: z.number().int().nonnegative(),
+  actionIndex: z.number().int().nonnegative(),
+  position: z.enum(['before', 'after']),
+})
+
+export type RecordActionAnnotationTarget = z.infer<typeof RecordActionAnnotationTargetSchema>
+
+export const RecordMoveAnnotationTargetSchema = z.object({
+  type: z.literal('move'),
+  lineId: z.number().int().nonnegative(),
+  actionIndex: z.number().int().nonnegative(),
+  moveIndex: z.number().int().nonnegative(),
+})
+
+export type RecordMoveAnnotationTarget = z.infer<typeof RecordMoveAnnotationTargetSchema>
+
+export const StoredRecordAnnotationSchema = z.discriminatedUnion('type', [
+  z.object({
+    id: z.string(),
+    type: z.literal('comment'),
+    target: RecordActionAnnotationTargetSchema,
+    authorId: z.string().optional(),
+    text: z.string(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal('glyph'),
+    target: RecordMoveAnnotationTargetSchema,
+    glyph: z.string(),
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal('marker'),
+    target: RecordAnnotationTargetSchema,
+    authorId: z.string(),
+    color: z.string().optional(),
+    label: z.string().optional(),
+  }),
+])
+
+export type StoredRecordAnnotation = z.infer<typeof StoredRecordAnnotationSchema>
+
+export const StudyDocumentSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  initialMultiverse: MultiverseSchema,
+  rootLineId: z.number().int().nonnegative().catch(0),
+  lines: z.array(StoredRecordLineSchema),
+  annotations: z.array(StoredRecordAnnotationSchema),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+})
+
+export type StudyDocument = z.infer<typeof StudyDocumentSchema>

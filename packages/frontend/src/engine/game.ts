@@ -1,17 +1,26 @@
 import { Action, Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
+import type { StudyDocument } from '@5dcol/shared/protocol'
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, LabelVisibility, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { Easing } from '@engine/easing'
 import { isModifierKeyEvent, isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
-import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type PendingMove, type StoredGameState, type StoredRecordLine } from '@engine/gameState'
+import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type GameBoardFocus, type GameWorkspaceState, type PendingMove, type StoredGameState } from '@engine/gameState'
 import { GameLayout, type ViewportInsets } from '@engine/layout'
 import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
 import { getMoveArrowMaskFill, getMoveArrowPolygon, getStraightMoveArrowPolygon } from '@engine/moveArrow'
 import { PresentPainter } from '@engine/painters/presentPainter'
-import { buildGameRecordActions, type GameRecordCursor, type GameRecordRow } from '@engine/record'
+import { getRecordGlyphColor4, normalizeRecordGlyphText } from '@engine/recordGlyph'
+import { buildGameRecordRows, type GameRecordCursor, type GameRecordMoveSegment, type GameRecordRow } from '@engine/record'
+import {
+  DEFAULT_RECORD_MARKER_AUTHOR_ID,
+  getRecordMarkerAuthorColor,
+  getSpacelikeKey,
+  parseRecordMarkerColor,
+} from '@engine/recordMarker'
+import { isActionPrefix, RecordDocument, type RecordArrowMarkerAnnotation, type RecordCursorTarget, type RecordSquareMarkerAnnotation } from '@engine/recordTree'
 import { type Renderer, RenderItemType } from '@engine/renderer'
 import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
 import { TimelineTilesPainter } from '@engine/painters/timelineTilesPainter'
@@ -35,15 +44,22 @@ export interface GameContext {
   renderer: Renderer
   soundManager: SoundManager
   initialActions?: Action[]
+  storageKey?: string | null
   localPlayer?: Player | null
   viewPlayer?: Player
   autoSwitchViewPlayer?: boolean
   showMoveTravelAnimation?: boolean
   fiveDPGNOptions?: FiveDPGN.ExportOptions
+  initialWorkspace?: GameWorkspaceState | null
   getFiveDPGNExportMetadata?: () => Pick<FiveDPGN.ExportOptions, 'headers' | 'result'>
   getUISoundVolume?: () => number
   getBellSoundVolume?: () => number
+  getRecordAuthorId?: () => string
+  getRecordAuthorColor?: (authorId: string) => string
+  getRecordGlyphColor?: (glyph: string) => Color4
   canControlOnlineGame?: () => boolean
+  canForfeitGame?: () => boolean
+  canFinishGame?: () => boolean
   isExternallyFinished?: () => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
   onRecordChange?: (request: GameExportRequest) => void
@@ -54,6 +70,15 @@ export interface GameContext {
   onActionSubmitted?: (action: Action, actions: Action[]) => void
   onPendingActionChange?: (action: Action | null) => void
   onViewPlayerChange?: (player: Player) => void
+  onWorkspaceChange?: (workspace: GameWorkspaceState) => void
+  onRecordMoveFocusRequest?: (target: GameRecordMoveFocusTarget) => void
+}
+
+export interface GameRecordMoveFocusTarget {
+  recordLineId: number
+  recordActionIndex: number
+  moveIndex: number
+  segmentIndex: number
 }
 
 export interface GameReturnToMainMenuRequest {
@@ -69,6 +94,10 @@ export interface GameExportRequest {
   mode: GameExportMode
   hasPendingMoves: boolean
   currentActionIndex: number
+  currentCursor: {
+    recordLineId: number
+    recordActionIndex: number
+  }
   actions: GameRecordRow[]
 }
 
@@ -89,6 +118,9 @@ interface PointerState {
   touchPointers: Map<number, Vec2>
   pinchLastDistance: number | null
   pinchLastScreen: Vec2 | null
+  clickButton: number | null
+  clickRecordFocus: boolean
+  clickShiftKey: boolean
 }
 
 interface BoardFrame {
@@ -132,6 +164,12 @@ interface BoardSquareHit {
   board: Board
   coord: CoordSpacelike
 }
+interface RecordMarkerSquare {
+  l: number
+  m: number
+  player: Player
+  coord: Coord
+}
 interface MoveAnimation {
   startedAt: number
   cameraCenter: Vec2
@@ -174,20 +212,6 @@ interface PendingCheck {
   fromBoard: { l: number, m: number }
   toBoard: { l: number, m: number }
 }
-interface RecordCursorTarget {
-  recordLineId: number
-  recordActionIndex: number
-}
-interface RecordLine {
-  id: number
-  parent: {
-    lineId: number
-    beforeActionIndex: number
-  } | null
-  actions: Action[]
-  branchLineIdsBeforeAction: Map<number, number[]>
-  depth: number
-}
 interface GameEndBackgroundAnimation {
   from: number
   to: number
@@ -201,7 +225,6 @@ interface ViewFlipTransition {
 }
 const POINTER_CLICK_THRESHOLD = 3
 const PIECE_GHOST_ALPHA = 0.45
-
 export class Game extends Disposable(Empty) {
   constructor(public readonly ctx: GameContext) {
     super()
@@ -217,7 +240,6 @@ export class Game extends Disposable(Empty) {
     this.showMoveTravelAnimation = ctx.showMoveTravelAnimation ?? true
     this.fiveDPGNOptions = ctx.fiveDPGNOptions ?? {}
     this.layout.setViewPlayer(this.viewPlayer)
-    this.resetRecordTree([])
   }
 
   public readonly logger: Logger
@@ -235,9 +257,7 @@ export class Game extends Disposable(Empty) {
   private viewPlayer: Player = Player.W
   private actionIndex = 0
   private actions: Action[] = []
-  private recordLines = new Map<number, RecordLine>()
-  private activeRecordLineId = 0
-  private nextRecordLineId = 1
+  private recordDocument = RecordDocument.create([])
   private readonly pointer: PointerState = {
     screen: [0, 0],
     activePointerId: null,
@@ -247,12 +267,17 @@ export class Game extends Disposable(Empty) {
     touchPointers: new Map(),
     pinchLastDistance: null,
     pinchLastScreen: null,
+    clickButton: null,
+    clickRecordFocus: false,
+    clickShiftKey: false,
   }
   private cameraMotion: CameraMotion | null = null
   private selectedPiece: PieceSelection | null = null
   private hoverSquare: SquareHover | null = null
   private hoverPiece: PieceSelection | null = null
   private hoverCheckWarning: { l: number, m: number } | null = null
+  private pendingArrowMarkerStart: RecordMarkerSquare | null = null
+  private dragArrowMarkerStart: RecordMarkerSquare | null = null
   private pendingMove: PendingMove | null = null
   private pendingMoves: PendingMove[] = []
   private checkWarningBoards: Array<{ l: number, m: number }> = []
@@ -281,6 +306,8 @@ export class Game extends Disposable(Empty) {
   private autoSwitchViewPlayer = true
   private showMoveTravelAnimation = true
   private fiveDPGNOptions: FiveDPGN.ExportOptions = {}
+  private focusedBoard: GameBoardFocus | null = null
+  private restoredWorkspace: GameWorkspaceState | null = null
 
   private animationFrame: number | null = null
   private resizeDirty = false
@@ -292,7 +319,12 @@ export class Game extends Disposable(Empty) {
       ? this.restoreInitialActions(this.ctx.initialActions)
       : this.restoreGameState()
     this.renderer.start()
-    if (restored) this.focusCurrentPresent({ smooth: false })
+    const workspace = this.ctx.initialWorkspace ?? this.restoredWorkspace
+    if (restored) {
+      if (! this.applyWorkspaceState(workspace, { smooth: false })) {
+        this.focusCurrentPresent({ smooth: false })
+      }
+    }
     else this.focusInitialTurn({ smooth: false })
     this.bindEvents()
     this.updateGameEndState()
@@ -379,22 +411,22 @@ export class Game extends Disposable(Empty) {
   public deleteRecordFutureAtCursor(cursor: GameRecordCursor): boolean {
     if (this.isOnlineGame()) return false
     if (this.isMoveAnimating() || this.pendingMoves.length > 0) return false
-    const target = this.resolveRecordCursorTarget(cursor)
+    const target = this.recordDocument.resolveCursorTarget(cursor)
     if (! target) return false
-    if (! this.hasRecordFutureAt(target.recordLineId, target.recordActionIndex)) return false
+    if (! this.recordDocument.hasFutureAt(target.recordLineId, target.recordActionIndex)) return false
 
-    this.deleteActiveEmptyRecordLineIfLeaving(target.recordLineId)
-    this.deleteRecordFuture(target.recordLineId, target.recordActionIndex)
-    const actions = this.getRecordLineFullActions(target.recordLineId)
-    const targetActionIndex = this.getRecordLinePrefixActions(target.recordLineId).length
+    this.recordDocument.deleteActiveEmptyLineIfLeaving(target.recordLineId)
+    this.recordDocument.deleteFuture(target.recordLineId, target.recordActionIndex)
+    const actions = this.recordDocument.getLineFullActions(target.recordLineId)
+    const targetActionIndex = this.recordDocument.getLinePrefixActions(target.recordLineId).length
       + target.recordActionIndex
-    this.activeRecordLineId = target.recordLineId
+    this.recordDocument.setActiveLine(target.recordLineId)
     this.applyRecordActionPath(actions, targetActionIndex)
     return true
   }
 
   public rollbackToRecordCursor(cursor: GameRecordCursor): boolean {
-    const target = this.resolveRecordCursorTarget(cursor)
+    const target = this.recordDocument.resolveCursorTarget(cursor)
     if (! target) return false
 
     return this.rollbackToRecordCursorTarget(target)
@@ -404,19 +436,67 @@ export class Game extends Disposable(Empty) {
     if (this.isOnlineGame()) return false
     if (this.pendingMoves.length > 0) return false
 
-    const target = this.getNextRecordVariationCursorTarget()
+    const target = this.recordDocument.getNextVariationCursorTarget(this.actionIndex)
     if (! target) return false
 
     return this.rollbackToRecordCursorTarget(target)
   }
 
-  private rollbackToRecordCursorTarget(target: RecordCursorTarget): boolean {
-    this.deleteActiveEmptyRecordLineIfLeaving(target.recordLineId)
+  public replaceRecordActionComments({
+    recordLineId,
+    recordActionIndex,
+    position,
+    texts,
+  }: {
+    recordLineId: number
+    recordActionIndex: number
+    position: 'before' | 'after'
+    texts: readonly string[]
+  }): boolean {
+    if (this.isOnlineGame()) return false
+    const changed = this.recordDocument.replaceActionComments(
+      recordLineId,
+      recordActionIndex,
+      position,
+      texts,
+    )
+    if (! changed) return false
 
-    const actions = this.getRecordLineFullActions(target.recordLineId)
-    const targetActionIndex = this.getRecordLinePrefixActions(target.recordLineId).length
+    this.persistGameState()
+    return true
+  }
+
+  public replaceRecordMoveGlyphs({
+    recordLineId,
+    recordActionIndex,
+    moveIndex,
+    glyphs,
+  }: {
+    recordLineId: number
+    recordActionIndex: number
+    moveIndex: number
+    glyphs: readonly string[]
+  }): boolean {
+    if (this.isOnlineGame()) return false
+    const changed = this.recordDocument.replaceMoveGlyphs(
+      recordLineId,
+      recordActionIndex,
+      moveIndex,
+      glyphs,
+    )
+    if (! changed) return false
+
+    this.persistGameState()
+    return true
+  }
+
+  private rollbackToRecordCursorTarget(target: RecordCursorTarget): boolean {
+    this.recordDocument.deleteActiveEmptyLineIfLeaving(target.recordLineId)
+
+    const actions = this.recordDocument.getLineFullActions(target.recordLineId)
+    const targetActionIndex = this.recordDocument.getLinePrefixActions(target.recordLineId).length
       + target.recordActionIndex
-    this.activeRecordLineId = target.recordLineId
+    this.recordDocument.setActiveLine(target.recordLineId)
     this.applyRecordActionPath(actions, targetActionIndex)
     return true
   }
@@ -521,17 +601,55 @@ export class Game extends Disposable(Empty) {
     this.syncStatus()
   }
 
+  public loadStudyDocument(
+    studyDocument: StudyDocument,
+    {
+      focus = true,
+      workspace = this.ctx.initialWorkspace ?? null,
+    }: {
+      focus?: boolean
+      workspace?: GameWorkspaceState | null
+    } = {},
+  ): boolean {
+    const recordDocument = RecordDocument.fromStudyDocument(studyDocument)
+    if (! recordDocument) return false
+
+    const actions = recordDocument.getLineFullActions(studyDocument.rootLineId)
+    this.loadCoreGameState(CoreGameState.create(actions, [], studyDocument.initialMultiverse), {
+      focus: false,
+      recordDocument,
+    })
+    if (! this.applyWorkspaceState(workspace, { smooth: false }, { focusCamera: focus }) && focus) {
+      this.focusCurrentPresent({ smooth: false })
+    }
+    this.syncToolbarButtons()
+    this.syncRecord()
+    this.syncStatus()
+    return true
+  }
+
+  public getStudyDocument({ id, title }: { id: string, title: string }): StudyDocument {
+    return this.recordDocument.toStudyDocument({
+      id,
+      title,
+      initialMultiverse: this.initialMultiverse,
+    })
+  }
+
   private restoreInitialActions(actions: Action[]): boolean {
     this.loadCoreGameState(CoreGameState.create(actions), { focus: false })
     return actions.length > 0
   }
 
   private restoreGameState(): boolean {
+    const storageKey = this.getStorageKey()
+    if (! storageKey) return false
+
     const storage = getLocalStorage()
     if (! storage) return false
 
     try {
-      const raw = storage.getItem(GAME_STORAGE_KEY)
+      const raw = storage.getItem(storageKey)
       if (! raw) return false
 
       const state = JSON.parse(raw) as Partial<StoredGameState>
@@ -560,6 +678,7 @@ export class Game extends Disposable(Empty) {
       this.pendingMoves = preview.pendingMoves
       this.multiverse = preview.multiverse
       this.pendingMove = this.pendingMoves.at(-1) ?? null
+      this.restoredWorkspace = state.workspace ?? null
       this.clearMoveAnimation()
       this.submitRequestedDuringMoveAnimation = false
       this.deselectPiece()
@@ -580,25 +699,28 @@ export class Game extends Disposable(Empty) {
       return
     }
 
+    const storageKey = this.getStorageKey()
     const storage = getLocalStorage()
 
     const state: StoredGameState = {
       version: 1,
       initialMultiverse: this.initialMultiverse,
       actions: this.actions,
-      recordLines: this.serializeRecordLines(),
-      activeRecordLineId: this.activeRecordLineId,
-      nextRecordLineId: this.nextRecordLineId,
+      recordLines: this.recordDocument.serializeLines(),
+      recordAnnotations: this.recordDocument.serializeAnnotations(),
+      activeRecordLineId: this.recordDocument.activeRecordLineId,
+      nextRecordLineId: this.recordDocument.nextRecordLineId,
       multiverseCommitted: this.multiverseCommitted,
       multiverse: this.multiverse,
       player: this.player,
       actionIndex: this.actionIndex,
       pendingMoves: this.pendingMoves.filter(pendingMove => ! pendingMove.isPass),
+      workspace: this.getWorkspaceState(),
     }
 
-    if (storage) {
+    if (storage && storageKey) {
       try {
-        storage.setItem(GAME_STORAGE_KEY, JSON.stringify(state))
+        storage.setItem(storageKey, JSON.stringify(state))
       }
       catch {
         this.logger.error('Failed to save game state')
@@ -609,332 +731,31 @@ export class Game extends Disposable(Empty) {
   }
 
   private resetRecordTree(actions: Action[]) {
-    this.recordLines.clear()
-    this.nextRecordLineId = 1
-    this.activeRecordLineId = 0
-    this.recordLines.set(0, {
-      id: 0,
-      parent: null,
-      actions: [...actions],
-      branchLineIdsBeforeAction: new Map(),
-      depth: 0,
-    })
+    this.recordDocument = RecordDocument.create(actions)
   }
 
   private restoreRecordTree(state: Partial<StoredGameState>, fallbackActions: Action[]): boolean {
-    if (! state.recordLines || state.recordLines.length === 0) return false
-
-    const lines = new Map<number, RecordLine>()
-    for (const stored of state.recordLines) {
-      if (! this.isStoredRecordLine(stored)) return false
-      lines.set(stored.id, {
-        id: stored.id,
-        parent: stored.parent,
-        actions: [...stored.actions],
-        branchLineIdsBeforeAction: new Map(stored.branchLineIdsBeforeAction),
-        depth: stored.depth,
-      })
-    }
-    if (! lines.has(0)) return false
-
-    const activeRecordLineId = state.activeRecordLineId ?? 0
-    if (! lines.has(activeRecordLineId)) return false
-
-    this.recordLines = lines
-    this.activeRecordLineId = activeRecordLineId
-    this.nextRecordLineId = Math.max(
-      state.nextRecordLineId ?? 1,
-      ...[...lines.keys()].map(id => id + 1),
-    )
-
-    if (! isActionPrefix(fallbackActions, this.getRecordLineFullActions(this.activeRecordLineId))) {
-      this.resetRecordTree(fallbackActions)
-      return false
-    }
-    return true
-  }
-
-  private isStoredRecordLine(line: unknown): line is StoredRecordLine {
-    if (! line || typeof line !== 'object') return false
-    const value = line as Partial<StoredRecordLine>
-    return typeof value.id === 'number'
-      && (value.parent === null || (
-        typeof value.parent === 'object'
-        && typeof value.parent.lineId === 'number'
-        && typeof value.parent.beforeActionIndex === 'number'
-      ))
-      && Array.isArray(value.actions)
-      && Array.isArray(value.branchLineIdsBeforeAction)
-      && value.branchLineIdsBeforeAction.every(entry => (
-        Array.isArray(entry)
-        && typeof entry[0] === 'number'
-        && Array.isArray(entry[1])
-        && entry[1].every(id => typeof id === 'number')
-      ))
-      && typeof value.depth === 'number'
-  }
-
-  private serializeRecordLines(): StoredRecordLine[] {
-    return [...this.recordLines.values()].map(line => ({
-      id: line.id,
-      parent: line.parent,
-      actions: line.actions,
-      branchLineIdsBeforeAction: [...line.branchLineIdsBeforeAction.entries()],
-      depth: line.depth,
-    }))
-  }
-
-  private createRecordLine({
-    parent,
-    actions,
-    depth,
-  }: {
-    parent: RecordLine['parent']
-    actions: Action[]
-    depth: number
-  }): RecordLine {
-    const line: RecordLine = {
-      id: this.nextRecordLineId++,
-      parent,
-      actions: [...actions],
-      branchLineIdsBeforeAction: new Map(),
-      depth,
-    }
-    this.recordLines.set(line.id, line)
-    return line
-  }
-
-  private getActiveRecordLine(): RecordLine {
-    return this.recordLines.get(this.activeRecordLineId) ?? this.recordLines.get(0)!
-  }
-
-  private getRecordLinePrefixActions(lineId: number): Action[] {
-    const line = this.recordLines.get(lineId)
-    if (! line?.parent) return []
-
-    const parent = this.recordLines.get(line.parent.lineId)
-    if (! parent) return []
-
-    return [
-      ...this.getRecordLinePrefixActions(parent.id),
-      ...parent.actions.slice(0, line.parent.beforeActionIndex),
-    ]
-  }
-
-  private getRecordLineFullActions(lineId: number): Action[] {
-    const line = this.recordLines.get(lineId)
-    if (! line) return []
-
-    return [
-      ...this.getRecordLinePrefixActions(lineId),
-      ...line.actions,
-    ]
-  }
-
-  private getActiveRecordLineLocalActionIndex(): number {
-    const prefixLength = this.getRecordLinePrefixActions(this.activeRecordLineId).length
-    return Scalar.clamp(
-      this.actionIndex - prefixLength,
-      0,
-      this.getActiveRecordLine().actions.length,
-    )
-  }
-
-  private resolveRecordCursorTarget(cursor: GameRecordCursor): RecordCursorTarget | null {
-    const line = this.recordLines.get(cursor.recordLineId)
-    if (! line) return null
-
-    if (line.parent && this.isEmptyRecordLineTree(line.id)) {
-      return {
-        recordLineId: line.parent.lineId,
-        recordActionIndex: line.parent.beforeActionIndex,
-      }
-    }
-
-    return {
-      recordLineId: line.id,
-      recordActionIndex: Scalar.clamp(
-        Math.floor(cursor.recordActionIndex),
-        0,
-        line.actions.length,
-      ),
-    }
-  }
-
-  private getNextRecordVariationCursorTarget(): RecordCursorTarget | null {
-    const line = this.getActiveRecordLine()
-    const actionIndex = this.getActiveRecordLineLocalActionIndex()
-    const current = {
-      recordLineId: line.id,
-      recordActionIndex: actionIndex,
-    }
-
-    if (line.parent && actionIndex === 0) {
-      return this.getNextRecordVariationTarget(
-        this.getRecordVariationTargets(line.parent.lineId, line.parent.beforeActionIndex),
-        current,
-      )
-    }
-
-    return this.getNextRecordVariationTarget(
-      this.getRecordVariationTargets(line.id, actionIndex),
-      current,
-    )
-  }
-
-  private getRecordVariationTargets(lineId: number, actionIndex: number): RecordCursorTarget[] {
-    const line = this.recordLines.get(lineId)
-    if (! line) return []
-
-    const localActionIndex = Scalar.clamp(
-      Math.floor(actionIndex),
-      0,
-      line.actions.length,
-    )
-    const targets = (line.branchLineIdsBeforeAction.get(localActionIndex) ?? [])
-      .filter(branchId => this.recordLines.has(branchId))
-      .map(branchId => ({
-        recordLineId: branchId,
-        recordActionIndex: 0,
-      }))
-
-    if (localActionIndex < line.actions.length) {
-      targets.push({
-        recordLineId: line.id,
-        recordActionIndex: localActionIndex,
-      })
-    }
-
-    return targets
-  }
-
-  private getNextRecordVariationTarget(
-    targets: RecordCursorTarget[],
-    current: RecordCursorTarget,
-  ): RecordCursorTarget | null {
-    if (targets.length === 0) return null
-
-    const currentIndex = targets.findIndex(target => this.isSameRecordCursorTarget(target, current))
-    const target = targets[currentIndex >= 0 ? (currentIndex + 1) % targets.length : 0]!
-    return this.isSameRecordCursorTarget(target, current) ? null : target
-  }
-
-  private isSameRecordCursorTarget(a: RecordCursorTarget, b: RecordCursorTarget): boolean {
-    return a.recordLineId === b.recordLineId
-      && a.recordActionIndex === b.recordActionIndex
-  }
-
-  private deleteActiveEmptyRecordLineIfLeaving(nextRecordLineId: number) {
-    if (this.activeRecordLineId === nextRecordLineId) return
-    this.deleteEmptyRecordLineTree(this.activeRecordLineId)
-  }
-
-  private deleteEmptyRecordLineTree(lineId: number): boolean {
-    if (lineId === 0 || ! this.isEmptyRecordLineTree(lineId)) return false
-    this.deleteRecordLineTree(lineId)
-    if (this.activeRecordLineId === lineId) this.activeRecordLineId = 0
-    return true
-  }
-
-  private isEmptyRecordLineTree(lineId: number): boolean {
-    const line = this.recordLines.get(lineId)
-    if (! line || line.actions.length > 0) return false
-    return this.getRecordLineChildIds(line).every(childId => this.isEmptyRecordLineTree(childId))
-  }
-
-  private deleteRecordLineTree(lineId: number) {
-    const line = this.recordLines.get(lineId)
-    if (! line) return
-
-    for (const childId of this.getRecordLineChildIds(line)) {
-      this.deleteRecordLineTree(childId)
-    }
-
-    if (line.parent) {
-      const parent = this.recordLines.get(line.parent.lineId)
-      const branchIds = parent?.branchLineIdsBeforeAction.get(line.parent.beforeActionIndex)
-      if (branchIds) {
-        const nextBranchIds = branchIds.filter(id => id !== line.id)
-        if (nextBranchIds.length > 0) {
-          parent!.branchLineIdsBeforeAction.set(line.parent.beforeActionIndex, nextBranchIds)
-        }
-        else {
-          parent!.branchLineIdsBeforeAction.delete(line.parent.beforeActionIndex)
-        }
-      }
-    }
-
-    this.recordLines.delete(lineId)
-  }
-
-  private getRecordLineChildIds(line: RecordLine): number[] {
-    return [...line.branchLineIdsBeforeAction.values()].flat()
+    const nextDocument = RecordDocument.create(fallbackActions)
+    const restored = nextDocument.restore(state, fallbackActions)
+    this.recordDocument = nextDocument
+    return restored
   }
 
   private appendActionToActiveRecordLine(action: Action) {
-    const line = this.getActiveRecordLine()
-    const localActionIndex = this.getActiveRecordLineLocalActionIndex()
-    const nextAction = line.actions[localActionIndex]
-    if (nextAction && Action.isSame(nextAction, action)) {
-      this.actions = this.getRecordLineFullActions(line.id)
-      return
-    }
-
-    const branchIds = line.branchLineIdsBeforeAction.get(localActionIndex) ?? []
-    const matchingBranchId = branchIds.find((branchId) => {
-      const branchLine = this.recordLines.get(branchId)
-      const branchAction = branchLine?.actions[0]
-      return branchAction ? Action.isSame(branchAction, action) : false
-    })
-    if (matchingBranchId !== undefined) {
-      this.activeRecordLineId = matchingBranchId
-      this.actions = this.getRecordLineFullActions(matchingBranchId)
-      return
-    }
-
-    if (localActionIndex < line.actions.length || branchIds.length > 0) {
-      const branchLine = this.createRecordLine({
-        parent: {
-          lineId: line.id,
-          beforeActionIndex: localActionIndex,
-        },
-        actions: [action],
-        depth: line.depth + 1,
-      })
-      branchIds.push(branchLine.id)
-      line.branchLineIdsBeforeAction.set(localActionIndex, branchIds)
-      this.activeRecordLineId = branchLine.id
-      this.actions = this.getRecordLineFullActions(branchLine.id)
-      return
-    }
-
-    line.actions.push(action)
-    this.actions = this.getRecordLineFullActions(line.id)
+    this.actions = this.recordDocument.appendActionToActiveLine(action, this.actionIndex)
   }
 
-  private hasRecordFutureAt(lineId: number, actionIndex: number): boolean {
-    const line = this.recordLines.get(lineId)
-    if (! line) return false
-    return actionIndex < line.actions.length
-      || [...line.branchLineIdsBeforeAction.keys()].some(key => key >= actionIndex)
-  }
-
-  private deleteRecordFuture(lineId: number, actionIndex: number) {
-    const line = this.recordLines.get(lineId)
-    if (! line) return
-
-    line.actions = line.actions.slice(0, actionIndex)
-    for (const key of [...line.branchLineIdsBeforeAction.keys()]) {
-      if (key < actionIndex) continue
-      const branchIds = line.branchLineIdsBeforeAction.get(key) ?? []
-      for (const branchId of branchIds) {
-        this.deleteRecordLineTree(branchId)
-      }
-      line.branchLineIdsBeforeAction.delete(key)
-    }
-  }
-
-  private applyRecordActionPath(actions: Action[], actionIndex: number) {
+  private applyRecordActionPath(
+    actions: Action[],
+    actionIndex: number,
+    {
+      persist = true,
+      focus = true,
+    }: {
+      persist?: boolean
+      focus?: boolean
+    } = {},
+  ) {
     const targetActionIndex = Scalar.clamp(Math.floor(actionIndex), 0, actions.length)
     const state = CoreGameState.create(actions.slice(0, targetActionIndex), [], this.initialMultiverse)
     this.initialMultiverse = state.initialMultiverse
@@ -957,8 +778,12 @@ export class Game extends Disposable(Empty) {
     this.clearPointerDrag()
     this.updateGameEndState()
     this.syncCheckState()
-    this.persistGameState()
-    this.focusCurrentPresent()
+    if (persist) this.persistGameState()
+    else {
+      this.syncRecord()
+      this.syncStatus()
+    }
+    if (focus) this.focusCurrentPresent()
     this.syncToolbarButtons()
   }
 
@@ -978,13 +803,20 @@ export class Game extends Disposable(Empty) {
   }
 
   private clearStoredGameState() {
+    const storageKey = this.getStorageKey()
+    if (! storageKey) return
+
     const storage = getLocalStorage()
     if (! storage) return
 
     try {
-      storage.removeItem(GAME_STORAGE_KEY)
+      storage.removeItem(storageKey)
     }
     catch {} // Ignore storage cleanup failures; gameplay state should still reset in memory.
+  }
+
+  private getStorageKey(): string | null {
+    return this.ctx.storageKey === undefined ? GAME_STORAGE_KEY : this.ctx.storageKey
   }
 
   private bindEvents() {
@@ -1027,8 +859,11 @@ export class Game extends Disposable(Empty) {
     this.collect(Effect.useListener(window, 'contextmenu', e => {
       if (this.gameInputDisabled) return
       e.preventDefault()
-      if (! this.isMoveAnimating()) this.cancelPieceSelection()
-      this.finishPointerGesture()
+    }))
+
+    this.collect(Effect.useListener(window, 'auxclick', e => {
+      if (this.gameInputDisabled) return
+      if (e.button === 1) e.preventDefault()
     }))
 
     this.collect(Effect.useListener(window, 'keydown', e => {
@@ -1049,7 +884,9 @@ export class Game extends Disposable(Empty) {
   private handlePointerDown(e: PointerEvent) {
     if (this.gameInputDisabled) return
     if (! e.isPrimary && e.pointerType !== 'touch') return
-    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1 && e.button !== 2) return
+    const recordFocusClick = e.pointerType === 'mouse' && (e.button === 1 || (e.button === 0 && e.shiftKey))
+    if (recordFocusClick || e.button === 2) e.preventDefault()
 
     const screen = this.getPointerScreen(e)
     this.pointer.screen = screen
@@ -1070,6 +907,12 @@ export class Game extends Disposable(Empty) {
     this.pointer.dragStartScreen = screen
     this.pointer.dragLastScreen = screen
     this.pointer.dragExceeded = false
+    this.pointer.clickButton = e.pointerType === 'mouse' ? e.button : 0
+    this.pointer.clickRecordFocus = recordFocusClick
+    this.pointer.clickShiftKey = e.shiftKey
+    if (this.pointer.clickButton === 2) {
+      this.dragArrowMarkerStart = this.getRecordMarkerSquareAtScreen(screen)
+    }
   }
 
   private handlePointerMove(e: PointerEvent) {
@@ -1090,7 +933,7 @@ export class Game extends Disposable(Empty) {
 
     if (this.pointer.activePointerId !== null && this.pointer.activePointerId !== e.pointerId) return
     this.updatePointerDragExceeded(screen)
-    this.panByPointerDrag(screen)
+    if (this.pointer.clickButton === 0 && ! this.pointer.clickRecordFocus) this.panByPointerDrag(screen)
   }
 
   private handlePointerUp(e: PointerEvent) {
@@ -1111,7 +954,16 @@ export class Game extends Disposable(Empty) {
     if (this.pointer.activePointerId !== e.pointerId) return
     const screen = this.getPointerScreen(e)
     this.pointer.screen = screen
-    if (! this.pointer.dragExceeded) this.handleBoardClick(screen)
+    this.updatePointerDragExceeded(screen)
+    if (e.pointerType === 'mouse' && (this.pointer.clickRecordFocus || this.pointer.clickButton === 2)) e.preventDefault()
+    if (! this.pointer.dragExceeded) {
+      if (this.pointer.clickButton === 2) this.handleRecordMarkerClick(screen)
+      else if (this.pointer.clickRecordFocus) this.handleBoardRecordFocusClick(screen)
+      else this.handleBoardClick(screen)
+    }
+    else if (this.pointer.clickButton === 2) {
+      this.handleRecordMarkerDrag(screen)
+    }
     this.finishPointerGesture()
   }
 
@@ -1210,6 +1062,10 @@ export class Game extends Disposable(Empty) {
     this.pointer.touchPointers.clear()
     this.pointer.pinchLastDistance = null
     this.pointer.pinchLastScreen = null
+    this.pointer.clickButton = null
+    this.pointer.clickRecordFocus = false
+    this.pointer.clickShiftKey = false
+    this.dragArrowMarkerStart = null
   }
 
   private finishPointerGesture() {
@@ -1355,6 +1211,7 @@ export class Game extends Disposable(Empty) {
 
   public focusBoard(l: number, m: number, options: ViewportFocusOptions = {}) {
     const motion = this.focusRect(this.layout.getBoardRect(l, m), options)
+    this.focusedBoard = { l, m }
     this.boardFocusPulse = {
       l,
       m,
@@ -1363,6 +1220,98 @@ export class Game extends Disposable(Empty) {
       heldForMotion: false,
       releaseStartedAt: null,
     }
+    this.syncWorkspace()
+    this.persistGameState()
+  }
+
+  private applyWorkspaceState(
+    workspace: GameWorkspaceState | null | undefined,
+    options: ViewportFocusOptions = {},
+    { focusCamera = true }: { focusCamera?: boolean } = {},
+  ): boolean {
+    if (! workspace) return false
+
+    let restored = false
+    if (workspace.recordCursor) {
+      const target = this.recordDocument.resolveCursorTarget(workspace.recordCursor)
+      if (target) {
+        const actions = this.recordDocument.getLineFullActions(target.recordLineId)
+        const targetActionIndex = this.recordDocument.getLinePrefixActions(target.recordLineId).length
+          + target.recordActionIndex
+        this.recordDocument.setActiveLine(target.recordLineId)
+        this.applyRecordActionPath(actions, targetActionIndex, {
+          persist: false,
+          focus: false,
+        })
+        restored = true
+      }
+    }
+
+    if (workspace.focusedBoard && this.hasBoardAt(workspace.focusedBoard)) {
+      if (focusCamera) this.focusBoard(workspace.focusedBoard.l, workspace.focusedBoard.m, options)
+      else this.focusedBoard = { ...workspace.focusedBoard }
+      return true
+    }
+
+    this.focusedBoard = null
+    if (restored && focusCamera) this.focusCurrentPresent(options)
+    return restored
+  }
+
+  private syncWorkspace() {
+    this.ctx.onWorkspaceChange?.(this.getWorkspaceState())
+  }
+
+  private getWorkspaceState(): GameWorkspaceState {
+    return {
+      recordCursor: this.getCurrentRecordCursorTarget(),
+      focusedBoard: this.getValidFocusedBoard(),
+    }
+  }
+
+  public focusRecordMoveSegment(segment: GameRecordMoveSegment): boolean {
+    if (
+      segment.recordLineId === undefined
+        || segment.recordActionIndex === undefined
+        || segment.moveIndex === undefined
+    ) {
+      this.focusBoard(segment.l, segment.m)
+      return true
+    }
+
+    const board = segment.segmentIndex === 0 && (segment.segmentCount ?? 1) > 1
+      ? { l: segment.l, m: segment.m }
+      : this.getBoardCreatedByRecordMove(
+          segment.recordLineId,
+          segment.recordActionIndex,
+          segment.moveIndex,
+        )
+    if (board) {
+      this.focusBoard(board.l, board.m)
+    }
+    else {
+      this.focusBoard(segment.l, segment.m)
+    }
+    this.ctx.onRecordMoveFocusRequest?.({
+      recordLineId: segment.recordLineId,
+      recordActionIndex: segment.recordActionIndex,
+      moveIndex: segment.moveIndex,
+      segmentIndex: segment.segmentIndex ?? 0,
+    })
+    return true
+  }
+
+  private getValidFocusedBoard(): GameBoardFocus | null {
+    if (! this.focusedBoard) return null
+    if (this.hasBoardAt(this.focusedBoard)) return { ...this.focusedBoard }
+
+    this.focusedBoard = null
+    return null
+  }
+
+  private hasBoardAt({ l, m }: GameBoardFocus): boolean {
+    const line = Multiverse.getLine(this.multiverse, l)
+    return line?.boards[m] !== undefined
   }
 
   private focusInitialTurn(options: ViewportFocusOptions = {}) {
@@ -1537,6 +1486,7 @@ export class Game extends Disposable(Empty) {
     if (this.pointer.dragExceeded || this.pointer.pinchLastDistance !== null) return false
     const canControlTurn = this.canControlTurn()
     if (canControlTurn && this.hoverCheckWarning) return true
+    if (this.hoverSquare && this.canEditRecordMarkers()) return true
 
     if (canControlTurn && this.selectedPiece?.player === this.player && this.hoverSquare) {
       const { l, m, coord } = this.hoverSquare
@@ -1549,14 +1499,16 @@ export class Game extends Disposable(Empty) {
     if (this.hoverPiece) return true
 
     const selection = this.getInspectablePieceSelectionAtScreen(this.pointer.screen)
-    return selection !== null
+    if (selection !== null) return true
+
+    return this.getRecordBoardTargetAtScreen(this.pointer.screen) !== null
   }
 
   private getToolbarButtons(): ButtonConfig[] {
     const finishGameButton = this.shouldShowFinishGameButton()
       ? {
           id: 'submit-moves',
-          disabled: false,
+          disabled: this.ctx.canFinishGame?.() === false,
           colorPreset: this.getGameStatusButtonColor(),
           turnPlayer: this.getGameStatusPlayer(),
           labelKey: 'button.finishGame',
@@ -1612,8 +1564,8 @@ export class Game extends Disposable(Empty) {
         },
       },
       {
-        id: 'restart-game',
-        disabled: false,
+        id: 'forfeit-game',
+        disabled: this.ctx.canForfeitGame?.() === false,
         colorPreset: getPlayerButtonColor(this.player),
         turnPlayer: this.player,
         labelKey: 'button.forfeit',
@@ -1780,14 +1732,186 @@ export class Game extends Disposable(Empty) {
       if (this.tryCreatePassAt(screen)) return
       if (this.tryCreateMoveAt(screen)) return
     }
-    this.selectPieceAt(screen)
+    if (this.selectPieceAt(screen)) return
   }
 
-  private selectPieceAt(screen: Vec2) {
+  private handleBoardRecordFocusClick(screen: Vec2) {
+    if (this.gameInputDisabled) return
+
+    const hit = this.getBoardSquareAtScreen(screen)
+    if (! hit) return
+
+    const target = this.getRecordBoardTargetAtScreen(screen)
+    this.focusBoard(hit.l, hit.m)
+    if (target) this.ctx.onRecordMoveFocusRequest?.(target)
+    this.playUISound()
+  }
+
+  private selectPieceAt(screen: Vec2): boolean {
     const selection = this.getInspectablePieceSelectionAtScreen(screen)
-    if (! selection) return
+    if (! selection) return false
     this.selectedPiece = selection
     this.playUISound()
+    return true
+  }
+
+  private handleRecordMarkerClick(screen: Vec2): boolean {
+    if (! this.canEditRecordMarkers()) return false
+    const square = this.getRecordMarkerSquareAtScreen(screen)
+    if (! square) return false
+
+    if (this.pointer.clickShiftKey) {
+      this.pendingArrowMarkerStart = square
+      this.deselectPiece()
+      this.playUISound()
+      return true
+    }
+
+    const pendingStart = this.pendingArrowMarkerStart
+    if (pendingStart) {
+      this.pendingArrowMarkerStart = null
+      if (! this.isSameRecordMarkerSquare(pendingStart, square)) {
+        return this.toggleArrowMarker(pendingStart, square)
+      }
+    }
+
+    return this.toggleSquareMarker(square)
+  }
+
+  private handleRecordMarkerDrag(screen: Vec2): boolean {
+    if (! this.canEditRecordMarkers()) return false
+    const from = this.dragArrowMarkerStart
+    const to = this.getRecordMarkerSquareAtScreen(screen)
+    if (! from || ! to) return false
+    if (this.isSameRecordMarkerSquare(from, to)) return this.toggleSquareMarker(to)
+    this.pendingArrowMarkerStart = null
+    return this.toggleArrowMarker(from, to)
+  }
+
+  private getRecordMarkerSquareAtScreen(screen: Vec2): RecordMarkerSquare | null {
+    const hit = this.getBoardSquareAtScreen(screen)
+    if (! hit) return null
+
+    const boardPlayer = this.getBoardPlayer(hit.m)
+    return {
+      l: hit.l,
+      m: hit.m,
+      player: boardPlayer,
+      coord: {
+        l: hit.l,
+        t: Coord.turn(hit.m, boardPlayer),
+        x: hit.coord.x,
+        y: hit.coord.y,
+      },
+    }
+  }
+
+  private toggleSquareMarker(square: RecordMarkerSquare): boolean {
+    const target = this.getCurrentRecordCursorTarget()
+    const changed = this.recordDocument.toggleSquareMarker(
+      target.recordLineId,
+      target.recordActionIndex,
+      square.m,
+      square.coord,
+      this.getRecordMarkerAuthor(),
+    )
+    if (! changed) return false
+
+    this.deselectPiece()
+    this.playUISound()
+    this.persistGameState()
+    this.syncRecord()
+    return true
+  }
+
+  private toggleArrowMarker(from: RecordMarkerSquare, to: RecordMarkerSquare): boolean {
+    const target = this.getCurrentRecordCursorTarget()
+    const changed = this.recordDocument.toggleArrowMarker(
+      target.recordLineId,
+      target.recordActionIndex,
+      from.coord,
+      from.player,
+      to.coord,
+      to.player,
+      this.getRecordMarkerAuthor(),
+    )
+    if (! changed) return false
+
+    this.deselectPiece()
+    this.playUISound()
+    this.persistGameState()
+    this.syncRecord()
+    return true
+  }
+
+  private getRecordMarkerAuthor(): { authorId: string, color: string } {
+    const authorId = this.ctx.getRecordAuthorId?.() ?? DEFAULT_RECORD_MARKER_AUTHOR_ID
+    return {
+      authorId,
+      color: this.getRecordMarkerColor(authorId),
+    }
+  }
+
+  private getRecordMarkerColor(authorId: string, explicitColor?: string): string {
+    return this.ctx.getRecordAuthorColor?.(authorId)
+      ?? explicitColor
+      ?? getRecordMarkerAuthorColor(authorId)
+  }
+
+  private isSameRecordMarkerSquare(a: RecordMarkerSquare, b: RecordMarkerSquare): boolean {
+    return a.l === b.l
+      && a.m === b.m
+      && a.coord.x === b.coord.x
+      && a.coord.y === b.coord.y
+  }
+
+  private canEditRecordMarkers(): boolean {
+    return ! this.isOnlineGame()
+      && ! this.isMoveAnimating()
+      && this.pendingMoves.length === 0
+  }
+
+  private getRecordBoardTargetAtScreen(screen: Vec2): GameRecordMoveFocusTarget | null {
+    const hit = this.getBoardSquareAtScreen(screen)
+    if (! hit) return null
+    if (! hit.board.createdBy) return null
+    if (hit.board.createdByOrder === null) return null
+
+    const fullActionIndex = Math.floor(hit.board.createdByOrder / CoreGameState.MOVE_ORDER_STRIDE)
+    const actionTarget = this.recordDocument.getLineFullActionTarget(
+      this.recordDocument.activeRecordLineId,
+      fullActionIndex,
+    )
+    if (! actionTarget) return null
+    return {
+      ...actionTarget,
+      moveIndex: hit.board.createdByOrder % CoreGameState.MOVE_ORDER_STRIDE,
+      segmentIndex: hit.board.createdByRole === 'target' ? 1 : 0,
+    }
+  }
+
+  private getBoardCreatedByRecordMove(
+    recordLineId: number,
+    recordActionIndex: number,
+    moveIndex: number,
+  ): { l: number, m: number } | null {
+    const fullActionIndex = this.recordDocument.getLinePrefixActions(recordLineId).length
+      + recordActionIndex
+    const order = fullActionIndex * CoreGameState.MOVE_ORDER_STRIDE + moveIndex
+    let fallback: { l: number, m: number } | null = null
+
+    for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
+      if (! line) continue
+
+      for (const [m, board] of Line.getBoardEntries(line)) {
+        if (! board || board.createdByOrder !== order) continue
+        const target = { l, m }
+        if (board.createdByRole === 'target' || board.createdByRole === 'both') return target
+        fallback ??= target
+      }
+    }
+
+    return fallback
   }
 
   private tryCreatePassAt(screen: Vec2): boolean {
@@ -2092,7 +2216,9 @@ export class Game extends Disposable(Empty) {
 
   public importFiveDPGNText(input: string): string | null {
     try {
-      this.loadCoreGameState(FiveDPGN.importGameState(input))
+      this.loadCoreGameState(FiveDPGN.importGameState(input), {
+        recordDocument: RecordDocument.fromActionTree(FiveDPGN.parseActionTree(input)),
+      })
       this.syncToolbarButtons()
       return null
     }
@@ -2113,7 +2239,7 @@ export class Game extends Disposable(Empty) {
       text: format === 'fen'
         ? FiveDPGN.exportFEN(this.multiverse)
         : mode === 'tree'
-          ? FiveDPGN.exportActionTree(this.buildFiveDPGNActionTree(), options)
+          ? FiveDPGN.exportActionTree(this.recordDocument.buildActionTree(), options)
           : FiveDPGN.exportGameState({
               actions: this.actions.slice(0, Scalar.clamp(this.actionIndex, 0, this.actions.length)),
             }, options),
@@ -2121,6 +2247,7 @@ export class Game extends Disposable(Empty) {
       mode,
       hasPendingMoves: format === 'pgn' && this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
+      currentCursor: this.getCurrentRecordCursorTarget(),
       actions: this.buildRecordActionsForDisplay(),
     }
   }
@@ -2132,109 +2259,14 @@ export class Game extends Disposable(Empty) {
     }
   }
 
-  private buildFiveDPGNActionTree(lineId = 0, actionIndex = 0): FiveDPGN.ActionTree {
-    const line = this.recordLines.get(lineId)
-    if (! line) return { variations: [] }
-
-    const variations: FiveDPGN.ActionTreeVariation[] = []
-    const branchIds = line.branchLineIdsBeforeAction.get(actionIndex) ?? []
-    for (const branchId of branchIds) {
-      variations.push(...this.buildFiveDPGNActionTree(branchId).variations)
-    }
-
-    if (actionIndex < line.actions.length) {
-      variations.push({
-        action: line.actions[actionIndex],
-        subtree: this.buildFiveDPGNActionTree(lineId, actionIndex + 1),
-      })
-    }
-
-    return { variations }
-  }
-
   private buildRecordActionsForDisplay(): GameRecordRow[] {
-    return this.buildRecordLineActionsForDisplay(0, [])
-  }
-
-  private buildRecordLineActionsForDisplay(lineId: number, prefixActions: Action[]): GameRecordRow[] {
-    const line = this.recordLines.get(lineId)
-    if (! line) return []
-
-    const rows: GameRecordRow[] = []
-    const activePendingLocalActionIndex = line.id === this.activeRecordLineId && this.pendingMoves.length > 0
-      ? this.getActiveRecordLineLocalActionIndex()
-      : null
-    const currentCursorLocalActionIndex = line.id === this.activeRecordLineId && this.pendingMoves.length === 0
-      ? this.getActiveRecordLineLocalActionIndex()
-      : null
-    const lineRows = buildGameRecordActions([
-      ...prefixActions,
-      ...line.actions,
-    ], {
-      ...this.fiveDPGNOptions,
+    return buildGameRecordRows({
+      document: this.recordDocument,
+      actionIndex: this.actionIndex,
+      pendingMoves: this.getPendingMoves(),
       initialMultiverse: this.initialMultiverse,
+      fiveDPGNOptions: this.fiveDPGNOptions,
     })
-
-    for (let actionIndex = 0; actionIndex <= line.actions.length; actionIndex += 1) {
-      const hasFuture = this.hasRecordFutureAt(line.id, actionIndex)
-      if (line.id === 0 || actionIndex > 0 || hasFuture) {
-        rows.push({
-          kind: 'cursor',
-          recordKey: `${line.id}:cursor:${actionIndex}`,
-          recordLineId: line.id,
-          recordActionIndex: actionIndex,
-          branchDepth: line.depth,
-          hasFuture,
-          current: currentCursorLocalActionIndex === actionIndex,
-        })
-      }
-
-      const branchIds = line.branchLineIdsBeforeAction.get(actionIndex) ?? []
-      const branchPrefixActions = [
-        ...prefixActions,
-        ...line.actions.slice(0, actionIndex),
-      ]
-      for (const branchId of branchIds) {
-        rows.push(...this.buildRecordLineActionsForDisplay(branchId, branchPrefixActions))
-      }
-
-      if (activePendingLocalActionIndex === actionIndex) {
-        const pendingMoves = this.getPendingMoves()
-        const pendingRows = buildGameRecordActions([
-          ...branchPrefixActions,
-          { moves: pendingMoves },
-        ], {
-          ...this.fiveDPGNOptions,
-          initialMultiverse: this.initialMultiverse,
-        })
-        const pendingRow = pendingRows.at(-1)
-        if (pendingRow) {
-          rows.push({
-            ...pendingRow,
-            recordKey: `${line.id}:${actionIndex}:pending`,
-            recordLineId: line.id,
-            recordActionIndex: actionIndex,
-            branchDepth: line.depth,
-            pending: true,
-          })
-        }
-      }
-
-      if (actionIndex >= line.actions.length) continue
-
-      const row = lineRows[prefixActions.length + actionIndex]
-      if (! row) continue
-
-      rows.push({
-        ...row,
-        recordKey: `${line.id}:${actionIndex}`,
-        recordLineId: line.id,
-        recordActionIndex: actionIndex,
-        branchDepth: line.depth,
-      })
-    }
-
-    return rows
   }
 
   public rollbackToActionEnd(actionIndex: number): boolean {
@@ -2275,10 +2307,19 @@ export class Game extends Disposable(Empty) {
     this.ctx.onExportRequest?.(this.getFiveDPGNExport())
   }
 
-  private loadCoreGameState(state: CoreGameState, { focus = true }: { focus?: boolean } = {}) {
+  private loadCoreGameState(
+    state: CoreGameState,
+    {
+      focus = true,
+      recordDocument,
+    }: {
+      focus?: boolean
+      recordDocument?: RecordDocument
+    } = {},
+  ) {
     this.initialMultiverse = state.initialMultiverse
     this.actions = state.actions
-    this.resetRecordTree(state.actions)
+    this.recordDocument = recordDocument ?? RecordDocument.create(state.actions)
     this.multiverseCommitted = state.multiverseCommitted
     this.multiverse = state.multiverse
     this.player = state.player
@@ -2961,6 +3002,7 @@ export class Game extends Disposable(Empty) {
     })
     this.renderMultiverseStatic(this.multiverse)
     this.renderPendingCheckArrows()
+    this.renderRecordArrowMarkers()
   }
 
   private getGameEndBackgroundProgress(): number {
@@ -3507,6 +3549,7 @@ export class Game extends Disposable(Empty) {
       size: outerBorderSize,
       radius: outerBorderRadius,
     }
+    const squareMarkers = this.getVisibleSquareMarkersForBoard(l, m)
 
     const layers = getBoardRenderLayers(options.animatedLayer === true)
 
@@ -3558,9 +3601,11 @@ export class Game extends Disposable(Empty) {
         mat: Mat3.transform(pos, Sizes.PieceSize),
         color,
       })
+      this.renderSquareMarkers(squareMarkers.get(getSpacelikeKey(coord)) ?? [], pos, layers.board, alpha, isWhiteSquare)
 
       const piece = board.pieces[x][y]
       if (piece !== Piece.E) this.renderPiece(piece, pos, layers.piece, alpha)
+      this.renderSquareGlyphBadge(this.getMoveFormationGlyphs(board, coord), pos, alpha)
       if (this.shouldRenderPieceGhost(l, m, coord)) this.renderPieceGhost(this.selectedPiece!.piece, pos)
     }
 
@@ -3639,6 +3684,189 @@ export class Game extends Disposable(Empty) {
     return [
       x0 + displayCoord.x * Sizes.PieceWidth,
       y0 + displayCoord.y * Sizes.PieceWidth,
+    ]
+  }
+
+  private getVisibleSquareMarkersForBoard(
+    l: number,
+    m: number,
+  ): Map<string, RecordSquareMarkerAnnotation[]> {
+    const cursor = this.getCurrentRecordCursorTarget()
+    const markers = this.recordDocument
+      .getSquareMarkersAt(cursor.recordLineId, cursor.recordActionIndex)
+      .filter(marker => (
+        marker.target.coord.l === l
+          && marker.target.m === m
+      ))
+
+    const bySquare = new Map<string, RecordSquareMarkerAnnotation[]>()
+    for (const marker of markers) {
+      const key = getSpacelikeKey(marker.target.coord)
+      const squareMarkers = bySquare.get(key) ?? []
+      squareMarkers.push(marker)
+      bySquare.set(key, squareMarkers)
+    }
+    return bySquare
+  }
+
+  private getCurrentRecordCursorTarget(): RecordCursorTarget {
+    return {
+      recordLineId: this.recordDocument.activeRecordLineId,
+      recordActionIndex: this.recordDocument.getActiveLineLocalActionIndex(this.actionIndex),
+    }
+  }
+
+  private renderSquareMarkers(
+    markers: RecordSquareMarkerAnnotation[],
+    pos: Vec2,
+    layer: RenderLayer,
+    alpha: number,
+    isWhiteSquare: boolean,
+  ) {
+    if (markers.length === 0) return
+
+    const marker = markers[markers.length - 1]!
+    const color = this.getSquareMarkerColor(marker, isWhiteSquare)
+    this.renderer.submit({
+      type: RenderItemType.Quad,
+      layer,
+      order: 0.5,
+      mat: Mat3.transform(pos, Sizes.PieceSize),
+      color: Color4.withAlpha(color, alpha),
+    })
+  }
+
+  private getSquareMarkerColor(marker: RecordSquareMarkerAnnotation, isWhiteSquare: boolean): Color4 {
+    const markerColor = parseRecordMarkerColor(this.getRecordMarkerColor(marker.authorId, marker.color))
+    const baseColor = isWhiteSquare ? Colors.BoardWhite : Colors.BoardBlack
+    return Color4.mix(baseColor, markerColor, 0.48)
+  }
+
+  private renderRecordArrowMarkers() {
+    const cursor = this.getCurrentRecordCursorTarget()
+    const markers = this.recordDocument.getArrowMarkersAt(cursor.recordLineId, cursor.recordActionIndex)
+    markers.forEach((marker, index) => this.renderRecordArrowMarker(marker, index))
+  }
+
+  private renderRecordArrowMarker(marker: RecordArrowMarkerAnnotation, order: number) {
+    const fromPlayer = marker.target.fromPlayer ?? Player.W
+    const toPlayer = marker.target.toPlayer ?? Player.W
+    const fromM = Coord.boardIndex(marker.target.from, fromPlayer)
+    const toM = Coord.boardIndex(marker.target.to, toPlayer)
+    if (! this.hasBoardAt({ l: marker.target.from.l, m: fromM })) return
+    if (! this.hasBoardAt({ l: marker.target.to.l, m: toM })) return
+
+    const from = this.getVisibleSquareCenter(marker.target.from.l, fromM, marker.target.from)
+    const to = this.getVisibleSquareCenter(marker.target.to.l, toM, marker.target.to)
+    const geometry = marker.target.from.l === marker.target.to.l && fromM === toM
+      ? this.getStraightArrowGeometry(from, to)
+      : this.getCurvedArrowGeometry(from, to, fromPlayer)
+    if (! geometry) return
+
+    const color = parseRecordMarkerColor(this.getRecordMarkerColor(marker.authorId, marker.color))
+    this.renderRecordMarkerArrowPolygon(geometry, color, order)
+  }
+
+  private renderRecordMarkerArrowPolygon(geometry: MoveArrowGeometry, color: Color4, order: number) {
+    const points = geometry.straight === true
+      ? getStraightMoveArrowPolygon(geometry.from, geometry.to)
+      : getMoveArrowPolygon(
+        geometry.from,
+        geometry.control1,
+        geometry.control2,
+        geometry.to,
+      )
+    if (points.length === 0) return
+
+    this.renderer.submit({
+      type: RenderItemType.Polygon,
+      layer: RenderLayer.MoveHighlight,
+      order: 8000 + order,
+      points,
+      fill: Color4.withAlpha(color, 0.7),
+      stroke: null,
+    })
+  }
+
+  private getMoveFormationGlyphs(
+    board: Board,
+    coord: CoordSpacelike,
+  ): string[] {
+    const target = this.getMoveFormationRecordTarget(board, coord)
+    if (! target) return []
+    return this.recordDocument.getMoveGlyphs(target.recordLineId, target.recordActionIndex, target.moveIndex)
+  }
+
+  private getMoveFormationRecordTarget(
+    board: Board,
+    coord: CoordSpacelike,
+  ): (RecordCursorTarget & { moveIndex: number }) | null {
+    const move = board.createdBy
+    const order = board.createdByOrder
+    if (! move || order == null || ! board.createdByRole) return null
+    if (board.createdByRole !== 'target' && board.createdByRole !== 'both') return null
+    if (! Coord.isSameSpace(move.to, coord)) return null
+
+    const actionIndex = Math.floor(order / CoreGameState.MOVE_ORDER_STRIDE)
+    const moveIndex = order % CoreGameState.MOVE_ORDER_STRIDE
+    const line = this.recordDocument.getActiveLine()
+    const target = this.recordDocument.getLineFullActionTarget(line.id, actionIndex)
+    return target ? { ...target, moveIndex } : null
+  }
+
+  private renderSquareGlyphBadge(glyphs: string[], pos: Vec2, alpha: number) {
+    const normalizedGlyphs = glyphs
+      .map(glyph => normalizeRecordGlyphText(glyph))
+      .filter(Boolean)
+    if (normalizedGlyphs.length === 0) return
+
+    const radius = Sizes.SquareGlyphBadgeRadius
+    const overlap = Sizes.SquareGlyphBadgeOverlap
+    const gap = radius * 2 - overlap
+    const center = this.getSquareGlyphBadgeCenter(pos)
+    normalizedGlyphs.forEach((glyph, index) => {
+      const itemCenter: Vec2 = [
+        center[0] - index * gap,
+        center[1],
+      ]
+      const baseOrder = 200 + (normalizedGlyphs.length - index) * 3
+      this.renderer.submit({
+        type: RenderItemType.Circle,
+        layer: RenderLayer.MoveHighlight,
+        order: baseOrder - 1,
+        center: Vec2.add(itemCenter, Sizes.AnnotationBadgeShadowOffset),
+        radius,
+        fill: Color4.withAlpha(Colors.Shadow, alpha),
+        stroke: null,
+      })
+      this.renderer.submit({
+        type: RenderItemType.Circle,
+        layer: RenderLayer.MoveHighlight,
+        order: baseOrder,
+        center: itemCenter,
+        radius,
+        fill: Color4.withAlpha(this.ctx.getRecordGlyphColor?.(glyph) ?? getRecordGlyphColor4(glyph), alpha),
+        stroke: null,
+      })
+      this.renderer.submit({
+        type: RenderItemType.Text,
+        layer: RenderLayer.MoveHighlight,
+        order: baseOrder + 1,
+        pos: [itemCenter[0], itemCenter[1] + 0.4],
+        angle: 0,
+        text: glyph.slice(0, 2),
+        fontSize: Sizes.SquareGlyphBadgeFontSize,
+        color: Color4.withAlpha(Colors.ButtonTextInverted, alpha),
+        align: 'center',
+        baseline: 'middle',
+      })
+    })
+  }
+
+  private getSquareGlyphBadgeCenter(pos: Vec2): Vec2 {
+    return [
+      pos[0] + Sizes.PieceWidth + Sizes.SquareGlyphBadgeOffset,
+      pos[1] - Sizes.SquareGlyphBadgeOffset,
     ]
   }
 
@@ -3915,6 +4143,17 @@ export class Game extends Disposable(Empty) {
     return { from, control1, control2, to }
   }
 
+  private getStraightArrowGeometry(from: Vec2, to: Vec2): MoveArrowGeometry | null {
+    if (Vec2.length(Vec2.sub(to, from)) === 0) return null
+    return {
+      from,
+      control1: from,
+      control2: to,
+      to,
+      straight: true,
+    }
+  }
+
   private isHighlightedBoardSquare(l: number, m: number, coord: CoordSpacelike): boolean {
     if (this.hoverSquare && isSameLocatedSquare(this.hoverSquare, l, m, coord)) return true
 
@@ -3992,13 +4231,4 @@ export class Game extends Disposable(Empty) {
       alpha: PIECE_GHOST_ALPHA,
     })
   }
-}
-
-const isActionPrefix = (prefix: Action[], actions: Action[]): boolean => {
-  if (prefix.length > actions.length) return false
-
-  for (let i = 0; i < prefix.length; i += 1) {
-    if (! Action.isSame(prefix[i]!, actions[i]!)) return false
-  }
-  return true
 }

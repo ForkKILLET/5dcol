@@ -299,6 +299,7 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
               <GameListItemMenu
                 :open="isLocalGameActionMenuOpen(localGame.id)"
                 @update:open="setLocalGameActionMenuOpen(localGame.id, $event)"
+                @ui-sound="emit('uiSound')"
                 @rename="beginRenameLocalGame(localGame.id, localGame.title)"
                 @delete="removeLocalGame(localGame.id)"
               />

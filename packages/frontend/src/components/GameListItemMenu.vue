@@ -6,6 +6,7 @@ import GameIcon from './GameIcon.vue'
 const open = defineModel<boolean>('open', { required: true })
 
 const emit = defineEmits<{
+  uiSound: []
   rename: []
   delete: []
 }>()
@@ -13,6 +14,7 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'global' })
 
 function toggle() {
+  emit('uiSound')
   open.value = ! open.value
 }
 
@@ -34,13 +36,13 @@ function clickDelete() {
       class="game-list-item-menu__popup"
     >
       <GameButton
-        size="tiny"
+        size="small"
         @click="clickRename"
       >
         <span>{{ t('button.rename') }}</span>
       </GameButton>
       <GameButton
-        size="tiny"
+        size="small"
         @click="clickDelete"
       >
         <span>{{ t('button.delete') }}</span>

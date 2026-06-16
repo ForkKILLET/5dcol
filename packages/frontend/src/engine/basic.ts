@@ -75,6 +75,11 @@ export namespace Scalar {
     Math.min(Math.max(x, min), max)
   )
 
+  export const clampInteger = (value: number, min: number, max: number): number => {
+    if (! Number.isFinite(value)) return min
+    return Math.floor(clamp(value, min, max))
+  }
+
 }
 
 export type Vec2 = [number, number]

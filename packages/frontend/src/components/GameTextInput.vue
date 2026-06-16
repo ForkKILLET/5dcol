@@ -2,7 +2,7 @@
 const model = defineModel<string>({ default: '' })
 
 withDefaults(defineProps<{
-  size?: 'full' | 'setting'
+  size?: 'full' | 'setting' | 'tiny'
   type?: 'text' | 'password'
 }>(), {
   size: 'full',
@@ -23,15 +23,15 @@ withDefaults(defineProps<{
 .game-text-input {
   box-sizing: border-box;
   min-width: 0;
-  height: 32px;
+  height: var(--button-small-height);
   padding: 0 10px;
-  border: 2px solid var(--button-border-color);
-  border-radius: 16px;
+  border: var(--button-small-border) solid var(--button-border-color);
+  border-radius: calc(var(--button-small-height) / 2);
   background: var(--button-fill-color);
   color: var(--button-text-color);
-  box-shadow: var(--small-button-shadow-offset) var(--small-button-shadow-offset) 0 var(--button-shadow-color);
+  box-shadow: var(--button-small-shadow-offset, var(--small-button-shadow-offset)) var(--button-small-shadow-offset, var(--small-button-shadow-offset)) 0 var(--button-shadow-color);
   font: inherit;
-  font-size: 16px;
+  font-size: var(--button-small-font-size);
   line-height: 1;
   outline: none;
 }
@@ -42,6 +42,15 @@ withDefaults(defineProps<{
 
 .game-text-input--setting {
   width: 180px;
+}
+
+.game-text-input--tiny {
+  height: var(--button-tiny-height);
+  padding: 0 calc(var(--button-tiny-content-gap) * 2);
+  border-width: var(--button-tiny-border);
+  border-radius: calc(var(--button-tiny-height) / 2);
+  box-shadow: var(--button-tiny-shadow-offset) var(--button-tiny-shadow-offset) 0 var(--button-shadow-color);
+  font-size: var(--button-tiny-font-size);
 }
 
 .game-text-input:focus {

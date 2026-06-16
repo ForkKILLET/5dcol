@@ -14,6 +14,7 @@ export interface ButtonConfig {
   labelParams?: TranslationParams
   piece: Piece | null
   effect?: 'pulse'
+  pressed?: boolean
   onClick: () => void
 }
 
@@ -30,6 +31,7 @@ export interface GameToolbarButton {
   labelParams: TranslationParams
   pieceImageUrl: string | null
   effect?: 'pulse'
+  pressed?: boolean
   colors: GameToolbarButtonColors
   hoverColors: GameToolbarButtonColors
   pulseColors: GameToolbarButtonColors
@@ -59,6 +61,7 @@ export const toToolbarButtonView = (button: ButtonConfig): GameToolbarButton => 
     labelParams: button.labelParams ?? {},
     pieceImageUrl: button.piece === null ? null : getPieceImageUrl(button.piece),
     effect: button.disabled ? undefined : button.effect,
+    pressed: button.pressed,
     colors: toToolbarButtonColors(colors),
     hoverColors: toToolbarButtonColors(hoverColors),
     pulseColors: toToolbarButtonColors(hoverColors),

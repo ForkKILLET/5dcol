@@ -10,16 +10,26 @@ import {
   type MatchRoom,
   type MatchRoomSettings,
   type MatchRoomStatus,
+  type StudyDocument,
 } from '@5dcol/shared/protocol'
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
-import { Game, type GameExportFormat, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
+import { Game, type GameExportFormat, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveFocusTarget, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
+import { GAME_STORAGE_KEY, type GameWorkspaceState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
 import { getMainMenuLayout } from '@engine/mainMenuLayout'
 import { MatchClient, type MatchRoomStateSubscription } from '@engine/matchClient'
 import { formatDuration } from '@engine/record'
+import {
+  getRecordGlyphColor4,
+  parseStoredRecordGlyphTemplates,
+  RECORD_GLYPH_TEMPLATE_STORAGE_KEY,
+  type CustomRecordGlyphTemplate,
+  uniqueRecordGlyphTemplates,
+} from '@engine/recordGlyph'
+import { getRecordMarkerAuthorColor, getRecordMarkerTextColor, parseRecordMarkerColor } from '@engine/recordMarker'
 import { type Renderer } from '@engine/renderer'
 import {
   createGameRenderer,
@@ -36,17 +46,19 @@ import {
 } from '@/composables/match'
 import { useLocalVersus, type LocalVersusSummary } from '@/composables/localVersus'
 import { useGameSettings } from '@/composables/settings'
+import { useLocalStudies, useStudyWorkspaces } from '@/composables/study'
 import { useDialogStack } from '@/composables/dialogStack'
-import { useStorageRef } from '@/composables/storage'
+import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameIcon from './GameIcon.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
-import VersusPage from './VersusPage.vue'
 import RecordPanel from './RecordPanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
+import StudyPage from './StudyPage.vue'
+import VersusPage from './VersusPage.vue'
 
 const gameRoot = useTemplateRef('gameRoot')
 const canvas = useTemplateRef('canvas')
@@ -57,6 +69,10 @@ const LANGUAGE_STORAGE_KEY = '5dcol.language'
 
 const messages = reactive<GameMessage[]>([])
 const toolbarButtons = ref<GameToolbarButton[]>([])
+const customRecordGlyphTemplates = useStorageRef<CustomRecordGlyphTemplate[]>(RECORD_GLYPH_TEMPLATE_STORAGE_KEY, [], {
+  parse: parseStoredRecordGlyphTemplates,
+  serialize: value => JSON.stringify(uniqueRecordGlyphTemplates(value)),
+})
 const gameStatus = ref<GameStatusView>({
   kind: 'turn',
   player: Player.W,
@@ -69,15 +85,21 @@ const language = useStorageRef<Language>(LANGUAGE_STORAGE_KEY, getDefaultLanguag
   serialize: value => value,
 })
 const recordPanelOpen = ref(false)
+const recordPanelWidth = ref(Sizes.RecordPanelWidth)
 const recordText = ref('')
 const recordActions = ref<GameRecordRow[]>([])
 const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
+const recordCurrentCursor = ref({ recordLineId: 0, recordActionIndex: 0 })
+const recordFocusedMove = ref<(GameRecordMoveFocusTarget & { pulseId: number }) | null>(null)
+let recordFocusedMovePulseId = 0
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
-type GameImportTarget = 'active-game' | 'local-versus'
+type GameImportTarget = 'active-game' | 'local-versus' | 'local-study'
 type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'fiveDPGN'
+type StudyOpenSource = { kind: 'local' }
+type MainMenuMode = 'home' | 'versus' | 'study'
 const dialogStack = useDialogStack<DialogMode>()
 const dialogMode = dialogStack.current
 const settingsDialogInitialTab = ref<SettingsDialogTab>('volume')
@@ -100,8 +122,9 @@ const soundLoadProgress = ref({ completed: 0, total: 0 })
 const activeRendererBackend = ref<RendererBackend | null>(null)
 const rendererFallbackReason = ref<RendererFallbackReason | null>(null)
 const gameStarted = ref(false)
-const mainMenuMode = ref<'home' | 'versus'>('home')
+const mainMenuMode = ref<MainMenuMode>('home')
 const activeLocalVersus = ref<LocalVersusSummary | null>(null)
+const activeLocalStudy = ref<{ id: string; title: string } | null>(null)
 const coarsePointerQuery = window.matchMedia('(hover: none) and (pointer: coarse)')
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
 const initialViewportSize = getViewportSize()
@@ -168,18 +191,13 @@ provide(UiSoundKey, playUISound)
 
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
-const recordActionButtonIds = new Set(['import-5dpgn', 'export-5dpgn'])
+const recordActionButtonIds = new Set(['export-5dpgn'])
 
 const { t, locale } = useI18n({ useScope: 'global' })
 watch(language, value => {
   locale.value = value
 }, { immediate: true })
 
-const {
-  createGame: createLocalVersusGame,
-  createGameFromText: createLocalVersusGameFromText,
-  touchGame: touchLocalVersusGame,
-} = useLocalVersus()
 const {
   canViewMatchRoom,
   clearLastOnlineGame,
@@ -202,6 +220,20 @@ const {
   syncLastOnlineGameFromServer,
   viewMatchRoom,
 } = useMatch()
+const {
+  createGame: createLocalVersusGame,
+  createGameFromText: createLocalVersusGameFromText,
+  deleteGame: deleteLocalVersusGame,
+  touchGame: touchLocalVersusGame,
+} = useLocalVersus()
+const {
+  createStudyFromText: createLocalStudyFromText,
+  upsertStudy: upsertLocalStudy,
+} = useLocalStudies()
+const {
+  getStudyWorkspace,
+  upsertStudyWorkspace,
+} = useStudyWorkspaces()
 
 const gameStatusText = computed(() => {
   if (gameStatus.value.kind === 'stalemate') return t('status.stalemate')
@@ -358,18 +390,32 @@ const uiStyle = computed(() => {
   const buttonScale = gameButtonScale.value
   const scaled = (value: number) => value * buttonScale
   return {
+    ...menuButtonStyle.value,
     '--button-width': `${scaled(Sizes.ButtonWidth)}px`,
     '--secondary-button-width': `${scaled(Sizes.SecondaryButtonWidth)}px`,
-    '--record-panel-width': `${Sizes.RecordPanelWidth}px`,
+    '--record-panel-width': `${recordPanelWidth.value}px`,
     '--button-circle-size': `${scaled(Sizes.ButtonHeight)}px`,
     '--button-height': `${scaled(Sizes.ButtonHeight)}px`,
     '--button-top': `${scaled(Sizes.ButtonTop)}px`,
     '--button-shadow-offset': `${scaled(Sizes.ButtonShadowOffset)}px`,
+    '--button-small-height': `${scaled(Sizes.ButtonSmallHeight)}px`,
     '--small-button-shadow-offset': `${scaled(Sizes.SmallButtonShadowOffset)}px`,
+    '--button-small-shadow-offset': `${scaled(Sizes.SmallButtonShadowOffset)}px`,
+    '--button-tiny-height': `${scaled(Sizes.ButtonTinyHeight)}px`,
+    '--button-tiny-shadow-offset': `${scaled(Sizes.ButtonTinyShadowOffset)}px`,
+    '--badge-shadow-offset': `${scaled(Sizes.BadgeShadowOffset)}px`,
     '--button-border': `${scaled(Sizes.ButtonBorder)}px`,
+    '--button-small-border': `${scaled(Sizes.ButtonSmallBorder)}px`,
+    '--button-tiny-border': `${scaled(Sizes.ButtonTinyBorder)}px`,
     '--button-font-size': `${scaled(Sizes.ButtonFontSize)}px`,
+    '--button-small-font-size': `${scaled(Sizes.ButtonSmallFontSize)}px`,
+    '--button-tiny-font-size': `${scaled(Sizes.ButtonTinyFontSize)}px`,
     '--button-icon-size': `${scaled(Sizes.ButtonIconSize)}px`,
+    '--button-small-icon-size': `${scaled(Sizes.ButtonSmallIconSize)}px`,
+    '--button-tiny-icon-size': `${scaled(Sizes.ButtonTinyIconSize)}px`,
     '--button-content-gap': `${scaled(Sizes.ButtonContentGap)}px`,
+    '--button-small-content-gap': `${scaled(Sizes.ButtonSmallContentGap)}px`,
+    '--button-tiny-content-gap': `${scaled(Sizes.ButtonTinyContentGap)}px`,
     '--app-width': `${viewportWidth.value}px`,
     '--app-height': `${viewportHeight.value}px`,
     '--export-textarea-lines': String(exportTextareaLineCount.value),
@@ -383,6 +429,8 @@ const uiStyle = computed(() => {
     '--record-black-bg': Color4.toRgbaString(Color4.fromRgba(82, 82, 92, 1)),
     '--record-black-text': Color4.toRgbaString(ButtonColors.Black.text),
     '--record-block-border-width': `${Sizes.RecordBlockBorderWidth}px`,
+    '--record-participant-color': getRecordAuthorColor(getRecordAuthorId()),
+    '--record-participant-text-color': Color4.toRgbaString(getRecordMarkerTextColor(parseRecordMarkerColor(getRecordAuthorColor(getRecordAuthorId())))),
     '--game-status-color': gameStatus.value.color,
     '--game-status-shadow-color': gameStatus.value.shadowColor,
     '--main-title-color': Color4.toRgbaString(Colors.BoardBorderWhite),
@@ -465,13 +513,41 @@ function getButtonText(button: GameToolbarButton): string {
   return t(button.labelKey, button.labelParams)
 }
 
+function getRecordAuthorId() {
+  return onlineSession.value?.userId ?? 'local'
+}
+
+function getRecordAuthorColor(authorId: string) {
+  return getRecordMarkerAuthorColor(authorId)
+}
+
+function getRecordGlyphColor(glyph: string) {
+  return getRecordGlyphColor4(glyph, customRecordGlyphTemplates.value)
+}
+
 function updateRecord(request: GameExportRequest) {
   recordText.value = request.text
   recordActions.value = request.actions
   recordHasPendingMoves.value = request.hasPendingMoves
   recordCurrentActionIndex.value = request.currentActionIndex
+  recordCurrentCursor.value = request.currentCursor
+
+  if (game && activeLocalStudy.value) {
+    upsertLocalStudy(game.getStudyDocument(activeLocalStudy.value))
+    upsertStudyWorkspace(activeLocalStudy.value.id, {
+      ...(getStudyWorkspace(activeLocalStudy.value.id) ?? {}),
+      recordCursor: request.currentCursor,
+    })
+  }
   if (activeLocalVersus.value) {
     touchLocalVersusGame(activeLocalVersus.value.id)
+  }
+}
+
+function updateWorkspace(workspace: GameWorkspaceState) {
+  if (activeLocalStudy.value) {
+    upsertStudyWorkspace(activeLocalStudy.value.id, workspace)
+    return
   }
 }
 
@@ -487,6 +563,14 @@ function toggleRecordPanel() {
     if (request) updateRecord(request)
   }
   recordPanelOpen.value = ! recordPanelOpen.value
+}
+
+function focusRecordMoveFromBoard(target: GameRecordMoveFocusTarget) {
+  if (! gameStarted.value) return
+  const request = game?.getFiveDPGNExport()
+  if (request) updateRecord(request)
+  recordFocusedMove.value = { ...target, pulseId: ++ recordFocusedMovePulseId }
+  recordPanelOpen.value = true
 }
 
 function clickRecordMenuButton() {
@@ -507,7 +591,7 @@ function playMainMenuAnnihilateSound() {
 function focusRecordSegment(segment: GameRecordMoveSegment) {
   if (! gameStarted.value) return
   playUISound()
-  game?.focusBoard(segment.l, segment.m)
+  game?.focusRecordMoveSegment(segment)
 }
 
 function rollbackToRecordCursor(cursor: GameRecordCursor) {
@@ -575,6 +659,28 @@ function deleteRecordFuture(cursor: GameRecordCursor) {
   if (game?.deleteRecordFutureAtCursor(cursor)) playUISound()
 }
 
+function replaceRecordActionComments(payload: {
+  recordLineId: number
+  recordActionIndex: number
+  position: 'after'
+  texts: string[]
+}) {
+  if (! gameStarted.value) return
+  if (onlineSession.value) return
+  if (game?.replaceRecordActionComments(payload)) playUISound()
+}
+
+function replaceRecordMoveGlyphs(payload: {
+  recordLineId: number
+  recordActionIndex: number
+  moveIndex: number
+  glyphs: string[]
+}) {
+  if (! gameStarted.value) return
+  if (onlineSession.value) return
+  if (game?.replaceRecordMoveGlyphs(payload)) playUISound()
+}
+
 function returnToLiveGame() {
   if (! gameStarted.value || ! isOnlineSpectator.value || ! game) return
   playUISound()
@@ -596,7 +702,6 @@ function returnToLiveGame() {
   hasNewLiveActions.value = false
   spectatorDeductionStartActionIndex.value = null
   pendingLocalActionsSignature = ''
-  activeLocalVersus.value = null
 }
 
 function toggleSecondaryMenu() {
@@ -656,6 +761,16 @@ function closeVersusPage() {
   playUISound()
   stopMatchServerRefresh()
   matchPanelMode.value = 'servers'
+  mainMenuMode.value = 'home'
+}
+
+function openStudyPage() {
+  playUISound()
+  mainMenuMode.value = 'study'
+}
+
+function closeStudyPage() {
+  playUISound()
   mainMenuMode.value = 'home'
 }
 
@@ -752,10 +867,7 @@ function syncGameInputState() {
 function getRecordViewportRightInset() {
   if (! recordPanelOpen.value) return 0
 
-  const panelWidth = Math.min(
-    Sizes.RecordPanelWidth,
-    Math.max(0, viewportWidth.value - Sizes.ButtonTop * 2),
-  )
+  const panelWidth = Math.min(recordPanelWidth.value, Math.max(0, viewportWidth.value - Sizes.ButtonTop * 2))
   return panelWidth + Sizes.ButtonTop + Sizes.ButtonShadowOffset
 }
 
@@ -763,6 +875,12 @@ function syncGameViewportInsets() {
   game?.setViewportInsets({
     right: getRecordViewportRightInset(),
   })
+}
+
+function updateRecordPanelWidth(width: number) {
+  const maxWidth = Math.max(Sizes.RecordPanelMinWidth, viewportWidth.value - Sizes.ButtonTop * 2)
+  recordPanelWidth.value = Math.min(Math.max(width, Sizes.RecordPanelMinWidth), maxWidth)
+  syncGameViewportInsets()
 }
 
 function getViewportSize() {
@@ -828,6 +946,19 @@ function submitImportDialog() {
     }
     closeDialog(false)
     startLocalGame(result.game)
+    return
+  }
+
+  if (importTarget.value === 'local-study') {
+    const result = createLocalStudyFromText(text, {
+      title: t('study.imported'),
+    })
+    if (! result.study) {
+      importError.value = result.error || t('error.importFailed')
+      return
+    }
+    closeDialog(false)
+    startStudyGame(result.study, { kind: 'local' })
     return
   }
 
@@ -953,6 +1084,9 @@ function handleWindowKeyDown(e: KeyboardEvent) {
       if (matchPanelMode.value === 'room-settings') closeMatchRoomSettingsPanel()
       else closeVersusPage()
     }
+    else if (! gameStarted.value && mainMenuMode.value === 'study') {
+      closeStudyPage()
+    }
     else if (gameStarted.value) toggleSecondaryMenu()
     return
   }
@@ -1072,6 +1206,7 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   playUISound()
   const localVersus = localGame ?? createLocalVersusGame(t('versus.untitled'))
   activeLocalVersus.value = localVersus
+  activeLocalStudy.value = null
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1094,6 +1229,11 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
     onReturnToMainMenuRequest: returnToMainMenu,
     getUISoundVolume: () => gameSettings.uiVolume,
     getBellSoundVolume: () => gameSettings.bellVolume,
+    getRecordAuthorId,
+    getRecordAuthorColor,
+    getRecordGlyphColor,
+    onWorkspaceChange: updateWorkspace,
+    onRecordMoveFocusRequest: focusRecordMoveFromBoard,
   })
   gameStarted.value = true
   syncGameInputState()
@@ -1101,9 +1241,59 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   syncGameViewportInsets()
 }
 
+function startStudyGame(study: StudyDocument, _source: StudyOpenSource = { kind: 'local' }) {
+  if (! gameRenderer || ! soundManager || gameStarted.value) return
+
+  playUISound()
+  const workspace = getStudyWorkspace(study.id)
+  activeLocalVersus.value = null
+  activeLocalStudy.value = null
+  game = new Game({
+    renderer: gameRenderer,
+    soundManager,
+    logger,
+    debug: query.get('debug') === '1',
+    initialActions: [],
+    storageKey: null,
+    onToolbarChange: buttons => {
+      toolbarButtons.value = buttons
+    },
+    onRecordChange: updateRecord,
+    onStatusChange: updateGameStatus,
+    viewPlayer: viewPlayer.value,
+    autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
+    showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
+    fiveDPGNOptions: gameSettings.fiveDPGN,
+    getFiveDPGNExportMetadata,
+    onViewPlayerChange: updateViewPlayer,
+    onImportRequest: openImportDialog,
+    onExportRequest: openExportDialog,
+    onReturnToMainMenuRequest: returnToMainMenu,
+    getUISoundVolume: () => gameSettings.uiVolume,
+    getBellSoundVolume: () => gameSettings.bellVolume,
+    getRecordAuthorId,
+    getRecordAuthorColor,
+    getRecordGlyphColor,
+    canForfeitGame: () => false,
+    canFinishGame: () => false,
+    initialWorkspace: workspace,
+    onWorkspaceChange: updateWorkspace,
+    onRecordMoveFocusRequest: focusRecordMoveFromBoard,
+  })
+  gameStarted.value = true
+  mainMenuMode.value = 'home'
+  syncGameInputState()
+  game.start()
+  activeLocalStudy.value = { id: study.id, title: study.title }
+  game.loadStudyDocument(study, { workspace })
+  syncGameViewportInsets()
+}
+
 function startOnlineGame(serverAddress: string, state: MatchGameState) {
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
+  activeLocalStudy.value = null
+  activeLocalVersus.value = null
   if (state.session) storeOnlineSession(serverAddress, state)
   stopOnlinePolling()
   onlineRoomRef.value = {
@@ -1136,6 +1326,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     logger,
     debug: query.get('debug') === '1',
     initialActions: state.actions,
+    storageKey: null,
     localPlayer: state.session?.player ?? null,
     viewPlayer: viewPlayer.value,
     autoSwitchViewPlayer: false,
@@ -1155,6 +1346,11 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     onReturnToMainMenuRequest: returnToMainMenu,
     getUISoundVolume: () => gameSettings.uiVolume,
     getBellSoundVolume: () => gameSettings.bellVolume,
+    getRecordAuthorId,
+    getRecordAuthorColor,
+    getRecordGlyphColor,
+    onWorkspaceChange: updateWorkspace,
+    onRecordMoveFocusRequest: focusRecordMoveFromBoard,
     onActionSubmitted: (action, actions) => {
       if (! state.session) {
         spectatorDeductionStartActionIndex.value ??= actions.length - 1
@@ -1514,6 +1710,14 @@ function clearStoredOnlineSession() {
   onlineSession.value = null
 }
 
+function clearSavedGameState() {
+  if (activeLocalVersus.value) {
+    deleteLocalVersusGame(activeLocalVersus.value.id)
+    return
+  }
+  removeStorageValue(GAME_STORAGE_KEY)
+}
+
 function returnToMainMenu(
   { clearSave = true, forfeit = false }: { clearSave?: boolean, forfeit?: boolean } = {},
 ) {
@@ -1527,6 +1731,7 @@ function returnToMainMenu(
     void forfeitOnlineRoom(currentOnlineSession)
     clearLastOnlineGame(currentOnlineSession)
   }
+  if (clearSave) clearSavedGameState()
   if (clearSave) {
     clearLastOnlineGame(currentOnlineSession)
     clearStoredOnlineSession()
@@ -1554,6 +1759,8 @@ function returnToMainMenu(
   hasNewLiveActions.value = false
   spectatorDeductionStartActionIndex.value = null
   pendingLocalActionsSignature = ''
+  activeLocalVersus.value = null
+  activeLocalStudy.value = null
   game?.dispose()
   game = null
   toolbarButtons.value = []
@@ -1561,6 +1768,8 @@ function returnToMainMenu(
   recordActions.value = []
   recordHasPendingMoves.value = false
   recordCurrentActionIndex.value = 0
+  recordCurrentCursor.value = { recordLineId: 0, recordActionIndex: 0 }
+  recordFocusedMove.value = null
   recordPanelOpen.value = false
   secondaryMenuOpen.value = false
   closeDialog(false)
@@ -1817,6 +2026,13 @@ watch([exportFormat, exportMode], () => {
             <GameButton
               size="main"
               :style="menuButtonStyle"
+              @click="openStudyPage"
+            >
+              <span>{{ t('main.study') }}</span>
+            </GameButton>
+            <GameButton
+              size="main"
+              :style="menuButtonStyle"
               @click="openHelpDialog"
             >
               <span>{{ t('main.help') }}</span>
@@ -1864,6 +2080,13 @@ watch([exportFormat, exportMode], () => {
           @start-online-game="startOnlineGame"
           @ui-sound="playUISound"
         />
+        <StudyPage
+          :active="mainMenuMode === 'study'"
+          @close="closeStudyPage"
+          @import-record="openImportDialog('local-study')"
+          @open-study="startStudyGame"
+          @ui-sound="playUISound"
+        />
       </section>
 
       <div
@@ -1875,6 +2098,7 @@ watch([exportFormat, exportMode], () => {
           :key="button.id"
           :style="getButtonStyle(button)"
           :disabled="button.disabled"
+          :pressed="button.pressed"
           :pulsing="button.effect === 'pulse'"
           @click="clickToolbarButton(button)"
         >
@@ -1979,10 +2203,17 @@ watch([exportFormat, exportMode], () => {
         :online="onlineSession !== null"
         :online-spectator="isOnlineSpectator"
         :deduction-start-action-index="spectatorDeductionStartActionIndex"
+        :focused-move="recordFocusedMove"
+        :custom-glyph-templates="customRecordGlyphTemplates"
         @toolbar-button-click="clickToolbarButton"
         @focus-segment="focusRecordSegment"
         @rollback-cursor="rollbackToRecordCursor"
         @delete-future="deleteRecordFuture"
+        @replace-action-comments="replaceRecordActionComments"
+        @replace-move-glyphs="replaceRecordMoveGlyphs"
+        @update-custom-glyph-templates="customRecordGlyphTemplates = $event"
+        @resize-panel="updateRecordPanelWidth"
+        @ui-sound="playUISound"
       />
 
       <div
@@ -2042,8 +2273,9 @@ watch([exportFormat, exportMode], () => {
             v-for="button in menuButtons"
             :key="button.id"
             size="secondary"
-            :style="menuButtonStyle"
+            :style="getButtonStyle(button)"
             :disabled="button.disabled"
+            :pressed="button.pressed"
             :pulsing="button.effect === 'pulse'"
             @click="clickToolbarButton(button)"
           >

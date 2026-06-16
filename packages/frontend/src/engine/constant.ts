@@ -59,6 +59,12 @@ export namespace Sizes {
   export const TimelikeLabelInset = 9
   export const SpacelikeLabelFontSize = 4
   export const SpacelikeLabelInset = 0.5
+  export const SquareMarkerLabelFontSize = 9
+  export const SquareGlyphBadgeRadius = 4
+  export const SquareGlyphBadgeOverlap = 2
+  export const SquareGlyphBadgeOffset = -1
+  export const SquareGlyphBadgeFontSize = 6
+  export const AnnotationBadgeShadowOffset: Vec2 = [0.5, 0.5]
   export const CheckBadgeShadowOffset: Vec2 = [2, 2]
 
   export const LineArrowRadius = 20
@@ -82,12 +88,25 @@ export namespace Sizes {
   export const ButtonHeight = 56
   export const ButtonTop = 18
   export const ButtonShadowOffset = 5
+  export const ButtonSmallHeight = 32
   export const SmallButtonShadowOffset = 3
+  export const ButtonTinyHeight = 20
+  export const ButtonTinyShadowOffset = 2
+  export const BadgeShadowOffset = 2
   export const ButtonBorder = 3
+  export const ButtonSmallBorder = 2
+  export const ButtonTinyBorder = 2
   export const ButtonFontSize = 32
+  export const ButtonSmallFontSize = 16
+  export const ButtonTinyFontSize = 14
   export const ButtonIconSize = 28
+  export const ButtonSmallIconSize = 18
+  export const ButtonTinyIconSize = 14
   export const ButtonContentGap = 8
+  export const ButtonSmallContentGap = 6
+  export const ButtonTinyContentGap = 4
   export const RecordPanelWidth = 300
+  export const RecordPanelMinWidth = 220
   export const RecordBlockBorderWidth = 3
 
   export const PresentWidth = 104

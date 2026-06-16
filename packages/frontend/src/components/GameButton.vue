@@ -90,29 +90,33 @@ const props = withDefaults(defineProps<{
 }
 
 .game-button--small {
-  --button-pressed-indicator-left: 10px;
-  --button-pressed-indicator-size: 24px;
-  --button-shadow-offset: var(--small-button-shadow-offset);
+  --button-pressed-indicator-left: calc(var(--button-small-content-gap) + var(--button-small-border));
+  --button-pressed-indicator-size: calc(var(--button-small-height) * 0.75);
+  --button-shadow-offset: var(--button-small-shadow-offset, var(--small-button-shadow-offset));
+  --button-icon-size: var(--button-small-icon-size);
+  --button-content-gap: var(--button-small-content-gap);
   width: auto;
   min-width: 96px;
-  height: 32px;
+  height: var(--button-small-height);
   padding: 0 12px;
-  border-width: 2px;
-  border-radius: 16px;
-  font-size: 16px;
+  border-width: var(--button-small-border);
+  border-radius: calc(var(--button-small-height) / 2);
+  font-size: var(--button-small-font-size);
 }
 
 .game-button--tiny {
-  --button-pressed-indicator-left: 8px;
-  --button-pressed-indicator-size: 20px;
-  --button-shadow-offset: var(--small-button-shadow-offset);
+  --button-pressed-indicator-left: calc(var(--button-tiny-content-gap) + var(--button-tiny-border));
+  --button-pressed-indicator-size: calc(var(--button-tiny-height) * 0.62);
+  --button-shadow-offset: var(--button-tiny-shadow-offset);
+  --button-icon-size: var(--button-tiny-icon-size);
+  --button-content-gap: var(--button-tiny-content-gap);
   width: auto;
-  min-width: 58px;
-  height: 28px;
-  padding: 0 8px;
-  border-width: 2px;
-  border-radius: 14px;
-  font-size: 14px;
+  min-width: calc(var(--button-tiny-height) * 2.9);
+  height: var(--button-tiny-height);
+  padding: 0 calc(var(--button-tiny-content-gap) * 1.5);
+  border-width: var(--button-tiny-border);
+  border-radius: calc(var(--button-tiny-height) / 2);
+  font-size: var(--button-tiny-font-size);
 }
 
 .game-button--circle {
@@ -128,9 +132,17 @@ const props = withDefaults(defineProps<{
 }
 
 .game-button--small.game-button--circle {
-  width: 32px;
-  min-width: 32px;
-  font-size: 18px;
+  width: var(--button-small-height);
+  min-width: var(--button-small-height);
+  font-size: var(--button-small-icon-size);
+}
+
+.game-button--tiny.game-button--circle {
+  width: var(--button-tiny-height);
+  min-width: var(--button-tiny-height);
+  height: var(--button-tiny-height);
+  padding: 0;
+  border-radius: 50%;
 }
 
 .game-button.has-pressed-indicator {

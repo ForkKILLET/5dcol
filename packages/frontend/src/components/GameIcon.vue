@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'branch' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'current' | 'delete-future' | 'ellipsis' | 'flip' | 'globe' | 'jump'
+  name: 'branch' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'plus' | 'x'
 }>()
 </script>
 
@@ -66,6 +66,24 @@ defineProps<{
       <path d="M15 8l4 4-4 4" />
       <path d="M4.8 9.4l5.2 5.2" />
       <path d="M10 9.4l-5.2 5.2" />
+    </template>
+    <template v-else-if="name === 'comment'">
+      <path d="M5 5.5h14v10H10l-5 4z" />
+    </template>
+    <template v-else-if="name === 'glyph'">
+      <path d="M12 4l2.3 4.7 5.2.8-3.8 3.7.9 5.2L12 16l-4.6 2.4.9-5.2-3.8-3.7 5.2-.8z" />
+    </template>
+    <template v-else-if="name === 'exclamation'">
+      <path d="M12 5v9" />
+      <path d="M12 19h.01" />
+    </template>
+    <template v-else-if="name === 'plus'">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </template>
+    <template v-else-if="name === 'x'">
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
     </template>
     <template v-else>
       <circle

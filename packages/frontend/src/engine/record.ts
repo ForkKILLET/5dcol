@@ -1,4 +1,5 @@
-import { Coord, FiveDPGN, Player, type Action } from '@5dcol/core'
+import { Coord, FiveDPGN, Player, type Action, type Move, type Multiverse } from '@5dcol/core'
+import { type RecordAnnotation, type RecordDocument, type RecordLine } from '@engine/recordTree'
 
 export interface GameRecordAction {
   kind: 'action'
@@ -12,6 +13,8 @@ export interface GameRecordAction {
   recordActionIndex?: number
   branchDepth?: number
   pending?: boolean
+  commentsBefore?: GameRecordComment[]
+  commentsAfter?: GameRecordComment[]
 }
 
 export interface GameRecordCursor {
@@ -33,13 +36,60 @@ export interface GameRecordClock {
 
 export interface GameRecordMove {
   segments: GameRecordMoveSegment[]
+  glyphs?: GameRecordGlyph[]
 }
 
 export interface GameRecordMoveSegment {
   text: string
   l: number
   m: number
+  recordLineId?: number
+  recordActionIndex?: number
+  moveIndex?: number
+  segmentIndex?: number
+  segmentCount?: number
 }
+
+export interface GameRecordComment {
+  id: string
+  text: string
+  authorId?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface GameRecordGlyph {
+  id: string
+  glyph: string
+}
+
+export interface BuildGameRecordRowsOptions {
+  document: RecordDocument
+  actionIndex: number
+  pendingMoves: Move[]
+  initialMultiverse: Multiverse
+  fiveDPGNOptions?: FiveDPGN.ExportOptions
+}
+
+export const buildGameRecordRows = ({
+  document,
+  actionIndex,
+  pendingMoves,
+  initialMultiverse,
+  fiveDPGNOptions = {},
+}: BuildGameRecordRowsOptions): GameRecordRow[] => (
+  buildGameRecordLineRows({
+    document,
+    lineId: 0,
+    prefixActions: [],
+    actionIndex,
+    pendingMoves,
+    fiveDPGNOptions: {
+      ...fiveDPGNOptions,
+      initialMultiverse,
+    },
+  })
+)
 
 export const buildGameRecordActions = (
   actions: Action[],
@@ -63,6 +113,7 @@ export const buildGameRecordActions = (
           text: segment.text,
           l: segment.board.l,
           m: Coord.boardIndex(segment.board, action.player === 'w' ? Player.W : Player.B),
+          segmentCount: move.segments.length,
         })),
       })),
     }
@@ -75,3 +126,187 @@ export const formatDuration = (durationMs: number): string => {
   const seconds = totalSeconds % 60
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
+
+const buildGameRecordLineRows = ({
+  document,
+  lineId,
+  prefixActions,
+  actionIndex: globalActionIndex,
+  pendingMoves,
+  fiveDPGNOptions,
+}: {
+  document: RecordDocument
+  lineId: number
+  prefixActions: Action[]
+  actionIndex: number
+  pendingMoves: Move[]
+  fiveDPGNOptions: FiveDPGN.ExportOptions
+}): GameRecordRow[] => {
+  const line = document.getLine(lineId)
+  if (! line) return []
+
+  const rows: GameRecordRow[] = []
+  const activePendingLocalActionIndex = getActiveLocalActionIndex({
+    document,
+    line,
+    globalActionIndex,
+    enabled: pendingMoves.length > 0,
+  })
+  const currentCursorLocalActionIndex = getActiveLocalActionIndex({
+    document,
+    line,
+    globalActionIndex,
+    enabled: pendingMoves.length === 0,
+  })
+  const lineRows = buildGameRecordActions([
+    ...prefixActions,
+    ...line.actions,
+  ], fiveDPGNOptions)
+
+  for (let lineActionIndex = 0; lineActionIndex <= line.actions.length; lineActionIndex += 1) {
+    const hasFuture = document.hasFutureAt(line.id, lineActionIndex)
+    if (line.id === 0 || lineActionIndex > 0 || hasFuture) {
+      rows.push({
+        kind: 'cursor',
+        recordKey: `${line.id}:cursor:${lineActionIndex}`,
+        recordLineId: line.id,
+        recordActionIndex: lineActionIndex,
+        branchDepth: line.depth,
+        hasFuture,
+        current: currentCursorLocalActionIndex === lineActionIndex,
+      })
+    }
+
+    const branchIds = line.branchLineIdsBeforeAction.get(lineActionIndex) ?? []
+    const branchPrefixActions = [
+      ...prefixActions,
+      ...line.actions.slice(0, lineActionIndex),
+    ]
+    for (const branchId of branchIds) {
+      rows.push(...buildGameRecordLineRows({
+        document,
+        lineId: branchId,
+        prefixActions: branchPrefixActions,
+        actionIndex: globalActionIndex,
+        pendingMoves,
+        fiveDPGNOptions,
+      }))
+    }
+
+    if (activePendingLocalActionIndex === lineActionIndex) {
+      const pendingRows = buildGameRecordActions([
+        ...branchPrefixActions,
+        { moves: pendingMoves },
+      ], fiveDPGNOptions)
+      const pendingRow = pendingRows.at(-1)
+      if (pendingRow) {
+        rows.push({
+          ...pendingRow,
+          recordKey: `${line.id}:${lineActionIndex}:pending`,
+          recordLineId: line.id,
+          recordActionIndex: lineActionIndex,
+          branchDepth: line.depth,
+          pending: true,
+        })
+      }
+    }
+
+    if (lineActionIndex >= line.actions.length) continue
+
+    const row = lineRows[prefixActions.length + lineActionIndex]
+    if (! row) continue
+
+    rows.push({
+      ...row,
+      recordKey: `${line.id}:${lineActionIndex}`,
+      recordLineId: line.id,
+      recordActionIndex: lineActionIndex,
+      branchDepth: line.depth,
+      commentsBefore: getActionComments(document, line.id, lineActionIndex, 'before'),
+      commentsAfter: getActionComments(document, line.id, lineActionIndex, 'after'),
+      moves: row.moves.map((move, moveIndex) => ({
+        ...move,
+        segments: move.segments.map((segment, segmentIndex) => ({
+          ...segment,
+          recordLineId: line.id,
+          recordActionIndex: lineActionIndex,
+          moveIndex,
+          segmentIndex,
+          segmentCount: move.segments.length,
+        })),
+        glyphs: getMoveGlyphs(document, line.id, lineActionIndex, moveIndex),
+      })),
+    })
+  }
+
+  return rows
+}
+
+const getActiveLocalActionIndex = ({
+  document,
+  line,
+  globalActionIndex,
+  enabled,
+}: {
+  document: RecordDocument
+  line: RecordLine
+  globalActionIndex: number
+  enabled: boolean
+}): number | null => (
+  enabled && line.id === document.activeRecordLineId
+    ? document.getActiveLineLocalActionIndex(globalActionIndex)
+    : null
+)
+
+const getActionComments = (
+  document: RecordDocument,
+  lineId: number,
+  actionIndex: number,
+  position: 'before' | 'after',
+): GameRecordComment[] => (
+  document.getAnnotationsForTarget({
+    type: 'action',
+    lineId,
+    actionIndex,
+    position,
+  })
+    .filter(isCommentAnnotation)
+    .map(annotation => ({
+      id: annotation.id,
+      text: annotation.text,
+      authorId: annotation.authorId,
+      createdAt: annotation.createdAt,
+      updatedAt: annotation.updatedAt,
+    }))
+)
+
+const getMoveGlyphs = (
+  document: RecordDocument,
+  lineId: number,
+  actionIndex: number,
+  moveIndex: number,
+): GameRecordGlyph[] => (
+  document.getAnnotationsForTarget({
+    type: 'move',
+    lineId,
+    actionIndex,
+    moveIndex,
+  })
+    .filter(isGlyphAnnotation)
+    .map(annotation => ({
+      id: annotation.id,
+      glyph: annotation.glyph,
+    }))
+)
+
+const isCommentAnnotation = (
+  annotation: RecordAnnotation,
+): annotation is Extract<RecordAnnotation, { type: 'comment' }> => (
+  annotation.type === 'comment'
+)
+
+const isGlyphAnnotation = (
+  annotation: RecordAnnotation,
+): annotation is Extract<RecordAnnotation, { type: 'glyph' }> => (
+  annotation.type === 'glyph'
+)

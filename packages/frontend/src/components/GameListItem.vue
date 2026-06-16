@@ -41,7 +41,7 @@ defineProps<{
   display: grid;
   grid-template-columns: minmax(max-content, 100px) minmax(0, 1fr);
   column-gap: calc(var(--button-content-gap) * 0.75);
-  align-items: center;
+  align-items: baseline;
   min-width: 0;
 }
 

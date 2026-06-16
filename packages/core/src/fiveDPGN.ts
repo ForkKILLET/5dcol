@@ -16,7 +16,7 @@ import {
 
 const FILES = 'abcdefgh'
 const PIECE_NAMES = 'PWKCQYSNRBUD'
-const EVALUATION_SYMBOLS = ['!!', '!?', '?!', '??', '!', '?']
+const EVALUATION_SYMBOLS = ['!!', '!?', '?!', '??', '!', '?', '-']
 const RESULT_SYMBOLS = ['1-0', '0-1', '1/2-1/2', '*']
 const PIECE_SYMBOLS: Partial<Record<number, string>> = {
   [0x02]: 'R',
@@ -75,6 +75,9 @@ export interface ActionTree {
 export interface ActionTreeVariation {
   action: Action
   subtree?: ActionTree
+  commentsBefore?: string[]
+  commentsAfter?: string[]
+  glyphs?: string[]
 }
 
 interface ParsedGame {
@@ -331,7 +334,10 @@ const formatActionTree = (
       options,
       player,
     })
-    const actionLine = formatActionLine(result.action)
+    const actionLine = [
+      ...formatComments(variation.commentsBefore),
+      `${formatActionLine(result.action, variation.glyphs)}${formatComments(variation.commentsAfter).map(comment => ` ${comment}`).join('')}`,
+    ].join('\n')
     const subtreeText = hasSubtree
       ? formatActionTree(variation.subtree!, {
           actionIndex: actionIndex + 1,
@@ -434,8 +440,16 @@ const applyTerminalCheckmateMarker = (
   }
 }
 
-const formatActionLine = (action: FormattedAction): string => (
-  `${action.serial} ${action.moves.map(move => move.text).join(' ')}`
+const formatActionLine = (action: FormattedAction, glyphs?: readonly string[]): string => (
+  `${action.serial} ${action.moves.map(move => move.text).join(' ')}${formatGlyphs(glyphs)}`
+)
+
+const formatComments = (comments: readonly string[] | undefined): string[] => (
+  comments?.map(comment => `{${comment}}`) ?? []
+)
+
+const formatGlyphs = (glyphs: readonly string[] | undefined): string => (
+  glyphs?.join('') ?? ''
 )
 
 class Parser {
@@ -464,13 +478,15 @@ class Parser {
     const variations: ActionTreeVariation[] = []
 
     while (true) {
-      this.skipSpaceComments()
+      const commentsBefore = this.readSpaceComments()
       if (this.isDone() || this.peek() === ')' || this.isResultStart()) break
 
       if (this.isVariationStart()) {
         this.consume('(')
-        this.skipSpaceComments()
-        variations.push(this.parseVariation(multiverse, player, actionIndex))
+        variations.push(this.parseVariation(multiverse, player, actionIndex, [
+          ...commentsBefore,
+          ...this.readSpaceComments(),
+        ]))
         this.skipSpaceComments()
         this.consume(')')
         continue
@@ -480,34 +496,45 @@ class Parser {
         throw this.error(`Expected 5dpgn action near "${this.input.slice(this.cursor, this.cursor + 32).trim()}"`)
       }
 
-      variations.push(this.parseVariation(multiverse, player, actionIndex))
+      variations.push(this.parseVariation(multiverse, player, actionIndex, commentsBefore))
       break
     }
 
     return { variations }
   }
 
-  private parseVariation(multiverse: Multiverse, player: Player, actionIndex: number): ActionTreeVariation {
-    const { action, multiverse: nextMultiverse } = this.parseAction(multiverse, player, actionIndex)
+  private parseVariation(
+    multiverse: Multiverse,
+    player: Player,
+    actionIndex: number,
+    commentsBefore: string[] = [],
+  ): ActionTreeVariation {
+    const { action, commentsAfter, glyphs, multiverse: nextMultiverse } = this.parseAction(multiverse, player, actionIndex)
     const subtree = this.parseGameTree(nextMultiverse, Players.opponent(player), actionIndex + 1)
-    return subtree.variations.length > 0
-      ? { action, subtree }
-      : { action }
+    return {
+      action,
+      ...(subtree.variations.length > 0 ? { subtree } : {}),
+      ...(commentsBefore.length > 0 ? { commentsBefore } : {}),
+      ...(commentsAfter.length > 0 ? { commentsAfter } : {}),
+      ...(glyphs.length > 0 ? { glyphs } : {}),
+    }
   }
 
   private parseAction(
     multiverse: Multiverse,
     player: Player,
     actionIndex: number,
-  ): { action: Action, multiverse: Multiverse } {
+  ): { action: Action, commentsAfter: string[], glyphs: string[], multiverse: Multiverse } {
     const serial = this.parseTurnSerial()
     this.assertTurnSerial(serial, player, actionIndex)
 
     const moves: Move[] = []
+    const commentsAfter: string[] = []
+    const glyphs: string[] = []
     let nextMultiverse = multiverse
 
     while (true) {
-      this.skipSpaceComments()
+      const comments = this.readSpaceComments()
       if (
         this.isDone()
         || this.peek() === ')'
@@ -515,10 +542,13 @@ class Parser {
         || this.isActionStart()
         || this.isVariationStart()
       ) {
+        commentsAfter.push(...comments)
         break
       }
+      commentsAfter.push(...comments)
 
       const token = this.readMoveToken()
+      glyphs.push(...readMoveGlyphs(token))
       const move = resolveMoveToken(
         token,
         nextMultiverse,
@@ -537,6 +567,8 @@ class Parser {
     if (moves.length === 0) throw this.error('Expected at least one 5dpgn move in action')
     return {
       action: { moves },
+      commentsAfter,
+      glyphs,
       multiverse: nextMultiverse,
     }
   }
@@ -650,7 +682,33 @@ class Parser {
   }
 
   private skipSpaceComments(): void {
-    this.cursor = this.skipSpaceCommentsFrom(this.cursor)
+    this.readSpaceComments()
+  }
+
+  private readSpaceComments(): string[] {
+    const comments: string[] = []
+    while (this.cursor < this.input.length) {
+      if (/\s/.test(this.input[this.cursor]!)) {
+        this.cursor += 1
+        continue
+      }
+      if (this.input[this.cursor] !== '{') break
+      comments.push(this.readCommentBlock())
+    }
+    return comments
+  }
+
+  private readCommentBlock(): string {
+    this.consume('{')
+    const start = this.cursor
+    let depth = 1
+    while (this.cursor < this.input.length && depth > 0) {
+      if (this.input[this.cursor] === '{') depth += 1
+      else if (this.input[this.cursor] === '}') depth -= 1
+      this.cursor += 1
+    }
+    if (depth > 0) throw this.error('Unterminated 5dpgn comment')
+    return this.input.slice(start, this.cursor - 1)
   }
 
   private skipSpaceCommentsFrom(start: number): number {
@@ -849,6 +907,31 @@ const stripMoveAnnotations = (token: string): string => {
     }
   }
   return result.replace(/=[A-Z]$/, '')
+}
+
+const readMoveGlyphs = (token: string): string[] => {
+  const glyphs: string[] = []
+  let result = token
+  let changed = true
+
+  while (changed) {
+    changed = false
+    for (const symbol of EVALUATION_SYMBOLS) {
+      if (result.endsWith(symbol)) {
+        glyphs.unshift(symbol)
+        result = result.slice(0, -symbol.length)
+        changed = true
+        break
+      }
+    }
+    if (changed) continue
+    if (/[+#*~]$/.test(result)) {
+      result = result.slice(0, -1)
+      changed = true
+    }
+  }
+
+  return glyphs
 }
 
 const splitTargetSquare = (body: string): { prefix: string, square: CoordSpacelike } => {
