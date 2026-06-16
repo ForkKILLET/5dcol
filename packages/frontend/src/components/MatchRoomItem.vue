@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type StyleValue } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MatchRoom, MatchRoomStatus } from '@5dcol/shared/protocol'
 import type { MatchServerState } from '@engine/matchClient'
@@ -8,7 +8,6 @@ import GameButton from './GameButton.vue'
 const props = defineProps<{
   server: MatchServerState
   room: MatchRoom
-  buttonStyle: StyleValue
 }>()
 
 const emit = defineEmits<{
@@ -105,7 +104,6 @@ function getSeatLabel(seat: MatchRoom['seats'][number]) {
       <GameButton
         v-if="room.ownSession && room.status !== 'finished'"
         size="small"
-        :style="buttonStyle"
         badge="!"
         @click="emit('returnRoom', server, room)"
       >
@@ -114,7 +112,6 @@ function getSeatLabel(seat: MatchRoom['seats'][number]) {
       <GameButton
         v-else-if="room.status === 'waiting'"
         size="small"
-        :style="buttonStyle"
         @click="emit('joinRoom', server, room.id)"
       >
         <span>{{ t('match.join') }}</span>
@@ -122,7 +119,6 @@ function getSeatLabel(seat: MatchRoom['seats'][number]) {
       <GameButton
         v-else-if="canView"
         size="small"
-        :style="buttonStyle"
         @click="emit('viewRoom', server, room)"
       >
         <span>{{ viewLabel }}</span>

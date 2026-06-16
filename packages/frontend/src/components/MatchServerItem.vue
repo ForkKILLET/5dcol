@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { computed, type StyleValue } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MatchRoom } from '@5dcol/shared/protocol'
 import type { MatchServerState } from '@engine/matchClient'
-import GameButton from './GameButton.vue'
-import GameIcon from './GameIcon.vue'
-import GamePanel from './GamePanel.vue'
 import MatchRoomItem from './MatchRoomItem.vue'
+import OnlineServerItem from './OnlineServerItem.vue'
 
 const props = defineProps<{
   server: MatchServerState
   expanded: boolean
   manual: boolean
-  buttonStyle: StyleValue
 }>()
 
 const emit = defineEmits<{
@@ -32,19 +29,6 @@ const sortedRooms = computed(() => [...props.server.rooms].sort((a, b) => (
     || b.updatedAt - a.updatedAt
 )))
 
-function getStatusText(status: MatchServerState['status']) {
-  switch (status) {
-    case 'idle':
-      return t('match.status.idle')
-    case 'connecting':
-      return t('match.status.connecting')
-    case 'connected':
-      return t('match.status.connected')
-    case 'failed':
-      return t('match.status.failed')
-  }
-}
-
 function getRoomSortRank(status: MatchRoom['status']) {
   switch (status) {
     case 'waiting':
@@ -54,10 +38,6 @@ function getRoomSortRank(status: MatchRoom['status']) {
     case 'finished':
       return 2
   }
-}
-
-function getDisplayAddress(server: MatchServerState) {
-  return server.address.replace(/^https?:\/\//, '')
 }
 
 function getServerPingText(server: MatchServerState) {
@@ -80,15 +60,11 @@ function getServerConnectionText(server: MatchServerState) {
   return t('match.connections', { count: stats.connectionCount })
 }
 
-function hasServerStaticMeta(server: MatchServerState) {
-  return Boolean(server.name || server.version || server.commitHash || server.buildDate)
-}
-
-function formatBuildDate(buildDate: string) {
-  const date = new Date(buildDate)
-  if (Number.isNaN(date.getTime())) return buildDate
-  return date.toLocaleDateString()
-}
+const dynamicMeta = computed(() => [
+  getServerPingText(props.server),
+  getServerStatsText(props.server),
+  getServerConnectionText(props.server),
+].filter(Boolean))
 
 function forwardReturnRoom(server: MatchServerState, room: MatchRoom) {
   emit('returnRoom', server, room)
@@ -104,163 +80,43 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
 </script>
 
 <template>
-  <GamePanel tag="section">
-    <div class="match-server-header">
-      <GameButton
-        size="small"
-        shape="circle"
-        :style="buttonStyle"
-        :aria-label="expanded ? t('match.collapseServer') : t('match.expandServer')"
-        :aria-expanded="expanded"
-        @click="emit('toggle', server)"
-      >
-        <GameIcon :name="expanded ? 'chevron-down' : 'chevron-right'" />
-      </GameButton>
-      <div class="match-server-main">
-        <div class="match-server-address">{{ getDisplayAddress(server) }}</div>
-        <div class="match-server-meta">
-          <div class="match-server-meta-line">
-            <span
-              class="match-status"
-              :class="`match-status--${server.status}`"
-            >
-              {{ getStatusText(server.status) }}
-            </span>
-            <span v-if="getServerPingText(server)">{{ getServerPingText(server) }}</span>
-            <span v-if="getServerStatsText(server)">{{ getServerStatsText(server) }}</span>
-            <span v-if="getServerConnectionText(server)">{{ getServerConnectionText(server) }}</span>
-          </div>
-          <div
-            v-if="hasServerStaticMeta(server)"
-            class="match-server-meta-line"
-          >
-            <span v-if="server.name">{{ server.name }}</span>
-            <span v-if="server.version">v{{ server.version }}</span>
-            <span v-if="server.commitHash">{{ server.commitHash }}</span>
-            <span v-if="server.buildDate">{{ formatBuildDate(server.buildDate) }}</span>
-          </div>
+  <OnlineServerItem
+    :server="server"
+    :expanded="expanded"
+    :manual="manual"
+    :dynamic-meta="dynamicMeta"
+    @toggle="emit('toggle', $event)"
+    @create-room="emit('createRoom', $event)"
+    @connect="emit('connect', $event)"
+    @remove="emit('remove', $event)"
+  >
+    <template #rooms>
+      <div class="match-room-list">
+        <div
+          v-if="server.rooms.length === 0"
+          class="match-empty"
+        >
+          {{ t('match.noRooms') }}
         </div>
+        <MatchRoomItem
+          v-for="room in sortedRooms"
+          :key="room.id"
+          :server="server"
+          :room="room"
+          @return-room="forwardReturnRoom"
+          @join-room="forwardJoinRoom"
+          @view-room="forwardViewRoom"
+        />
       </div>
-      <div class="match-server-actions">
-        <GameButton
-          v-if="server.status === 'connected'"
-          size="small"
-          :style="buttonStyle"
-          @click="emit('createRoom', server)"
-        >
-          <span>{{ t('match.createRoom') }}</span>
-        </GameButton>
-        <GameButton
-          v-if="server.status !== 'connected' && server.status !== 'connecting'"
-          size="small"
-          :style="buttonStyle"
-          @click="emit('connect', server)"
-        >
-          <span>{{ t('match.connect') }}</span>
-        </GameButton>
-        <GameButton
-          v-if="manual"
-          size="small"
-          :style="buttonStyle"
-          @click="emit('remove', server)"
-        >
-          <span>{{ t('match.removeServer') }}</span>
-        </GameButton>
-      </div>
-    </div>
-    <div
-      v-if="server.status === 'connected' && expanded"
-      class="match-room-list"
-    >
-      <div
-        v-if="server.rooms.length === 0"
-        class="match-empty"
-      >
-        {{ t('match.noRooms') }}
-      </div>
-      <MatchRoomItem
-        v-for="room in sortedRooms"
-        :key="room.id"
-        :server="server"
-        :room="room"
-        :button-style="buttonStyle"
-        @return-room="forwardReturnRoom"
-        @join-room="forwardJoinRoom"
-        @view-room="forwardViewRoom"
-      />
-    </div>
-    <div
-      v-else-if="server.status === 'failed' && expanded"
-      class="match-error"
-    >
-      {{ server.error || t('match.failedMessage') }}
-    </div>
-  </GamePanel>
+    </template>
+  </OnlineServerItem>
 </template>
 
 <style scoped>
-.match-server-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: calc(var(--button-content-gap) * 2);
-}
-
-.match-server-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.match-server-address {
-  overflow: hidden;
-  font-size: 18px;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.match-server-meta,
-.match-error,
 .match-empty {
   font-size: 14px;
   line-height: 1.25;
   opacity: 0.78;
-}
-
-.match-server-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.match-server-meta-line {
-  display: flex;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.match-server-meta-line > span {
-  white-space: nowrap;
-}
-
-.match-server-meta-line > span + span::before {
-  content: "-";
-  margin: 0 calc(var(--button-content-gap) * 0.75);
-}
-
-.match-server-actions {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: baseline;
-  gap: calc(var(--button-content-gap) * 1.5);
-}
-
-.match-status--connected {
-  color: rgb(92, 135, 95);
-}
-
-.match-status--failed {
-  color: rgb(184, 84, 61);
 }
 
 .match-room-list {

@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { type StyleValue } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MatchRoom, MatchRoomSettings } from '@5dcol/shared/protocol'
 import type { MatchServerState } from '@engine/matchClient'
 import GameButton from './GameButton.vue'
-import GamePanel from './GamePanel.vue'
+import GameListItem from './GameListItem.vue'
 import GameTextInput from './GameTextInput.vue'
+import ManualServerPanel from './ManualServerPanel.vue'
 import MatchRoomSettingsPanel from './MatchRoomSettingsPanel.vue'
 import MatchServerItem from './MatchServerItem.vue'
+import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
 
 type MatchPanelMode = 'servers' | 'room-settings'
 
@@ -18,7 +19,9 @@ const props = defineProps<{
   expandedServerIds: ReadonlySet<string>
   defaultServerIds: ReadonlySet<string>
   roomSettings: MatchRoomSettings
-  buttonStyle: StyleValue
+  embedded?: boolean
+  showBack?: boolean
+  showTitle?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -69,36 +72,27 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
 </script>
 
 <template>
-  <div class="match-card">
+  <div
+    class="match-card"
+    :class="{ 'is-embedded': embedded }"
+  >
     <div class="match-card-header">
-      <h2 class="dialog-title">
+      <h2
+        v-if="showTitle !== false"
+        class="dialog-title"
+      >
         {{ mode === 'room-settings' ? t('dialog.matchRoomSettingsTitle') : t('match.title') }}
       </h2>
       <div
         v-if="mode === 'servers'"
         class="match-card-actions"
       >
-        <div class="match-control-slot match-control-slot--input match-nickname-slot">
-          <GameTextInput
-            v-model="nickname"
-            :placeholder="t('match.nicknamePlaceholder')"
-            spellcheck="false"
-          />
-        </div>
-        <GameButton
-          size="small"
-          :style="buttonStyle"
-          @click="emit('refresh')"
-        >
-          <span>{{ t('match.refresh') }}</span>
-        </GameButton>
-        <GameButton
-          size="small"
-          :style="buttonStyle"
-          @click="emit('back')"
-        >
-          <span>{{ t('button.back') }}</span>
-        </GameButton>
+        <OnlinePanelToolbar
+          v-model:nickname="nickname"
+          :show-back="showBack"
+          @refresh="emit('refresh')"
+          @back="emit('back')"
+        />
       </div>
       <div
         v-else
@@ -106,7 +100,6 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
       >
         <GameButton
           size="small"
-          :style="buttonStyle"
           @click="emit('settingsBack')"
         >
           <span>{{ t('button.back') }}</span>
@@ -117,44 +110,27 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
       v-if="mode === 'servers'"
       class="match-server-list"
     >
-      <GamePanel
-        tag="section"
-        class="match-server--manual"
-      >
-        <div class="match-manual-row">
-          <div class="match-control-slot match-control-slot--input">
-            <GameTextInput
-              v-model="manualAddress"
-              :placeholder="t('match.serverAddressPlaceholder')"
-              spellcheck="false"
-              @keydown.enter.prevent="emit('addServer')"
-            />
-          </div>
-          <GameButton
-            size="small"
-            :style="buttonStyle"
-            :disabled="manualAddress.trim().length === 0"
-            @click="emit('addServer')"
-          >
-            <span>{{ t('match.addServer') }}</span>
-          </GameButton>
-        </div>
-      </GamePanel>
-      <GamePanel
+      <ManualServerPanel
+        v-model:address="manualAddress"
+        :placeholder="t('match.serverAddressPlaceholder')"
+        @add="emit('addServer')"
+      />
+      <section
         v-if="customRoomServer"
-        tag="section"
-        class="match-server--custom-room"
+        class="match-custom-room-panel"
       >
-        <div class="match-room">
-          <div class="match-room-main">
-            <div class="match-room-name">
+        <GameListItem>
+          <template #title>
+            <span>
               {{ t('match.customRoom') }}
-            </div>
-            <div class="match-room-meta">
+            </span>
+          </template>
+          <template #meta>
+            <span>
               {{ getDisplayAddress(customRoomServer) }}
-            </div>
-          </div>
-          <div class="match-room-fields">
+            </span>
+          </template>
+          <template #actions>
             <div class="match-control-slot match-control-slot--input">
               <GameTextInput
                 v-model="roomName"
@@ -165,28 +141,25 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
             </div>
             <GameButton
               size="small"
-              :style="buttonStyle"
               @click="emit('openRoomSettings')"
             >
               <span>{{ t('main.settings') }}</span>
             </GameButton>
             <GameButton
               size="small"
-              :style="buttonStyle"
               @click="emit('createRoom')"
             >
               <span>{{ t('match.create') }}</span>
             </GameButton>
-          </div>
-        </div>
-      </GamePanel>
+          </template>
+        </GameListItem>
+      </section>
       <MatchServerItem
         v-for="server in servers"
         :key="server.id"
         :server="server"
         :expanded="isExpanded(server)"
         :manual="isManualServer(server)"
-        :button-style="buttonStyle"
         @toggle="emit('toggleServer', $event)"
         @create-room="emit('openCustomRoom', $event)"
         @connect="emit('connectServer', $event)"
@@ -199,7 +172,6 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
     <MatchRoomSettingsPanel
       v-else
       :settings="roomSettings"
-      :button-style="buttonStyle"
     />
   </div>
 </template>
@@ -225,21 +197,25 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
   transform: translate(-50%, -50%);
 }
 
-.match-card-header,
-.match-room {
+.match-card.is-embedded {
+  position: static;
+  left: auto;
+  top: auto;
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.match-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--button-content-gap) * 2);
-}
-
-.match-card-actions {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: baseline;
-  gap: calc(var(--button-content-gap) * 1.5);
-  justify-content: flex-end;
-  min-width: 0;
 }
 
 .match-server-list {
@@ -252,10 +228,9 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
   overflow: auto;
 }
 
-.match-manual-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--button-content-gap);
+.match-card-actions {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .match-control-slot {
@@ -269,48 +244,21 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
   min-width: 0;
 }
 
-.match-nickname-slot {
-  flex: 0 1 190px;
+.match-custom-room-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--button-content-gap);
+  padding: calc(var(--button-content-gap) * 1.4);
+  border: var(--button-border) solid var(--button-border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--button-fill-color) 75%, transparent);
 }
 
-.match-room-main {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(max-content, 100px) minmax(0, 1fr);
-  column-gap: calc(var(--button-content-gap) * 0.75);
-  align-items: center;
-  min-width: 0;
-}
-
-.match-room-name {
-  overflow: hidden;
-  font-size: 18px;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.match-room-meta {
-  overflow: hidden;
-  font-size: 14px;
-  line-height: 1.25;
-  opacity: 0.78;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.match-room-fields {
+.match-custom-room-panel :deep(.game-list-item__actions) {
+  flex: 0 1 440px;
   display: flex;
   align-items: baseline;
   gap: var(--button-content-gap);
-}
-
-.match-server--custom-room .match-room {
-  padding-top: 0;
-}
-
-.match-server--custom-room .match-room-fields {
-  flex: 0 1 440px;
   min-width: 0;
 }
 </style>

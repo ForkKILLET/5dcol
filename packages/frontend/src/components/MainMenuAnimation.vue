@@ -8,7 +8,7 @@ import { Colors } from '@engine/constant'
 import { getMainArrowPoints, type MainMenuLayout } from '@engine/mainMenuLayout'
 import Card from './Card.vue'
 
-type MainMenuMode = 'home' | 'match'
+type MainMenuMode = 'home' | 'versus'
 
 const props = defineProps<{
   visible: boolean

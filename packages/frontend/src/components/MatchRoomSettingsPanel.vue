@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { type StyleValue } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MatchRoomSettings } from '@5dcol/shared/protocol'
 import GameToggle from './GameToggle.vue'
 
 defineProps<{
   settings: MatchRoomSettings
-  buttonStyle: StyleValue
 }>()
 
 const { t } = useI18n({ useScope: 'global' })
@@ -19,7 +17,6 @@ const { t } = useI18n({ useScope: 'global' })
         <span>{{ t('match.setting.private') }}</span>
         <GameToggle
           v-model="settings.private"
-          :style="buttonStyle"
         />
       </div>
       <div class="settings-row settings-row--stacked">
@@ -29,7 +26,6 @@ const { t } = useI18n({ useScope: 'global' })
             v-model="settings.creatorPlayer"
             type="radio"
             value="white"
-            :style="buttonStyle"
           >
             <span>{{ t('match.setting.creatorWhite') }}</span>
           </GameToggle>
@@ -37,7 +33,6 @@ const { t } = useI18n({ useScope: 'global' })
             v-model="settings.creatorPlayer"
             type="radio"
             value="black"
-            :style="buttonStyle"
           >
             <span>{{ t('match.setting.creatorBlack') }}</span>
           </GameToggle>
@@ -45,7 +40,6 @@ const { t } = useI18n({ useScope: 'global' })
             v-model="settings.creatorPlayer"
             type="radio"
             value="random"
-            :style="buttonStyle"
           >
             <span>{{ t('match.setting.creatorRandom') }}</span>
           </GameToggle>
@@ -55,21 +49,18 @@ const { t } = useI18n({ useScope: 'global' })
         <span>{{ t('match.setting.canReplay') }}</span>
         <GameToggle
           v-model="settings.canReplay"
-          :style="buttonStyle"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('match.setting.saveRecord') }}</span>
         <GameToggle
           v-model="settings.saveRecordToServer"
-          :style="buttonStyle"
         />
       </div>
       <div class="settings-row">
         <span>{{ t('match.setting.liveMoves') }}</span>
         <GameToggle
           v-model="settings.showOpponentMoves"
-          :style="buttonStyle"
         />
       </div>
     </div>

@@ -16,7 +16,6 @@ import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
 import { Game, type GameExportFormat, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
-import { GAME_STORAGE_KEY, isStoredGameState, type StoredGameState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
 import { getMainMenuLayout } from '@engine/mainMenuLayout'
 import { MatchClient, type MatchRoomStateSubscription } from '@engine/matchClient'
@@ -35,16 +34,17 @@ import {
   type StoredOnlineRoom,
   type StoredOnlineSession,
 } from '@/composables/match'
+import { useLocalVersus, type LocalVersusSummary } from '@/composables/localVersus'
 import { useGameSettings } from '@/composables/settings'
 import { useDialogStack } from '@/composables/dialogStack'
-import { readStorageJson, removeStorageValue, useStorageRef } from '@/composables/storage'
+import { useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameIcon from './GameIcon.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
-import MatchPage from './MatchPage.vue'
+import VersusPage from './VersusPage.vue'
 import RecordPanel from './RecordPanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
 
@@ -76,6 +76,7 @@ const recordCurrentActionIndex = ref(0)
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
+type GameImportTarget = 'active-game' | 'local-versus'
 type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'fiveDPGN'
 const dialogStack = useDialogStack<DialogMode>()
 const dialogMode = dialogStack.current
@@ -83,6 +84,7 @@ const settingsDialogInitialTab = ref<SettingsDialogTab>('volume')
 const importText = ref('')
 const importError = ref('')
 const importFormat = ref<GameImportFormat>('pgn')
+const importTarget = ref<GameImportTarget>('active-game')
 const exportText = ref('')
 const exportFormat = ref<GameExportFormat>('pgn')
 const exportMode = ref<GameExportMode>('tree')
@@ -98,8 +100,8 @@ const soundLoadProgress = ref({ completed: 0, total: 0 })
 const activeRendererBackend = ref<RendererBackend | null>(null)
 const rendererFallbackReason = ref<RendererFallbackReason | null>(null)
 const gameStarted = ref(false)
-const hasSavedGame = ref(false)
-const mainMenuMode = ref<'home' | 'match'>('home')
+const mainMenuMode = ref<'home' | 'versus'>('home')
+const activeLocalVersus = ref<LocalVersusSummary | null>(null)
 const coarsePointerQuery = window.matchMedia('(hover: none) and (pointer: coarse)')
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
 const initialViewportSize = getViewportSize()
@@ -173,6 +175,11 @@ watch(language, value => {
   locale.value = value
 }, { immediate: true })
 
+const {
+  createGame: createLocalVersusGame,
+  createGameFromText: createLocalVersusGameFromText,
+  touchGame: touchLocalVersusGame,
+} = useLocalVersus()
 const {
   canViewMatchRoom,
   clearLastOnlineGame,
@@ -332,9 +339,6 @@ const menuButtonStyle = computed(() => getPresetButtonStyle(
   themeButtonPreset.value,
   themeHoverButtonPreset.value,
 ))
-const mainMenuStartText = computed(() => (
-  hasSavedGame.value ? t('main.resume') : t('main.start')
-))
 const mainMenuVisible = computed(() => ! loading.value && ! gameStarted.value)
 const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
 const exportTextareaLineCount = computed(() => {
@@ -466,6 +470,9 @@ function updateRecord(request: GameExportRequest) {
   recordActions.value = request.actions
   recordHasPendingMoves.value = request.hasPendingMoves
   recordCurrentActionIndex.value = request.currentActionIndex
+  if (activeLocalVersus.value) {
+    touchLocalVersusGame(activeLocalVersus.value.id)
+  }
 }
 
 function updateGameStatus(status: GameStatusView) {
@@ -589,6 +596,7 @@ function returnToLiveGame() {
   hasNewLiveActions.value = false
   spectatorDeductionStartActionIndex.value = null
   pendingLocalActionsSignature = ''
+  activeLocalVersus.value = null
 }
 
 function toggleSecondaryMenu() {
@@ -639,12 +647,12 @@ function openGitHub() {
   window.open('https://github.com/ForkKILLET/5dcol', '_blank', 'noopener,noreferrer')
 }
 
-function openMatchPage() {
+function openVersusPage() {
   playUISound()
-  mainMenuMode.value = 'match'
+  mainMenuMode.value = 'versus'
 }
 
-function closeMatchPage() {
+function closeVersusPage() {
   playUISound()
   stopMatchServerRefresh()
   matchPanelMode.value = 'servers'
@@ -678,9 +686,10 @@ function selectLanguage(nextLanguage: Language) {
   closeDialog(false)
 }
 
-function openImportDialog() {
+function openImportDialog(target: GameImportTarget = 'active-game') {
   playUISound()
   secondaryMenuOpen.value = false
+  importTarget.value = target
   importFormat.value = 'pgn'
   importText.value = ''
   importError.value = ''
@@ -809,12 +818,27 @@ function submitImportDialog() {
   if (! text) return
   playUISound()
 
-  const error = game?.importFiveDPGNText(text)
-  if (error) {
-    importError.value = error === 'Failed to import game record' || error === 'Failed to import 5dpgn'
-      ? t('error.importFailed')
-      : error
+  if (importTarget.value === 'local-versus') {
+    const result = createLocalVersusGameFromText(text, {
+      title: t('versus.imported'),
+    })
+    if (! result.game) {
+      importError.value = result.error || t('error.importFailed')
+      return
+    }
+    closeDialog(false)
+    startLocalGame(result.game)
     return
+  }
+
+  if (game) {
+    const error = game.importFiveDPGNText(text)
+    if (error) {
+      importError.value = error === 'Failed to import game record' || error === 'Failed to import 5dpgn'
+        ? t('error.importFailed')
+        : error
+      return
+    }
   }
 
   closeDialog(false)
@@ -925,9 +949,9 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     if (dialogMode.value !== 'none') backDialog()
-    else if (! gameStarted.value && mainMenuMode.value === 'match') {
+    else if (! gameStarted.value && mainMenuMode.value === 'versus') {
       if (matchPanelMode.value === 'room-settings') closeMatchRoomSettingsPanel()
-      else closeMatchPage()
+      else closeVersusPage()
     }
     else if (gameStarted.value) toggleSecondaryMenu()
     return
@@ -1042,15 +1066,18 @@ async function enterAfterLoading() {
   startAmbience()
 }
 
-function startLocalGame() {
+function startLocalGame(localGame: LocalVersusSummary | null = null) {
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
   playUISound()
+  const localVersus = localGame ?? createLocalVersusGame(t('versus.untitled'))
+  activeLocalVersus.value = localVersus
   game = new Game({
     renderer: gameRenderer,
     soundManager,
     logger,
     debug: query.get('debug') === '1',
+    storageKey: localVersus.storageKey,
     onToolbarChange: buttons => {
       toolbarButtons.value = buttons
     },
@@ -1397,18 +1424,6 @@ async function leaveWaitingOnlineRoom(session: StoredOnlineSession) {
   }
 }
 
-function refreshSavedGameState() {
-  hasSavedGame.value = getHasSavedGame()
-}
-
-function getHasSavedGame() {
-  return readStorageJson(
-    GAME_STORAGE_KEY,
-    value => isStoredGameState(value as Partial<StoredGameState>),
-    false,
-  )
-}
-
 function syncGameSettings() {
   soundManager?.setVolume(1)
   if (ambienceLoop && ambienceVolumeApplied !== gameSettings.ambienceVolume) {
@@ -1499,10 +1514,6 @@ function clearStoredOnlineSession() {
   onlineSession.value = null
 }
 
-function clearSavedGameState() {
-  removeStorageValue(GAME_STORAGE_KEY)
-}
-
 function returnToMainMenu(
   { clearSave = true, forfeit = false }: { clearSave?: boolean, forfeit?: boolean } = {},
 ) {
@@ -1516,7 +1527,6 @@ function returnToMainMenu(
     void forfeitOnlineRoom(currentOnlineSession)
     clearLastOnlineGame(currentOnlineSession)
   }
-  if (clearSave) clearSavedGameState()
   if (clearSave) {
     clearLastOnlineGame(currentOnlineSession)
     clearStoredOnlineSession()
@@ -1556,7 +1566,6 @@ function returnToMainMenu(
   closeDialog(false)
   gameStarted.value = false
   mainMenuMode.value = 'home'
-  refreshSavedGameState()
   syncGameInputState()
   startAmbience()
 }
@@ -1668,7 +1677,6 @@ async function init() {
     gameRenderer = rendererResult.renderer
     activeRendererBackend.value = rendererResult.backend
     rendererFallbackReason.value = rendererResult.fallbackReason ?? null
-    refreshSavedGameState()
     requiredAssetsReady.value = true
     void loadOptionalSounds()
     if (parseSharedRoomHash(window.location.hash)) {
@@ -1801,17 +1809,10 @@ watch([exportFormat, exportMode], () => {
             <GameButton
               size="main"
               :style="menuButtonStyle"
-              @click="startLocalGame"
-            >
-              <span>{{ mainMenuStartText }}</span>
-            </GameButton>
-            <GameButton
-              size="main"
-              :style="menuButtonStyle"
               :badge="hasUnfinishedOnlineGame ? '!' : ''"
-              @click="openMatchPage"
+              @click="openVersusPage"
             >
-              <span>{{ t('main.match') }}</span>
+              <span>{{ t('main.versus') }}</span>
             </GameButton>
             <GameButton
               size="main"
@@ -1852,13 +1853,14 @@ watch([exportFormat, exportMode], () => {
             </template>
           </i18n-t>
         </template>
-        <MatchPage
-          :active="mainMenuMode === 'match'"
+        <VersusPage
+          :active="mainMenuMode === 'versus'"
           :game-started="gameStarted"
           :main-menu-mode="mainMenuMode"
-          :button-style="menuButtonStyle"
           :can-start-online-game="Boolean(gameRenderer && soundManager)"
-          @close="closeMatchPage"
+          @close="closeVersusPage"
+          @import-record="openImportDialog('local-versus')"
+          @start-local-game="startLocalGame"
           @start-online-game="startOnlineGame"
           @ui-sound="playUISound"
         />

@@ -13,19 +13,20 @@ import {
   type StoredMatchRoomSettings,
 } from '@5dcol/shared/protocol'
 import { MatchClient, type MatchServerState } from '@engine/matchClient'
+import {
+  DEFAULT_ONLINE_SERVERS,
+  DEFAULT_ONLINE_SERVER_IDS,
+  normalizeOnlineServerAddress,
+  useOnlineIdentity,
+} from './online'
 import { useStorageReactive, useStorageRef } from './storage'
 
 const MATCH_ROOM_SETTINGS_STORAGE_KEY = '5dcol.matchRoomSettings'
-const MATCH_USER_ID_STORAGE_KEY = '5dcol.matchUserId'
 const LAST_ONLINE_GAME_STORAGE_KEY = '5dcol.lastOnlineGame'
-const MATCH_NICKNAME_STORAGE_KEY = '5dcol.matchNickname'
 const MATCH_REFRESH_INTERVAL_MS = 5000
 
-const DEFAULT_MATCH_SERVERS: Record<string, { name: string }> = {
-  'https://genshin.asm.ms:5161': { name: 'Server (China)' },
-  'http://localhost:5161': { name: 'Debug Server' },
-}
-export const DEFAULT_MATCH_SERVER_IDS = new Set(Object.keys(DEFAULT_MATCH_SERVERS))
+const DEFAULT_MATCH_SERVERS = DEFAULT_ONLINE_SERVERS
+export const DEFAULT_MATCH_SERVER_IDS = DEFAULT_ONLINE_SERVER_IDS
 
 export interface StoredOnlineSession {
   serverAddress: string
@@ -75,8 +76,8 @@ const SharedRoomHashPayloadSchema = z.object({
 
 interface UseMatchOptions {
   gameStarted: Readonly<Ref<boolean>>
-  mainMenuMode: Readonly<Ref<'home' | 'match'>>
-  setMainMenuMode?: (mode: 'home' | 'match') => void
+  mainMenuMode: Readonly<Ref<'home' | 'versus' | 'study'>>
+  setMainMenuMode?: (mode: 'home' | 'versus' | 'study') => void
   canStartOnlineGame: () => boolean
   playUISound: () => void
   startOnlineGame: (serverAddress: string, state: MatchGameState) => void
@@ -86,17 +87,7 @@ let activeMatchOptions: UseMatchOptions | null = null
 const matchPanelMode = ref<'servers' | 'room-settings'>('servers')
 const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
-const matchNickname = useStorageRef(MATCH_NICKNAME_STORAGE_KEY, '', {
-  parse: raw => raw,
-  serialize: value => {
-    const trimmed = value.trim()
-    return trimmed || null
-  },
-})
-const matchUserId = useStorageRef<string | null>(MATCH_USER_ID_STORAGE_KEY, null, {
-  parse: raw => raw || null,
-  serialize: value => value,
-})
+const { onlineNickname: matchNickname, onlineUserId: matchUserId } = useOnlineIdentity()
 const lastOnlineGame = useStorageRef<StoredOnlineGame | null>(
   LAST_ONLINE_GAME_STORAGE_KEY,
   null,
@@ -275,9 +266,7 @@ export function useMatch(options?: UseMatchOptions) {
   }
 
   function normalizeMatchServerAddress(address: string) {
-    const trimmed = address.trim()
-    if (! trimmed) return ''
-    return /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`
+    return normalizeOnlineServerAddress(address)
   }
 
   function openMatchRoomSettingsDialog() {
@@ -285,16 +274,16 @@ export function useMatch(options?: UseMatchOptions) {
     matchPanelMode.value = 'room-settings'
   }
 
-  function openMatchPage() {
+  function openVersusPage() {
     const options = getOptions()
     options.playUISound()
-    options.setMainMenuMode?.('match')
+    options.setMainMenuMode?.('versus')
     matchPanelMode.value = 'servers'
     void connectMatchServers()
     startMatchServerRefresh()
   }
 
-  function closeMatchPage() {
+  function closeVersusPage() {
     const options = getOptions()
     options.playUISound()
     stopMatchServerRefresh()
@@ -393,7 +382,7 @@ export function useMatch(options?: UseMatchOptions) {
   function startMatchServerRefresh() {
     stopMatchServerRefresh()
     matchRefreshTimer = window.setInterval(() => {
-      if (getOptions().mainMenuMode.value !== 'match' || getOptions().gameStarted.value) return
+      if (getOptions().mainMenuMode.value !== 'versus' || getOptions().gameStarted.value) return
       void refreshConnectedMatchServers()
     }, MATCH_REFRESH_INTERVAL_MS)
   }
@@ -590,7 +579,7 @@ export function useMatch(options?: UseMatchOptions) {
     clearLastOnlineGame,
     clickConnectMatchServer,
     clickRefreshMatchServers,
-    closeMatchPage,
+    closeVersusPage,
     closeMatchRoomSettingsPanel,
     connectMatchServers,
     customRoomServer,
@@ -613,7 +602,7 @@ export function useMatch(options?: UseMatchOptions) {
     matchUserId,
     normalizeMatchServerAddress,
     openCustomRoomForm,
-    openMatchPage,
+    openVersusPage,
     openMatchRoomSettingsDialog,
     parseSharedRoomHash,
     removeManualMatchServer,
