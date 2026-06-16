@@ -3682,7 +3682,17 @@ export class Game extends Disposable(Empty) {
 
     this.renderer.submit({
       type: RenderItemType.Circle,
+      layer: RenderLayer.UIShadow,
+      order: 0,
+      center: Vec2.add(center, Sizes.CheckBadgeShadowOffset),
+      radius: Sizes.CheckBadgeRadius,
+      fill: Color4.withAlpha(Colors.Shadow, alpha),
+      stroke: null,
+    })
+    this.renderer.submit({
+      type: RenderItemType.Circle,
       layer: RenderLayer.UI,
+      order: 1,
       center,
       radius: Sizes.CheckBadgeRadius,
       fill: Color4.withAlpha(fill, alpha),
@@ -3692,6 +3702,7 @@ export class Game extends Disposable(Empty) {
     this.renderer.submit({
       type: RenderItemType.Text,
       layer: RenderLayer.UI,
+      order: 2,
       pos: [center[0], center[1] + 0.5],
       angle: 0,
       text: '!',

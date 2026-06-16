@@ -59,6 +59,7 @@ export namespace Sizes {
   export const TimelikeLabelInset = 9
   export const SpacelikeLabelFontSize = 4
   export const SpacelikeLabelInset = 0.5
+  export const CheckBadgeShadowOffset: Vec2 = [2, 2]
 
   export const LineArrowRadius = 20
   export const LineArrowShaftLength = 20
