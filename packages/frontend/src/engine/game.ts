@@ -1002,7 +1002,7 @@ export class Game extends Disposable(Empty) {
 
     this.collect(Effect.useListener(window, 'pointermove', e => {
       this.handlePointerMove(e)
-    }, { passive: false }))
+    }, { passive: false, capture: true }))
 
     this.collect(Effect.useListener(window, 'pointerdown', e => {
       this.handlePointerDown(e)
@@ -1010,11 +1010,11 @@ export class Game extends Disposable(Empty) {
 
     this.collect(Effect.useListener(window, 'pointerup', e => {
       this.handlePointerUp(e)
-    }, { passive: false }))
+    }, { passive: false, capture: true }))
 
     this.collect(Effect.useListener(window, 'pointercancel', e => {
       this.handlePointerCancel(e)
-    }))
+    }, { capture: true }))
 
     this.collect(Effect.useListener(window, 'mouseleave', () => {
       this.finishPointerGesture()
