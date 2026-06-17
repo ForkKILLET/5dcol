@@ -121,7 +121,7 @@ interface PointerState {
   pinchLastScreen: Vec2 | null
   clickButton: number | null
   clickRecordFocus: boolean
-  clickShiftKey: boolean
+  clickCtrlKey: boolean
   clickDeselectPiece: boolean
 }
 
@@ -271,7 +271,7 @@ export class Game extends Disposable(Empty) {
     pinchLastScreen: null,
     clickButton: null,
     clickRecordFocus: false,
-    clickShiftKey: false,
+    clickCtrlKey: false,
     clickDeselectPiece: false,
   }
   private cameraMotion: CameraMotion | null = null
@@ -890,7 +890,7 @@ export class Game extends Disposable(Empty) {
     if (this.gameInputDisabled) return
     if (! e.isPrimary && e.pointerType !== 'touch') return
     if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1 && e.button !== 2) return
-    const recordFocusClick = e.pointerType === 'mouse' && (e.button === 1 || (e.button === 0 && e.shiftKey))
+    const recordFocusClick = e.pointerType === 'mouse' && (e.button === 1 || (e.button === 0 && e.ctrlKey))
     if (recordFocusClick || e.button === 2) e.preventDefault()
 
     const screen = this.getPointerScreen(e)
@@ -914,8 +914,8 @@ export class Game extends Disposable(Empty) {
     this.pointer.dragExceeded = false
     this.pointer.clickButton = e.pointerType === 'mouse' ? e.button : 0
     this.pointer.clickRecordFocus = recordFocusClick
-    this.pointer.clickShiftKey = e.shiftKey
-    this.pointer.clickDeselectPiece = this.pointer.clickButton === 2 && this.selectedPiece !== null
+    this.pointer.clickCtrlKey = e.ctrlKey
+    this.pointer.clickDeselectPiece = this.pointer.clickButton === 2 && ! this.pointer.clickCtrlKey && this.selectedPiece !== null
     if (this.pointer.clickDeselectPiece) {
       this.pendingArrowMarkerStart = null
       this.dragArrowMarkerStart = null
@@ -1081,7 +1081,7 @@ export class Game extends Disposable(Empty) {
     this.pointer.pinchLastScreen = null
     this.pointer.clickButton = null
     this.pointer.clickRecordFocus = false
-    this.pointer.clickShiftKey = false
+    this.pointer.clickCtrlKey = false
     this.pointer.clickDeselectPiece = false
     this.dragArrowMarkerStart = null
   }
@@ -1763,7 +1763,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private handleRecordMarkerClick(screen: Vec2): boolean {
-    if (this.selectedPiece) {
+    if (this.selectedPiece && ! this.pointer.clickCtrlKey) {
       this.cancelPieceSelection()
       return true
     }
@@ -1771,7 +1771,7 @@ export class Game extends Disposable(Empty) {
     const square = this.getRecordMarkerSquareAtScreen(screen)
     if (! square) return false
 
-    if (this.pointer.clickShiftKey) {
+    if (this.pointer.clickCtrlKey) {
       this.pendingArrowMarkerStart = square
       this.deselectPiece()
       this.playUISound()
