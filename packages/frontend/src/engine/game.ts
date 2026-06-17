@@ -122,6 +122,7 @@ interface PointerState {
   clickButton: number | null
   clickRecordFocus: boolean
   clickShiftKey: boolean
+  clickDeselectPiece: boolean
 }
 
 interface BoardFrame {
@@ -271,6 +272,7 @@ export class Game extends Disposable(Empty) {
     clickButton: null,
     clickRecordFocus: false,
     clickShiftKey: false,
+    clickDeselectPiece: false,
   }
   private cameraMotion: CameraMotion | null = null
   private selectedPiece: PieceSelection | null = null
@@ -913,7 +915,8 @@ export class Game extends Disposable(Empty) {
     this.pointer.clickButton = e.pointerType === 'mouse' ? e.button : 0
     this.pointer.clickRecordFocus = recordFocusClick
     this.pointer.clickShiftKey = e.shiftKey
-    if (this.pointer.clickButton === 2) {
+    this.pointer.clickDeselectPiece = this.pointer.clickButton === 2 && this.selectedPiece !== null
+    if (this.pointer.clickButton === 2 && ! this.pointer.clickDeselectPiece) {
       this.dragArrowMarkerStart = this.getRecordMarkerSquareAtScreen(screen)
     }
   }
@@ -959,6 +962,11 @@ export class Game extends Disposable(Empty) {
     this.pointer.screen = screen
     this.updatePointerDragExceeded(screen)
     if (e.pointerType === 'mouse' && (this.pointer.clickRecordFocus || this.pointer.clickButton === 2)) e.preventDefault()
+    if (this.pointer.clickDeselectPiece) {
+      this.cancelPieceSelection()
+      this.finishPointerGesture()
+      return
+    }
     if (! this.pointer.dragExceeded) {
       if (this.pointer.clickButton === 2) this.handleRecordMarkerClick(screen)
       else if (this.pointer.clickRecordFocus) this.handleBoardRecordFocusClick(screen)
@@ -1068,6 +1076,7 @@ export class Game extends Disposable(Empty) {
     this.pointer.clickButton = null
     this.pointer.clickRecordFocus = false
     this.pointer.clickShiftKey = false
+    this.pointer.clickDeselectPiece = false
     this.dragArrowMarkerStart = null
   }
 
