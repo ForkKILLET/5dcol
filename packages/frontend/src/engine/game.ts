@@ -3346,7 +3346,15 @@ export class Game extends Disposable(Empty) {
       ? this.layout.getBoardRect(pendingMove.created.l, pendingMove.created.m - 1)
       : [fromPos]
     const followCenter = Vec2.add(Vec2.mix(startPos, toPos, progress), Vec2.scale(fromSize, 0.5))
-    const center = Vec2.mix(this.moveAnimation.cameraCenter, followCenter, progress)
+    const startViewportCenter = this.layout.getViewportWorldCenter(
+      this.moveAnimation.cameraCenter,
+      this.moveAnimation.cameraScale,
+    )
+    const viewportCenter = Vec2.mix(startViewportCenter, followCenter, progress)
+    const center = this.layout.getCameraCenterForViewportWorldCenter(
+      viewportCenter,
+      this.moveAnimation.cameraScale,
+    )
     this.setViewportImmediate({
       center,
     }, {
