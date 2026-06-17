@@ -127,7 +127,7 @@ export function useLocalStudies() {
   ): CreateLocalStudyFromTextResult {
     try {
       const gameState = FiveDPGN.importGameState(input)
-      const recordDocument = RecordDocument.fromActionTree(FiveDPGN.parseActionTree(input))
+      const recordDocument = RecordDocument.fromFiveDPGN(input)
       const study = recordDocument.toStudyDocument({
         id,
         title,

@@ -2,6 +2,7 @@ import { computed, type Ref } from 'vue'
 import { z } from 'zod'
 import { FiveDPGN } from '@5dcol/core'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type StoredGameState } from '@engine/gameState'
+import { RecordDocument } from '@engine/recordTree'
 import { readStorageJson, removeStorageValue, useStorageRef } from './storage'
 
 export const LOCAL_VERSUS_STORAGE_KEY = '5dcol.localVersusGames'
@@ -79,6 +80,7 @@ export function useLocalVersus() {
   ): CreateLocalVersusFromTextResult {
     try {
       const gameState = FiveDPGN.importGameState(input)
+      const recordDocument = RecordDocument.fromFiveDPGN(input)
       const now = Date.now()
       const id = createLocalVersusId()
       const game: StoredLocalVersusGame = {
@@ -97,6 +99,10 @@ export function useLocalVersus() {
         player: gameState.player,
         actionIndex: gameState.actionIndex,
         pendingMoves: [],
+        recordLines: recordDocument.serializeLines(),
+        recordAnnotations: recordDocument.serializeAnnotations(),
+        activeRecordLineId: recordDocument.activeRecordLineId,
+        nextRecordLineId: recordDocument.nextRecordLineId,
       }
       const storage = getLocalStorage()
       if (! storage) throw new Error('Local storage is unavailable')

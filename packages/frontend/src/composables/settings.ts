@@ -23,6 +23,7 @@ export const FiveDPGNSettingsSchema = z.preprocess(
     includeCaptureMarkers: BooleanWithDefault(false),
     includeCheckMarkers: BooleanWithDefault(false),
     includePromotionMarkers: BooleanWithDefault(false),
+    includeBuiltInGlyphNAGs: BooleanWithDefault(false),
   }),
 )
 

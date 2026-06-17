@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
-import { Player } from '@5dcol/core'
-import type { Action, FiveDPGN } from '@5dcol/core'
+import { FiveDPGN, Player } from '@5dcol/core'
+import type { Action } from '@5dcol/core'
 import {
   type MatchClock,
   type MatchGameState,
@@ -25,6 +25,7 @@ import { formatDuration } from '@engine/record'
 import {
   getRecordGlyphColor4,
   parseStoredRecordGlyphTemplates,
+  RECORD_GLYPH_DEFAULT_COLOR,
   RECORD_GLYPH_TEMPLATE_STORAGE_KEY,
   type CustomRecordGlyphTemplate,
   uniqueRecordGlyphTemplates,
@@ -525,6 +526,27 @@ function getRecordGlyphColor(glyph: string) {
   return getRecordGlyphColor4(glyph, customRecordGlyphTemplates.value)
 }
 
+function getFiveDPGNGlyphTemplates(): FiveDPGN.StudyGlyphTemplate[] {
+  return customRecordGlyphTemplates.value.map((template, index) => ({
+    nag: 140 + index,
+    glyph: template.glyph,
+    color: template.color,
+  }))
+}
+
+function importFiveDPGNGlyphTemplates(input: string) {
+  const templates = FiveDPGN.parseStudyGlyphTemplates(input)
+    .map((template): CustomRecordGlyphTemplate => ({
+      glyph: template.glyph,
+      color: template.color ?? RECORD_GLYPH_DEFAULT_COLOR,
+    }))
+  if (templates.length === 0) return
+  customRecordGlyphTemplates.value = uniqueRecordGlyphTemplates([
+    ...customRecordGlyphTemplates.value,
+    ...templates,
+  ])
+}
+
 function updateRecord(request: GameExportRequest) {
   recordText.value = request.text
   recordActions.value = request.actions
@@ -944,6 +966,7 @@ function submitImportDialog() {
       importError.value = result.error || t('error.importFailed')
       return
     }
+    importFiveDPGNGlyphTemplates(text)
     closeDialog(false)
     startLocalGame(result.game)
     return
@@ -957,6 +980,7 @@ function submitImportDialog() {
       importError.value = result.error || t('error.importFailed')
       return
     }
+    importFiveDPGNGlyphTemplates(text)
     closeDialog(false)
     startStudyGame(result.study, { kind: 'local' })
     return
@@ -970,6 +994,7 @@ function submitImportDialog() {
         : error
       return
     }
+    importFiveDPGNGlyphTemplates(text)
   }
 
   closeDialog(false)
@@ -1223,6 +1248,7 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
     getFiveDPGNExportMetadata,
+    getFiveDPGNGlyphTemplates,
     onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
@@ -1265,6 +1291,7 @@ function startStudyGame(study: StudyDocument, _source: StudyOpenSource = { kind:
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
     getFiveDPGNExportMetadata,
+    getFiveDPGNGlyphTemplates,
     onViewPlayerChange: updateViewPlayer,
     onImportRequest: openImportDialog,
     onExportRequest: openExportDialog,
@@ -1333,6 +1360,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
     getFiveDPGNExportMetadata,
+    getFiveDPGNGlyphTemplates,
     canControlOnlineGame: () => onlineRoomReady.value,
     isExternallyFinished: () => onlineRoomStatus.value === 'finished',
     onToolbarChange: buttons => {

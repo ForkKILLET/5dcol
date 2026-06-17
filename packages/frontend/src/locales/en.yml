@@ -139,6 +139,7 @@ settings.fiveDPGNTravelMarkers: "Travel markers"
 settings.fiveDPGNCaptureMarkers: "Capture markers"
 settings.fiveDPGNCheckMarkers: "Check and mate markers"
 settings.fiveDPGNPromotionMarkers: "Promotion markers"
+settings.fiveDPGNBuiltInGlyphNAGs: "Built-in glyph NAGs"
 
 player.white: "White"
 player.black: "Black"

@@ -167,7 +167,7 @@ const recordHeaders = computed(() => (
   props.recordText
     .split('\n')
     .map(line => line.trim())
-    .filter(line => line.startsWith('['))
+    .filter(line => line.startsWith('[') && ! line.startsWith('[5DStudy_'))
 ))
 
 const recordSections = computed(() => {

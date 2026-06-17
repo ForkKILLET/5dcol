@@ -435,6 +435,7 @@ export const StoredRecordAnnotationSchema = z.discriminatedUnion('type', [
     id: z.string(),
     type: z.literal('glyph'),
     target: RecordMoveAnnotationTargetSchema,
+    authorId: z.string().optional(),
     glyph: z.string(),
   }),
   z.object({

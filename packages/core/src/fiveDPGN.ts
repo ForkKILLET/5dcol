@@ -17,6 +17,16 @@ import {
 const FILES = 'abcdefgh'
 const PIECE_NAMES = 'PWKCQYSNRBUD'
 const EVALUATION_SYMBOLS = ['!!', '!?', '?!', '??', '!', '?', '-']
+const STANDARD_NAG_GLYPHS = new Map<number, string>([
+  [1, '!'],
+  [2, '?'],
+  [3, '!!'],
+  [4, '??'],
+  [5, '!?'],
+  [6, '?!'],
+])
+const STANDARD_GLYPH_NAGS = new Map([...STANDARD_NAG_GLYPHS.entries()].map(([nag, glyph]) => [glyph, nag]))
+const CUSTOM_GLYPH_NAG_START = 140
 const RESULT_SYMBOLS = ['1-0', '0-1', '1/2-1/2', '*']
 const PIECE_SYMBOLS: Partial<Record<number, string>> = {
   [0x02]: 'R',
@@ -37,9 +47,12 @@ export interface ExportOptions {
   includeCaptureMarkers?: boolean
   includeCheckMarkers?: boolean
   includePromotionMarkers?: boolean
+  includeBuiltInGlyphNAGs?: boolean
   initialMultiverse?: Multiverse
   headers?: ExportHeaders
   result?: ExportResult
+  studyAnnotations?: readonly StudyAnnotation[]
+  studyGlyphTemplates?: readonly StudyGlyphTemplate[]
 }
 
 export type ExportResult = '1-0' | '0-1' | '1/2-1/2' | '*'
@@ -77,12 +90,88 @@ export interface ActionTreeVariation {
   subtree?: ActionTree
   commentsBefore?: string[]
   commentsAfter?: string[]
-  glyphs?: string[]
+  moveGlyphs?: string[][]
+}
+
+export type StudyAnnotation = StudyCommentAnnotation | StudyGlyphAnnotation | StudyMarkerAnnotation
+
+export type StudyAnnotationTarget =
+  | {
+    type: 'action'
+    lineId: number
+    actionIndex: number
+    position: 'before' | 'after'
+  }
+  | {
+    type: 'move'
+    lineId: number
+    actionIndex: number
+    moveIndex: number
+  }
+  | {
+    type: 'square'
+    lineId: number
+    actionIndex: number
+    m: number
+    coord: Coord
+  }
+  | {
+    type: 'arrow'
+    lineId: number
+    actionIndex: number
+    from: Coord
+    fromPlayer?: Player
+    to: Coord
+    toPlayer?: Player
+  }
+  | {
+    type: 'cursor'
+    lineId: number
+    actionIndex: number
+  }
+  | {
+    type: 'line'
+    lineId: number
+  }
+
+export interface StudyCommentAnnotation {
+  id: string
+  type: 'comment'
+  target: Extract<StudyAnnotationTarget, { type: 'action' }>
+  authorId?: string
+  text: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface StudyGlyphAnnotation {
+  id: string
+  type: 'glyph'
+  target: Extract<StudyAnnotationTarget, { type: 'move' }>
+  authorId?: string
+  glyph: string
+}
+
+export interface StudyMarkerAnnotation {
+  id: string
+  type: 'marker'
+  target: StudyAnnotationTarget
+  authorId: string
+  color?: string
+  label?: string
+}
+
+export interface StudyGlyphTemplate {
+  nag?: number
+  glyph: string
+  color?: string
 }
 
 interface ParsedGame {
   initialMultiverse: Multiverse
   tree: ActionTree
+  studyAnnotations: StudyAnnotation[]
+  studyGlyphTemplates: StudyGlyphTemplate[]
 }
 
 interface FENBoardBlock {
@@ -106,10 +195,17 @@ interface ActionFormatResult {
   player: Player
 }
 
+interface GlyphExportContext {
+  glyphToNag: ReadonlyMap<string, number>
+  templates: StudyGlyphTemplate[]
+}
+
 interface ResolvedExportOptions extends Required<Omit<ExportOptions, 'headers' | 'result' | 'initialMultiverse'>> {
   initialMultiverse?: Multiverse
   headers?: ExportHeaders
   result: ExportResult
+  studyAnnotations: readonly StudyAnnotation[]
+  studyGlyphTemplates: readonly StudyGlyphTemplate[]
 }
 
 interface BoardPattern {
@@ -165,7 +261,10 @@ const DEFAULT_EXPORT_OPTIONS: ResolvedExportOptions = {
   includeCaptureMarkers: false,
   includeCheckMarkers: false,
   includePromotionMarkers: false,
+  includeBuiltInGlyphNAGs: false,
   result: '*',
+  studyAnnotations: [],
+  studyGlyphTemplates: [],
 }
 
 export const exportGameState = (
@@ -203,8 +302,10 @@ export const exportActionTree = (
 ): string => {
   const resolvedOptions = resolveExportOptions(options)
   const initialMultiverse = resolvedOptions.initialMultiverse ?? Multiverse.createInitial()
+  const glyphContext = createGlyphExportContext(tree, resolvedOptions)
   const body = formatActionTree(tree, {
     actionIndex: 0,
+    glyphContext,
     multiverse: initialMultiverse,
     options: resolvedOptions,
     player: Player.W,
@@ -213,7 +314,7 @@ export const exportActionTree = (
     ? [exportFEN(initialMultiverse).trim(), '']
     : []
   const lines = [
-    ...formatHeaders(resolvedOptions),
+    ...formatHeaders(resolvedOptions, glyphContext.templates),
     '',
     ...fenPrelude,
     ...(body.trim() ? [body] : []),
@@ -253,6 +354,14 @@ export const parseActionTree = (input: string): ActionTree => {
   return parseGame(input).tree
 }
 
+export const parseStudyAnnotations = (input: string): StudyAnnotation[] => {
+  return parseGame(input).studyAnnotations
+}
+
+export const parseStudyGlyphTemplates = (input: string): StudyGlyphTemplate[] => {
+  return parseGame(input).studyGlyphTemplates
+}
+
 const parseGame = (input: string): ParsedGame => new Parser(input).parse()
 
 const actionsToTree = (actions: readonly Action[]): ActionTree => {
@@ -276,6 +385,164 @@ const actionTreeToMainline = (tree: ActionTree): Action[] => {
   }
   return actions
 }
+
+const createGlyphExportContext = (
+  tree: ActionTree,
+  options: ResolvedExportOptions,
+): GlyphExportContext => {
+  const glyphToNag = new Map<string, number>()
+  const templates: StudyGlyphTemplate[] = []
+  const usedNags = new Set<number>()
+
+  if (options.includeBuiltInGlyphNAGs) {
+    for (const [glyph, nag] of STANDARD_GLYPH_NAGS) {
+      glyphToNag.set(glyph, nag)
+      usedNags.add(nag)
+    }
+  }
+
+  const addTemplate = (template: StudyGlyphTemplate) => {
+    const glyph = template.glyph.trim()
+    if (! glyph || glyphToNag.has(glyph)) return
+    const requestedNag = template.nag
+    const nag = requestedNag !== undefined && Number.isInteger(requestedNag) && requestedNag > 0 && ! usedNags.has(requestedNag)
+      ? requestedNag
+      : getNextCustomGlyphNAG(usedNags)
+    usedNags.add(nag)
+    glyphToNag.set(glyph, nag)
+    templates.push({
+      nag,
+      glyph,
+      ...(template.color ? { color: template.color } : {}),
+    })
+  }
+
+  for (const template of options.studyGlyphTemplates) {
+    addTemplate(template)
+  }
+
+  for (const glyph of collectActionTreeGlyphs(tree)) {
+    const shouldUseSymbol = EVALUATION_SYMBOLS.includes(glyph) && ! options.includeBuiltInGlyphNAGs
+    if (shouldUseSymbol || glyphToNag.has(glyph)) continue
+    addTemplate({ glyph })
+  }
+
+  return { glyphToNag, templates }
+}
+
+const collectActionTreeGlyphs = (tree: ActionTree): string[] => {
+  const glyphs: string[] = []
+  for (const variation of tree.variations) {
+    for (const moveGlyphs of variation.moveGlyphs ?? []) {
+      glyphs.push(...moveGlyphs)
+    }
+    if (variation.subtree) glyphs.push(...collectActionTreeGlyphs(variation.subtree))
+  }
+  return glyphs
+}
+
+const getNextCustomGlyphNAG = (usedNags: ReadonlySet<number>): number => {
+  let nag = CUSTOM_GLYPH_NAG_START
+  while (usedNags.has(nag)) nag += 1
+  return nag
+}
+
+const createStudyAnnotationsFromActionTree = (
+  tree: ActionTree,
+  commentMetas: readonly StudyCommentMeta[],
+  glyphMetas: readonly StudyGlyphMeta[],
+): StudyAnnotation[] => {
+  const annotations: StudyAnnotation[] = []
+  const commentMetaMap = new Map(commentMetas.map(meta => [getStudyCommentMetaMapKey(meta), meta]))
+  const glyphMetaMap = new Map(glyphMetas.map(meta => [getStudyGlyphMetaMapKey(meta), meta]))
+  let nextLineId = 1
+
+  const addVariationAnnotations = (lineId: number, actionIndex: number, variation: ActionTreeVariation) => {
+    addComments(lineId, actionIndex, 'before', variation.commentsBefore)
+    addComments(lineId, actionIndex, 'after', variation.commentsAfter)
+    variation.moveGlyphs?.forEach((glyphs, moveIndex) => {
+      glyphs?.forEach((glyph, index) => {
+        const meta = glyphMetaMap.get(getStudyGlyphMetaMapKey({ lineId, actionIndex, moveIndex, index }))
+        annotations.push({
+          id: `5dpgn-glyph:${lineId}:${actionIndex}:${moveIndex}:${index}`,
+          type: 'glyph',
+          target: {
+            type: 'move',
+            lineId,
+            actionIndex,
+            moveIndex,
+          },
+          ...formatAuthorFromMeta(meta),
+          glyph,
+        })
+      })
+    })
+  }
+
+  const addComments = (
+    lineId: number,
+    actionIndex: number,
+    position: 'before' | 'after',
+    comments: readonly string[] | undefined,
+  ) => {
+    comments?.forEach((text, index) => {
+      const meta = commentMetaMap.get(getStudyCommentMetaMapKey({ lineId, actionIndex, position, index }))
+      annotations.push({
+        id: `5dpgn-comment:${lineId}:${actionIndex}:${position}:${index}`,
+        type: 'comment',
+        target: {
+          type: 'action',
+          lineId,
+          actionIndex,
+          position,
+        },
+        ...formatAuthorFromMeta(meta),
+        text,
+        createdAt: 0,
+        updatedAt: 0,
+      })
+    })
+  }
+
+  const populateLine = (lineId: number, currentTree: ActionTree | undefined, startActionIndex = 0) => {
+    let actionIndex = startActionIndex
+    let treeAtCursor = currentTree
+    while (treeAtCursor && treeAtCursor.variations.length > 0) {
+      const mainlineVariation = treeAtCursor.variations[treeAtCursor.variations.length - 1]!
+      const branchVariations = treeAtCursor.variations.slice(0, -1)
+      for (const variation of branchVariations) {
+        const branchLineId = nextLineId ++
+        populateVariation(branchLineId, variation)
+      }
+
+      addVariationAnnotations(lineId, actionIndex, mainlineVariation)
+      actionIndex += 1
+      treeAtCursor = mainlineVariation.subtree
+    }
+  }
+
+  const populateVariation = (lineId: number, variation: ActionTreeVariation) => {
+    addVariationAnnotations(lineId, 0, variation)
+    populateLine(lineId, variation.subtree, 1)
+  }
+
+  populateLine(0, tree)
+  return annotations
+}
+
+const formatAuthorFromMeta = (
+  meta: StudyCommentMeta | StudyGlyphMeta | undefined,
+): { authorId?: string } => (
+  meta?.authorId === undefined ? {} : { authorId: meta.authorId }
+)
+
+const getStudyCommentMetaMapKey = (
+  meta: Pick<StudyCommentMeta, 'lineId' | 'actionIndex' | 'position' | 'index'>,
+): string => `${meta.lineId}:${meta.actionIndex}:${meta.position}:${meta.index}`
+
+const getStudyGlyphMetaMapKey = (
+  meta: Pick<StudyGlyphMeta, 'lineId' | 'actionIndex' | 'moveIndex' | 'index'>,
+): string => `${meta.lineId}:${meta.actionIndex}:${meta.moveIndex}:${meta.index}`
 
 const createGameState = (initialMultiverse: Multiverse, actions: Action[]): GameState => {
   let multiverseCommitted = initialMultiverse
@@ -312,11 +579,13 @@ const formatActionTree = (
   tree: ActionTree,
   {
     actionIndex,
+    glyphContext,
     multiverse,
     options,
     player,
   }: {
     actionIndex: number
+    glyphContext: GlyphExportContext
     multiverse: Multiverse
     options: ResolvedExportOptions
     player: Player
@@ -336,11 +605,12 @@ const formatActionTree = (
     })
     const actionLine = [
       ...formatComments(variation.commentsBefore),
-      `${formatActionLine(result.action, variation.glyphs)}${formatComments(variation.commentsAfter).map(comment => ` ${comment}`).join('')}`,
+      `${formatActionLine(result.action, variation.moveGlyphs, glyphContext)}${formatComments(variation.commentsAfter).map(comment => ` ${comment}`).join('')}`,
     ].join('\n')
     const subtreeText = hasSubtree
       ? formatActionTree(variation.subtree!, {
           actionIndex: actionIndex + 1,
+          glyphContext,
           multiverse: result.multiverse,
           options,
           player: result.player,
@@ -440,26 +710,37 @@ const applyTerminalCheckmateMarker = (
   }
 }
 
-const formatActionLine = (action: FormattedAction, glyphs?: readonly string[]): string => (
-  `${action.serial} ${action.moves.map(move => move.text).join(' ')}${formatGlyphs(glyphs)}`
+const formatActionLine = (
+  action: FormattedAction,
+  moveGlyphs: readonly (readonly string[] | undefined)[] | undefined,
+  glyphContext: GlyphExportContext,
+): string => (
+  `${action.serial} ${action.moves.map((move, index) => `${move.text}${formatGlyphs(moveGlyphs?.[index], glyphContext)}`).join(' ')}`
 )
 
 const formatComments = (comments: readonly string[] | undefined): string[] => (
   comments?.map(comment => `{${comment}}`) ?? []
 )
 
-const formatGlyphs = (glyphs: readonly string[] | undefined): string => (
-  glyphs?.join('') ?? ''
+const formatGlyphs = (glyphs: readonly string[] | undefined, glyphContext: GlyphExportContext): string => (
+  glyphs?.map(glyph => {
+    const nag = glyphContext.glyphToNag.get(glyph)
+    return nag === undefined ? glyph : `$${nag}`
+  }).join('') ?? ''
 )
 
 class Parser {
   private cursor = 0
   private readonly fenBlocks: FENBoardBlock[] = []
+  private readonly studyHeaders = new Map<string, string[]>()
+  private studyGlyphsByNag = new Map(STANDARD_NAG_GLYPHS)
 
   constructor(private readonly input: string) {}
 
   parse(): ParsedGame {
     this.skipPrelude()
+    const studyHeaders = parseStudyHeaders(this.studyHeaders)
+    this.studyGlyphsByNag = getStudyGlyphsByNag(studyHeaders.glyphTemplates)
     const initialMultiverse = this.fenBlocks.length > 0
       ? createMultiverseFromFENBlocks(this.fenBlocks)
       : Multiverse.createInitial()
@@ -471,7 +752,15 @@ class Parser {
     if (! this.isDone()) {
       throw this.error(`Unexpected 5dpgn syntax near "${this.input.slice(this.cursor, this.cursor + 32).trim()}"`)
     }
-    return { initialMultiverse, tree }
+    return {
+      initialMultiverse,
+      tree,
+      studyAnnotations: [
+        ...createStudyAnnotationsFromActionTree(tree, studyHeaders.commentMetas, studyHeaders.glyphMetas),
+        ...studyHeaders.markerAnnotations,
+      ],
+      studyGlyphTemplates: studyHeaders.glyphTemplates,
+    }
   }
 
   private parseGameTree(multiverse: Multiverse, player: Player, actionIndex: number): ActionTree {
@@ -509,14 +798,14 @@ class Parser {
     actionIndex: number,
     commentsBefore: string[] = [],
   ): ActionTreeVariation {
-    const { action, commentsAfter, glyphs, multiverse: nextMultiverse } = this.parseAction(multiverse, player, actionIndex)
+    const { action, commentsAfter, moveGlyphs, multiverse: nextMultiverse } = this.parseAction(multiverse, player, actionIndex)
     const subtree = this.parseGameTree(nextMultiverse, Players.opponent(player), actionIndex + 1)
     return {
       action,
       ...(subtree.variations.length > 0 ? { subtree } : {}),
       ...(commentsBefore.length > 0 ? { commentsBefore } : {}),
       ...(commentsAfter.length > 0 ? { commentsAfter } : {}),
-      ...(glyphs.length > 0 ? { glyphs } : {}),
+      ...(moveGlyphs.some(glyphs => glyphs.length > 0) ? { moveGlyphs } : {}),
     }
   }
 
@@ -524,13 +813,13 @@ class Parser {
     multiverse: Multiverse,
     player: Player,
     actionIndex: number,
-  ): { action: Action, commentsAfter: string[], glyphs: string[], multiverse: Multiverse } {
+  ): { action: Action, commentsAfter: string[], moveGlyphs: string[][], multiverse: Multiverse } {
     const serial = this.parseTurnSerial()
     this.assertTurnSerial(serial, player, actionIndex)
 
     const moves: Move[] = []
     const commentsAfter: string[] = []
-    const glyphs: string[] = []
+    const moveGlyphs: string[][] = []
     let nextMultiverse = multiverse
 
     while (true) {
@@ -548,7 +837,11 @@ class Parser {
       commentsAfter.push(...comments)
 
       const token = this.readMoveToken()
-      glyphs.push(...readMoveGlyphs(token))
+      if (isNAGToken(token) && moveGlyphs.length > 0) {
+        moveGlyphs[moveGlyphs.length - 1]!.push(this.readNAGGlyph(token))
+        continue
+      }
+      moveGlyphs.push(readMoveGlyphs(token, nag => this.readNAGGlyph(nag)))
       const move = resolveMoveToken(
         token,
         nextMultiverse,
@@ -568,9 +861,16 @@ class Parser {
     return {
       action: { moves },
       commentsAfter,
-      glyphs,
+      moveGlyphs,
       multiverse: nextMultiverse,
     }
+  }
+
+  private readNAGGlyph(token: string | number): string {
+    const nag = typeof token === 'number'
+      ? token
+      : Number(/^\$(\d+)$/.exec(token)?.[1] ?? Number.NaN)
+    return this.studyGlyphsByNag.get(nag) ?? `$${nag}`
   }
 
   private parseTurnSerial(): TurnSerial {
@@ -631,6 +931,13 @@ class Parser {
       const content = this.readBracketBlock()
       if (isBoardFenBlock(content)) {
         this.fenBlocks.push(parseFENBlock(content))
+        continue
+      }
+      const header = parseHeaderBlock(content)
+      if (header?.key.startsWith('5DStudy_')) {
+        const values = this.studyHeaders.get(header.key) ?? []
+        values.push(header.value)
+        this.studyHeaders.set(header.key, values)
       }
     }
   }
@@ -638,7 +945,22 @@ class Parser {
   private readBracketBlock(): string {
     this.consume('[')
     const start = this.cursor
-    while (! this.isDone() && this.peek() !== ']') {
+    let quoted = false
+    let escaped = false
+    while (! this.isDone()) {
+      const char = this.peek()
+      if (escaped) {
+        escaped = false
+      }
+      else if (char === '\\') {
+        escaped = true
+      }
+      else if (char === '"') {
+        quoted = ! quoted
+      }
+      else if (! quoted && char === ']') {
+        break
+      }
       this.cursor += 1
     }
     if (this.isDone()) throw this.error('Unterminated 5dpgn bracket block')
@@ -806,6 +1128,8 @@ const parseMovePattern = (rawToken: string, player: Player): MovePattern => {
     : parsePhysicalPattern(body, sourceBoard, piece)
 }
 
+const isNAGToken = (token: string): boolean => /^\$\d+$/.test(token)
+
 const parseCastlingPattern = (
   sourceBoard: BoardPattern | undefined,
   player: Player,
@@ -893,6 +1217,12 @@ const stripMoveAnnotations = (token: string): string => {
   let changed = true
   while (changed) {
     changed = false
+    const nagMatch = /\$\d+$/.exec(result)
+    if (nagMatch) {
+      result = result.slice(0, -nagMatch[0].length)
+      changed = true
+      continue
+    }
     for (const symbol of EVALUATION_SYMBOLS) {
       if (result.endsWith(symbol)) {
         result = result.slice(0, -symbol.length)
@@ -909,13 +1239,20 @@ const stripMoveAnnotations = (token: string): string => {
   return result.replace(/=[A-Z]$/, '')
 }
 
-const readMoveGlyphs = (token: string): string[] => {
+const readMoveGlyphs = (token: string, readNAGGlyph: (nag: number) => string): string[] => {
   const glyphs: string[] = []
   let result = token
   let changed = true
 
   while (changed) {
     changed = false
+    const nagMatch = /\$(\d+)$/.exec(result)
+    if (nagMatch) {
+      glyphs.unshift(readNAGGlyph(Number(nagMatch[1])))
+      result = result.slice(0, -nagMatch[0].length)
+      changed = true
+      continue
+    }
     for (const symbol of EVALUATION_SYMBOLS) {
       if (result.endsWith(symbol)) {
         glyphs.unshift(symbol)
@@ -1278,13 +1615,14 @@ const pieceToFenChar = (piece: Piece): string => {
   }
 }
 
-const formatHeaders = (options: ResolvedExportOptions): string[] => {
+const formatHeaders = (options: ResolvedExportOptions, glyphTemplates: readonly StudyGlyphTemplate[]): string[] => {
   const headers = new Map<string, string>()
   for (const [key, value] of Object.entries(DEFAULT_HEADER_VALUES)) {
     headers.set(key, value)
   }
   applyExportHeaders(headers, options.headers)
   headers.set('Result', options.result)
+  const studyHeaders = formatStudyAnnotationHeaders(options.studyAnnotations, glyphTemplates)
 
   const ordered: Array<{ key: string, value: string }> = []
   for (const key of HEADER_ORDER) {
@@ -1295,11 +1633,137 @@ const formatHeaders = (options: ResolvedExportOptions): string[] => {
   for (const [key, value] of headers) {
     ordered.push({ key, value })
   }
+  ordered.push(...studyHeaders)
 
   return ordered
     .filter(({ key }) => /^[A-Za-z0-9_]+$/.test(key))
     .map(({ key, value }) => `[${key} "${escapeHeaderValue(value)}"]`)
 }
+
+const STUDY_HEADER_VERSION = '1'
+
+const formatStudyAnnotationHeaders = (
+  annotations: readonly StudyAnnotation[],
+  glyphTemplates: readonly StudyGlyphTemplate[],
+): Array<{ key: string, value: string }> => {
+  if (annotations.length === 0 && glyphTemplates.length === 0) return []
+
+  const output: Array<{ key: string, value: string }> = []
+  const members = getStudyAnnotationMembers(annotations)
+  const memberIndexes = new Map(members.map((id, index) => [id, index]))
+
+  const memberHeaders = members.map((id) => {
+    return { key: '5DStudy_Member', value: formatFlowMap({ id }) }
+  })
+
+  glyphTemplates.forEach((template) => {
+    output.push({ key: '5DStudy_GlyphTemplate', value: formatFlowMap({
+      nag: template.nag,
+      glyph: template.glyph,
+      ...(template.color ? { color: template.color } : {}),
+    }) })
+  })
+
+  const commentMetaIndexes = new Map<string, number>()
+  const glyphMetaIndexes = new Map<string, number>()
+
+  for (const annotation of annotations) {
+    if (annotation.type === 'comment') {
+      if (! annotation.authorId) continue
+      output.push({ key: '5DStudy_CommentMeta', value: formatFlowMap({
+        author: getStudyAnnotationMemberIndex(memberIndexes, annotation.authorId),
+        line: annotation.target.lineId,
+        action: annotation.target.actionIndex,
+        ...(annotation.target.position !== 'after' ? { position: annotation.target.position } : {}),
+        index: getNextStudyMetaIndex(commentMetaIndexes, getStudyCommentMetaKey(annotation.target)),
+      }) })
+      continue
+    }
+
+    if (annotation.type === 'glyph') {
+      if (! annotation.authorId) continue
+      output.push({ key: '5DStudy_GlyphMeta', value: formatFlowMap({
+        author: getStudyAnnotationMemberIndex(memberIndexes, annotation.authorId),
+        line: annotation.target.lineId,
+        action: annotation.target.actionIndex,
+        move: annotation.target.moveIndex,
+        index: getNextStudyMetaIndex(glyphMetaIndexes, getStudyGlyphMetaKey(annotation.target)),
+      }) })
+      continue
+    }
+
+    if (annotation.type !== 'marker') continue
+
+    switch (annotation.target.type) {
+      case 'square':
+        output.push({ key: '5DStudy_Square', value: formatFlowMap({
+          author: getStudyAnnotationMemberIndex(memberIndexes, annotation.authorId),
+          line: annotation.target.lineId,
+          action: annotation.target.actionIndex,
+          at: formatMarkerCoord(annotation.target.coord, annotation.target.m),
+          ...(annotation.label ? { label: annotation.label } : {}),
+        }) })
+        break
+
+      case 'arrow':
+        output.push({ key: '5DStudy_Arrow', value: formatFlowMap({
+          author: getStudyAnnotationMemberIndex(memberIndexes, annotation.authorId),
+          line: annotation.target.lineId,
+          action: annotation.target.actionIndex,
+          from: formatMarkerCoord(
+            annotation.target.from,
+            Coord.boardIndex(annotation.target.from, annotation.target.fromPlayer ?? Player.W),
+          ),
+          to: formatMarkerCoord(
+            annotation.target.to,
+            Coord.boardIndex(annotation.target.to, annotation.target.toPlayer ?? Player.W),
+          ),
+          ...(annotation.label ? { label: annotation.label } : {}),
+        }) })
+        break
+    }
+  }
+  return output.length === 0
+    ? []
+    : [
+        { key: '5DStudy_Version', value: STUDY_HEADER_VERSION },
+        ...memberHeaders,
+        ...output,
+      ]
+}
+
+const getNextStudyMetaIndex = (indexes: Map<string, number>, key: string): number => {
+  const index = indexes.get(key) ?? 0
+  indexes.set(key, index + 1)
+  return index
+}
+
+const getStudyCommentMetaKey = (
+  target: Extract<StudyAnnotationTarget, { type: 'action' }>,
+): string => `${target.lineId}:${target.actionIndex}:${target.position}`
+
+const getStudyGlyphMetaKey = (
+  target: Extract<StudyAnnotationTarget, { type: 'move' }>,
+): string => `${target.lineId}:${target.actionIndex}:${target.moveIndex}`
+
+const getStudyAnnotationMembers = (annotations: readonly StudyAnnotation[]): string[] => {
+  const members: string[] = []
+  const seen = new Set<string>()
+  for (const annotation of annotations) {
+    const authorId = annotation.authorId
+    if (! authorId || seen.has(authorId)) continue
+    seen.add(authorId)
+    members.push(authorId)
+  }
+  return members
+}
+
+const getStudyAnnotationMemberIndex = (
+  memberIndexes: ReadonlyMap<string, number>,
+  authorId: string | undefined,
+): number | undefined => (
+  authorId === undefined ? undefined : memberIndexes.get(authorId)
+)
 
 const applyExportHeaders = (
   output: Map<string, string>,
@@ -1326,6 +1790,393 @@ const escapeHeaderValue = (value: string | number): string => (
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
 )
+
+const parseHeaderBlock = (content: string): { key: string, value: string } | null => {
+  const match = /^([A-Za-z0-9_]+)\s+"((?:\\.|[^"\\])*)"\s*$/s.exec(content.trim())
+  if (! match) return null
+  return {
+    key: match[1]!,
+    value: unescapeHeaderValue(match[2]!),
+  }
+}
+
+const unescapeHeaderValue = (value: string): string => (
+  value.replace(/\\(["\\])/g, '$1')
+)
+
+type FlowValue = string | number | boolean | null | undefined
+
+const formatFlowMap = (values: Record<string, FlowValue>): string => {
+  const entries = Object.entries(values)
+    .filter((entry): entry is [string, Exclude<FlowValue, undefined>] => entry[1] !== undefined)
+    .map(([key, value]) => `${key}: ${formatFlowValue(value)}`)
+  return `{${entries.join(', ')}}`
+}
+
+const formatFlowValue = (value: Exclude<FlowValue, undefined>): string => {
+  if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '0'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return 'null'
+}
+
+const parseFlowMap = (input: string): Record<string, string | number | boolean | null> => {
+  const parser = new FlowMapParser(input)
+  return parser.parse()
+}
+
+class FlowMapParser {
+  private cursor = 0
+
+  constructor(private readonly input: string) {}
+
+  parse(): Record<string, string | number | boolean | null> {
+    const result: Record<string, string | number | boolean | null> = {}
+    this.skipSpace()
+    this.consume('{')
+    this.skipSpace()
+    while (this.peek() !== '}') {
+      const key = this.readKey()
+      this.skipSpace()
+      this.consume(':')
+      this.skipSpace()
+      result[key] = this.readValue()
+      this.skipSpace()
+      if (this.peek() === ',') {
+        this.cursor += 1
+        this.skipSpace()
+        continue
+      }
+      break
+    }
+    this.consume('}')
+    this.skipSpace()
+    if (! this.isDone()) throw new Error(`Unexpected YAML flow content "${this.input.slice(this.cursor)}"`)
+    return result
+  }
+
+  private readKey(): string {
+    const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(this.input.slice(this.cursor))
+    if (! match) throw new Error(`Expected YAML flow key near "${this.input.slice(this.cursor)}"`)
+    this.cursor += match[0].length
+    return match[0]
+  }
+
+  private readValue(): string | number | boolean | null {
+    const char = this.peek()
+    if (char === "'") return this.readSingleQuotedString()
+    if (char === '"') return this.readDoubleQuotedString()
+
+    const start = this.cursor
+    while (! this.isDone() && this.peek() !== ',' && this.peek() !== '}') {
+      this.cursor += 1
+    }
+    const raw = this.input.slice(start, this.cursor).trim()
+    if (raw === 'true') return true
+    if (raw === 'false') return false
+    if (raw === 'null') return null
+    if (/^[+-]?\d+(?:\.\d+)?$/.test(raw)) return Number(raw)
+    if (raw.length > 0) return raw
+    throw new Error('Expected YAML flow value')
+  }
+
+  private readSingleQuotedString(): string {
+    this.consume("'")
+    let result = ''
+    while (! this.isDone()) {
+      const char = this.peek()
+      this.cursor += 1
+      if (char !== "'") {
+        result += char
+        continue
+      }
+      if (this.peek() === "'") {
+        this.cursor += 1
+        result += "'"
+        continue
+      }
+      return result
+    }
+    throw new Error('Unterminated YAML single-quoted string')
+  }
+
+  private readDoubleQuotedString(): string {
+    this.consume('"')
+    let result = ''
+    while (! this.isDone()) {
+      const char = this.peek()
+      this.cursor += 1
+      if (char === '"') return result
+      if (char === '\\') {
+        const escaped = this.peek()
+        this.cursor += 1
+        result += escaped === 'n' ? '\n' : escaped
+      }
+      else {
+        result += char
+      }
+    }
+    throw new Error('Unterminated YAML double-quoted string')
+  }
+
+  private skipSpace(): void {
+    while (/\s/.test(this.peek())) this.cursor += 1
+  }
+
+  private consume(expected: string): void {
+    if (this.peek() !== expected) throw new Error(`Expected "${expected}" in YAML flow value`)
+    this.cursor += 1
+  }
+
+  private peek(): string {
+    return this.input[this.cursor] ?? ''
+  }
+
+  private isDone(): boolean {
+    return this.cursor >= this.input.length
+  }
+}
+
+interface ParsedStudyHeaders {
+  markerAnnotations: StudyMarkerAnnotation[]
+  commentMetas: StudyCommentMeta[]
+  glyphMetas: StudyGlyphMeta[]
+  glyphTemplates: StudyGlyphTemplate[]
+}
+
+interface StudyCommentMeta {
+  authorId?: string
+  lineId: number
+  actionIndex: number
+  position: 'before' | 'after'
+  index: number
+}
+
+interface StudyGlyphMeta {
+  authorId?: string
+  lineId: number
+  actionIndex: number
+  moveIndex: number
+  index: number
+}
+
+const parseStudyHeaders = (headers: ReadonlyMap<string, readonly string[]>): ParsedStudyHeaders => {
+  try {
+    if (headers.size === 0) return emptyParsedStudyHeaders()
+    if (getStudyHeaderValues(headers, '5DStudy_Version')[0] !== STUDY_HEADER_VERSION) {
+      return emptyParsedStudyHeaders()
+    }
+
+    const members = getStudyHeaderValues(headers, '5DStudy_Member')
+      .map(value => parseFlowMap(value).id)
+      .filter((id): id is string => typeof id === 'string')
+
+    return {
+      markerAnnotations: [
+        ...getStudyHeaderValues(headers, '5DStudy_Square')
+          .map((value, index) => parseStudySquareMarkerAnnotation(value, index, members)),
+        ...getStudyHeaderValues(headers, '5DStudy_Arrow')
+          .map((value, index) => parseStudyArrowMarkerAnnotation(value, index, members)),
+      ]
+        .filter((annotation): annotation is StudyMarkerAnnotation => annotation !== null),
+      commentMetas: getStudyHeaderValues(headers, '5DStudy_CommentMeta')
+        .map(value => parseStudyCommentMeta(value, members))
+        .filter((meta): meta is StudyCommentMeta => meta !== null),
+      glyphMetas: getStudyHeaderValues(headers, '5DStudy_GlyphMeta')
+        .map(value => parseStudyGlyphMeta(value, members))
+        .filter((meta): meta is StudyGlyphMeta => meta !== null),
+      glyphTemplates: getStudyHeaderValues(headers, '5DStudy_GlyphTemplate')
+        .map(parseStudyGlyphTemplate)
+        .filter((template): template is StudyGlyphTemplate => template !== null),
+    }
+  }
+  catch {
+    return emptyParsedStudyHeaders()
+  }
+}
+
+const emptyParsedStudyHeaders = (): ParsedStudyHeaders => ({
+  markerAnnotations: [],
+  commentMetas: [],
+  glyphMetas: [],
+  glyphTemplates: [],
+})
+
+const parseStudyGlyphTemplate = (value: string): StudyGlyphTemplate | null => {
+  const item = parseFlowMap(value)
+  const glyph = readFlowString(item.glyph)
+  if (! glyph) return null
+  const nag = readFlowInteger(item.nag)
+  return {
+    ...(nag === null ? {} : { nag }),
+    glyph,
+    ...formatOptionalString('color', item.color),
+  }
+}
+
+const getStudyGlyphsByNag = (templates: readonly StudyGlyphTemplate[]): Map<number, string> => {
+  const result = new Map(STANDARD_NAG_GLYPHS)
+  for (const template of templates) {
+    if (template.nag === undefined) continue
+    result.set(template.nag, template.glyph)
+  }
+  return result
+}
+
+const getStudyHeaderValues = (
+  headers: ReadonlyMap<string, readonly string[]>,
+  key: string,
+): string[] => (
+  [...(headers.get(key) ?? [])]
+)
+
+const parseStudyCommentMeta = (
+  value: string,
+  members: readonly string[],
+): StudyCommentMeta | null => {
+  const item = parseFlowMap(value)
+  const lineId = readFlowInteger(item.line)
+  const actionIndex = readFlowInteger(item.action)
+  const index = readFlowInteger(item.index)
+  if (lineId === null || actionIndex === null || index === null) return null
+  return {
+    ...formatAuthorFromFlowValue(item.author, members),
+    lineId,
+    actionIndex,
+    position: item.position === 'before' ? 'before' : 'after',
+    index,
+  }
+}
+
+const parseStudyGlyphMeta = (
+  value: string,
+  members: readonly string[],
+): StudyGlyphMeta | null => {
+  const item = parseFlowMap(value)
+  const lineId = readFlowInteger(item.line)
+  const actionIndex = readFlowInteger(item.action)
+  const moveIndex = readFlowInteger(item.move)
+  const index = readFlowInteger(item.index)
+  if (lineId === null || actionIndex === null || moveIndex === null || index === null) return null
+  return {
+    ...formatAuthorFromFlowValue(item.author, members),
+    lineId,
+    actionIndex,
+    moveIndex,
+    index,
+  }
+}
+
+const parseStudySquareMarkerAnnotation = (
+  value: string,
+  index: number,
+  members: readonly string[],
+): StudyMarkerAnnotation | null => {
+  const item = parseFlowMap(value)
+  const lineId = readFlowInteger(item.line)
+  const actionIndex = readFlowInteger(item.action)
+  const target = parseMarkerCoord(readFlowString(item.at))
+  const authorId = readAuthorId(item.author, members)
+  if (lineId === null || actionIndex === null || target === null || authorId === null) return null
+  return {
+    id: `5dpgn-study-square:${index}`,
+    type: 'marker',
+    target: {
+      type: 'square',
+      lineId,
+      actionIndex,
+      m: target.m,
+      coord: target.coord,
+    },
+    authorId,
+    ...formatOptionalString('color', item.color),
+    ...formatOptionalString('label', item.label),
+  }
+}
+
+const parseStudyArrowMarkerAnnotation = (
+  value: string,
+  index: number,
+  members: readonly string[],
+): StudyMarkerAnnotation | null => {
+  const item = parseFlowMap(value)
+  const lineId = readFlowInteger(item.line)
+  const actionIndex = readFlowInteger(item.action)
+  const from = parseMarkerCoord(readFlowString(item.from))
+  const to = parseMarkerCoord(readFlowString(item.to))
+  const authorId = readAuthorId(item.author, members)
+  if (lineId === null || actionIndex === null || from === null || to === null || authorId === null) return null
+  return {
+    id: `5dpgn-study-arrow:${index}`,
+    type: 'marker',
+    target: {
+      type: 'arrow',
+      lineId,
+      actionIndex,
+      from: from.coord,
+      fromPlayer: from.player,
+      to: to.coord,
+      toPlayer: to.player,
+    },
+    authorId,
+    ...formatOptionalString('color', item.color),
+    ...formatOptionalString('label', item.label),
+  }
+}
+
+const readFlowInteger = (value: string | number | boolean | null | undefined): number | null => (
+  typeof value === 'number' && Number.isInteger(value) ? value : null
+)
+
+const readFlowString = (value: string | number | boolean | null | undefined): string | null => (
+  typeof value === 'string' ? value : null
+)
+
+const readAuthorId = (
+  value: string | number | boolean | null | undefined,
+  members: readonly string[],
+): string | null => {
+  if (typeof value === 'string') return value
+  if (typeof value !== 'number' || ! Number.isInteger(value)) return null
+  return members[value] ?? null
+}
+
+const formatAuthorFromFlowValue = (
+  value: string | number | boolean | null | undefined,
+  members: readonly string[],
+): { authorId?: string } => {
+  const authorId = readAuthorId(value, members)
+  return authorId === null ? {} : { authorId }
+}
+
+const formatOptionalString = <Key extends string>(
+  key: Key,
+  value: string | number | boolean | null | undefined,
+): Partial<Record<Key, string>> => (
+  typeof value === 'string' ? { [key]: value } as Partial<Record<Key, string>> : {}
+)
+
+const formatMarkerCoord = (coord: Coord, m: number): string => `(${coord.l}M${m})${formatSquare(coord)}`
+
+const parseMarkerCoord = (value: string | null): { coord: Coord, m: number, player: Player } | null => {
+  if (value === null) return null
+  const match = /^\(([+-]?\d+)M([+-]?\d+)\)([a-h])([1-8])$/.exec(value)
+  if (! match) return null
+  const l = Number(match[1])
+  const m = Number(match[2])
+  const player = m % 2 === Player.B ? Player.B : Player.W
+  const file = match[3]!
+  const rank = match[4]!
+  return {
+    coord: {
+      l,
+      t: Math.floor(m / 2),
+      ...parseSquare(file, rank),
+    },
+    m,
+    player,
+  }
+}
 
 const parseSquare = (file: string, rank: string): CoordSpacelike => ({
   x: FILES.indexOf(file),

@@ -49,5 +49,12 @@ const { t } = useI18n({ useScope: 'global' })
         :style="buttonStyle"
       />
     </div>
+    <div class="settings-row">
+      <span>{{ t('settings.fiveDPGNBuiltInGlyphNAGs') }}</span>
+      <GameToggle
+        v-model="settings.includeBuiltInGlyphNAGs"
+        :style="buttonStyle"
+      />
+    </div>
   </div>
 </template>

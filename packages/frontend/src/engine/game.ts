@@ -52,6 +52,7 @@ export interface GameContext {
   fiveDPGNOptions?: FiveDPGN.ExportOptions
   initialWorkspace?: GameWorkspaceState | null
   getFiveDPGNExportMetadata?: () => Pick<FiveDPGN.ExportOptions, 'headers' | 'result'>
+  getFiveDPGNGlyphTemplates?: () => FiveDPGN.StudyGlyphTemplate[]
   getUISoundVolume?: () => number
   getBellSoundVolume?: () => number
   getRecordAuthorId?: () => string
@@ -459,6 +460,7 @@ export class Game extends Disposable(Empty) {
       recordActionIndex,
       position,
       texts,
+      { authorId: this.ctx.getRecordAuthorId?.() },
     )
     if (! changed) return false
 
@@ -483,6 +485,7 @@ export class Game extends Disposable(Empty) {
       recordActionIndex,
       moveIndex,
       glyphs,
+      { authorId: this.ctx.getRecordAuthorId?.() },
     )
     if (! changed) return false
 
@@ -1576,17 +1579,6 @@ export class Game extends Disposable(Empty) {
         },
       },
       {
-        id: 'import-5dpgn',
-        disabled: this.isMoveAnimating() || this.isOnlineGame(),
-        colorPreset: getPlayerButtonColor(this.player),
-        turnPlayer: this.player,
-        labelKey: 'button.import',
-        piece: null,
-        onClick: () => {
-          this.requestImportFiveDPGN()
-        },
-      },
-      {
         id: 'export-5dpgn',
         disabled: false,
         colorPreset: getPlayerButtonColor(this.player),
@@ -2217,7 +2209,7 @@ export class Game extends Disposable(Empty) {
   public importFiveDPGNText(input: string): string | null {
     try {
       this.loadCoreGameState(FiveDPGN.importGameState(input), {
-        recordDocument: RecordDocument.fromActionTree(FiveDPGN.parseActionTree(input)),
+        recordDocument: RecordDocument.fromFiveDPGN(input),
       })
       this.syncToolbarButtons()
       return null
@@ -2234,6 +2226,7 @@ export class Game extends Disposable(Empty) {
     const options: FiveDPGN.ExportOptions = {
       ...this.getFiveDPGNExportOptions(),
       initialMultiverse: this.initialMultiverse,
+      studyAnnotations: this.recordDocument.serializeAnnotations(),
     }
     return {
       text: format === 'fen'
@@ -2256,6 +2249,7 @@ export class Game extends Disposable(Empty) {
     return {
       ...this.fiveDPGNOptions,
       ...this.ctx.getFiveDPGNExportMetadata?.(),
+      studyGlyphTemplates: this.ctx.getFiveDPGNGlyphTemplates?.() ?? [],
     }
   }
 
@@ -2297,10 +2291,6 @@ export class Game extends Disposable(Empty) {
     this.focusCurrentPresent()
     this.syncToolbarButtons()
     return true
-  }
-
-  private requestImportFiveDPGN() {
-    this.ctx.onImportRequest?.()
   }
 
   private requestExportFiveDPGN() {

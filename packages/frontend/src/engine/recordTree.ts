@@ -69,6 +69,13 @@ export class RecordDocument {
     return document
   }
 
+  public static fromFiveDPGN(input: string): RecordDocument {
+    return RecordDocument.fromActionTree(
+      stripActionTreeAnnotations(FiveDPGN.parseActionTree(input)),
+      FiveDPGN.parseStudyAnnotations(input) as RecordAnnotation[],
+    )
+  }
+
   public static fromStudyDocument(studyDocument: StudyDocument): RecordDocument | null {
     const parsed = StudyDocumentSchema.safeParse(studyDocument)
     if (! parsed.success) return null
@@ -245,6 +252,11 @@ export class RecordDocument {
     actionIndex: number,
     position: 'before' | 'after',
     texts: readonly string[],
+    {
+      authorId,
+    }: {
+      authorId?: string
+    } = {},
   ): boolean {
     const target: RecordAnnotationTarget = {
       type: 'action',
@@ -267,6 +279,7 @@ export class RecordDocument {
           id: `comment:${lineId}:${actionIndex}:${position}:${now}:${index}`,
           type: 'comment',
           target,
+          authorId,
           text,
           createdAt: now,
           updatedAt: now,
@@ -280,6 +293,11 @@ export class RecordDocument {
     actionIndex: number,
     moveIndex: number,
     glyphs: readonly string[],
+    {
+      authorId,
+    }: {
+      authorId?: string
+    } = {},
   ): boolean {
     const target: RecordAnnotationTarget = {
       type: 'move',
@@ -301,6 +319,7 @@ export class RecordDocument {
           id: `glyph:${lineId}:${actionIndex}:${moveIndex}:${Date.now()}:${index}`,
           type: 'glyph',
           target,
+          authorId,
           glyph,
         })
       })
@@ -595,8 +614,12 @@ export class RecordDocument {
       }
       const commentsBefore = this.getActionCommentTexts(lineId, actionIndex, 'before')
       const commentsAfter = this.getActionCommentTexts(lineId, actionIndex, 'after')
+      const moveGlyphs = variation.action.moves.map((_, moveIndex) => (
+        this.getMoveGlyphTexts(lineId, actionIndex, moveIndex)
+      ))
       if (commentsBefore.length > 0) variation.commentsBefore = commentsBefore
       if (commentsAfter.length > 0) variation.commentsAfter = commentsAfter
+      if (moveGlyphs.some(glyphs => glyphs.length > 0)) variation.moveGlyphs = moveGlyphs
       variations.push(variation)
     }
 
@@ -660,6 +683,7 @@ export class RecordDocument {
   ) {
     this.addActionTreeComments(lineId, actionIndex, 'before', variation.commentsBefore)
     this.addActionTreeComments(lineId, actionIndex, 'after', variation.commentsAfter)
+    this.addActionTreeMoveGlyphs(lineId, actionIndex, variation.moveGlyphs)
   }
 
   private addActionTreeComments(
@@ -681,6 +705,28 @@ export class RecordDocument {
         text,
         createdAt: 0,
         updatedAt: 0,
+      })
+    })
+  }
+
+  private addActionTreeMoveGlyphs(
+    lineId: number,
+    actionIndex: number,
+    moveGlyphs: readonly (readonly string[] | undefined)[] | undefined,
+  ) {
+    moveGlyphs?.forEach((glyphs, moveIndex) => {
+      glyphs?.forEach((glyph, glyphIndex) => {
+        this.annotations.push({
+          id: `5dpgn-glyph:${lineId}:${actionIndex}:${moveIndex}:${glyphIndex}`,
+          type: 'glyph',
+          target: {
+            type: 'move',
+            lineId,
+            actionIndex,
+            moveIndex,
+          },
+          glyph,
+        })
       })
     })
   }
@@ -900,6 +946,13 @@ export const isActionPrefix = (prefix: Action[], actions: Action[]): boolean => 
   }
   return true
 }
+
+const stripActionTreeAnnotations = (tree: FiveDPGN.ActionTree): FiveDPGN.ActionTree => ({
+  variations: tree.variations.map((variation): FiveDPGN.ActionTreeVariation => ({
+    action: variation.action,
+    ...(variation.subtree ? { subtree: stripActionTreeAnnotations(variation.subtree) } : {}),
+  })),
+})
 
 const getNextRecordVariationTarget = (
   targets: RecordCursorTarget[],

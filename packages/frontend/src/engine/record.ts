@@ -61,6 +61,7 @@ export interface GameRecordComment {
 export interface GameRecordGlyph {
   id: string
   glyph: string
+  authorId?: string
 }
 
 export interface BuildGameRecordRowsOptions {
@@ -296,6 +297,7 @@ const getMoveGlyphs = (
     .map(annotation => ({
       id: annotation.id,
       glyph: annotation.glyph,
+      authorId: annotation.authorId,
     }))
 )
 

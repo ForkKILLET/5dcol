@@ -105,7 +105,7 @@ export namespace Sizes {
   export const ButtonContentGap = 8
   export const ButtonSmallContentGap = 6
   export const ButtonTinyContentGap = 4
-  export const RecordPanelWidth = 300
+  export const RecordPanelWidth = 350
   export const RecordPanelMinWidth = 220
   export const RecordBlockBorderWidth = 3
 
