@@ -24,6 +24,7 @@ export interface GameRecordCursor {
   recordActionIndex: number
   branchDepth: number
   hasFuture?: boolean
+  pending?: boolean
   current?: boolean
 }
 
@@ -166,7 +167,10 @@ const buildGameRecordLineRows = ({
 
   for (let lineActionIndex = 0; lineActionIndex <= line.actions.length; lineActionIndex += 1) {
     const hasFuture = document.hasFutureAt(line.id, lineActionIndex)
-    if (line.id === 0 || lineActionIndex > 0 || hasFuture) {
+    const isPendingAtActionIndex = activePendingLocalActionIndex === lineActionIndex
+    const isCurrentCursorAtActionIndex = currentCursorLocalActionIndex === lineActionIndex
+    const shouldRenderCursorAtActionIndex = line.id === 0 || lineActionIndex > 0 || hasFuture || isPendingAtActionIndex
+    if (shouldRenderCursorAtActionIndex) {
       rows.push({
         kind: 'cursor',
         recordKey: `${line.id}:cursor:${lineActionIndex}`,
@@ -174,7 +178,8 @@ const buildGameRecordLineRows = ({
         recordActionIndex: lineActionIndex,
         branchDepth: line.depth,
         hasFuture,
-        current: currentCursorLocalActionIndex === lineActionIndex,
+        pending: isPendingAtActionIndex || undefined,
+        current: isPendingAtActionIndex || isCurrentCursorAtActionIndex,
       })
     }
 
@@ -194,16 +199,19 @@ const buildGameRecordLineRows = ({
       }))
     }
 
-    if (activePendingLocalActionIndex === lineActionIndex) {
+    if (isPendingAtActionIndex) {
       const pendingRows = buildGameRecordActions([
         ...branchPrefixActions,
         { moves: pendingMoves },
       ], fiveDPGNOptions)
       const pendingRow = pendingRows.at(-1)
       if (pendingRow) {
+        const pendingActionKey = hasFuture
+          ? `${line.id}:${lineActionIndex}:pending`
+          : `${line.id}:${lineActionIndex}`
         rows.push({
           ...pendingRow,
-          recordKey: `${line.id}:${lineActionIndex}:pending`,
+          recordKey: pendingActionKey,
           recordLineId: line.id,
           recordActionIndex: lineActionIndex,
           branchDepth: line.depth,

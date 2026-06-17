@@ -9,6 +9,7 @@ import type {
   GameToolbarButton,
 } from '@engine/game'
 import type { GameRecordMove } from '@engine/record'
+import { buildRecordDisplayTree, type RecordDisplayNode } from '../engine/recordDisplayTree.ts'
 import {
   BUILT_IN_RECORD_GLYPH_TEMPLATES,
   RECORD_GLYPH_DEFAULT_COLOR,
@@ -25,17 +26,9 @@ import { DEFAULT_RECORD_MARKER_AUTHOR_ID, getRecordMarkerAuthorColor } from '@en
 import GameButton from './GameButton.vue'
 import GameColorInput from './GameColorInput.vue'
 import GameIcon from './GameIcon.vue'
+import RecordNodeList from './RecordNodeList.vue'
 import GameTextInput from './GameTextInput.vue'
 import GameToggle from './GameToggle.vue'
-
-interface RecordRowSection {
-  id: string
-  kind: 'record' | 'deduction' | 'pending' | 'branch'
-  depth: number
-  key: string
-  rows: GameRecordRow[]
-}
-
 
 export interface RecordFocusedMove {
   recordLineId: number
@@ -105,6 +98,8 @@ const showRecordComments = ref(true)
 const showRecordGlyphs = ref(true)
 const customGlyphDraft = ref<CustomRecordGlyphTemplate | null>(null)
 const editingCustomGlyphKey = ref<string | null>(null)
+const confirmingDeleteFutureCursorKey = ref<string | null>(null)
+const activeHoverCursorKey = ref<string | null>(null)
 const customGlyphTemplates = computed({
   get: () => props.customGlyphTemplates,
   set: value => emit('updateCustomGlyphTemplates', uniqueRecordGlyphTemplates(value)),
@@ -112,6 +107,12 @@ const customGlyphTemplates = computed({
 let stopPanelResizeListeners: (() => void) | null = null
 let resizeFrame: number | null = null
 let pendingResizeWidth: number | null = null
+let clearPendingSubmitTransitionTimer: number | null = null
+let nextPendingBlockKeyId = 1
+
+const pendingSubmitTransitionKind = ref<'append' | 'branch' | 'absorb' | 'undo' | null>(null)
+const pendingBlockKey = ref<string | null>(null)
+const branchBlockKeyAliases = ref<Record<number, string>>({})
 
 const currentCursorKey = computed(() => (
   props.rows.find(row => isCurrentRecordRow(row))?.recordKey ?? ''
@@ -129,6 +130,19 @@ const recordGlyphTemplates = computed<RecordGlyphTemplate[]>(() => [
     builtIn: false,
   })),
 ])
+const recordNodes = computed(() => buildRecordDisplayTree({
+  rows: props.rows,
+  onlineSpectator: props.onlineSpectator,
+  deductionStartActionIndex: props.deductionStartActionIndex,
+  getRecordRowKey,
+  pendingBlockKey: pendingBlockKey.value,
+  branchBlockKeyAliases: branchBlockKeyAliases.value,
+}))
+const deleteFuturePreviewKeys = computed(() => (
+  confirmingDeleteFutureCursorKey.value
+    ? getDeleteFuturePreviewKeys(recordNodes.value, confirmingDeleteFutureCursorKey.value)
+    : new Set<string>()
+))
 const customGlyphDraftText = computed({
   get: () => customGlyphDraft.value?.glyph ?? '',
   set: (value: string) => {
@@ -158,10 +172,81 @@ watch(currentCursorKey, async () => {
   scrollCurrentCursorIntoView()
 }, { immediate: true })
 
+watch(() => props.rows, (rows) => {
+  if (
+    confirmingDeleteFutureCursorKey.value
+    && ! rows.some(row => getRecordRowKey(row) === confirmingDeleteFutureCursorKey.value)
+  ) {
+    confirmingDeleteFutureCursorKey.value = null
+  }
+  if (
+    activeHoverCursorKey.value
+    && ! rows.some(row => getRecordRowKey(row) === activeHoverCursorKey.value)
+  ) {
+    activeHoverCursorKey.value = null
+  }
+})
+
 watch(focusedMoveKey, async () => {
   await nextTick()
   scrollFocusedMoveIntoView()
 }, { immediate: true })
+
+watch(() => props.rows, (rows, previousRows) => {
+  const currentPending = rows.find(isPendingActionRow)
+  if (currentPending) {
+    pendingBlockKey.value ??= `pending:${nextPendingBlockKeyId++}`
+    return
+  }
+
+  const previousPending = previousRows?.find(isPendingActionRow)
+  if (! previousPending) {
+    pendingBlockKey.value = null
+    return
+  }
+  const previousRowKeys = new Set(previousRows?.map(getRecordRowKey) ?? [])
+
+  const hadCommittedAtOriginBefore = previousRows.some(row => (
+    isRecordActionRow(row)
+      && ! row.pending
+      && row.recordLineId === previousPending.recordLineId
+      && row.recordActionIndex === previousPending.recordActionIndex
+  ))
+  const committedAtOrigin = rows.some(row => (
+    isRecordActionRow(row)
+      && ! row.pending
+      && row.recordLineId === previousPending.recordLineId
+      && row.recordActionIndex === previousPending.recordActionIndex
+  ))
+  const committedBranch = rows.find(row => (
+    isRecordActionRow(row)
+      && ! row.pending
+      && row.index === previousPending.index
+      && (row.branchDepth ?? 0) > (previousPending.branchDepth ?? 0)
+      && ! previousRowKeys.has(getRecordRowKey(row))
+  ))
+  const committedAsBranch = committedBranch !== undefined
+  pendingSubmitTransitionKind.value = committedAsBranch
+    ? 'branch'
+    : committedAtOrigin
+      ? hadCommittedAtOriginBefore ? 'absorb' : 'append'
+      : 'undo'
+  if (committedBranch?.recordLineId !== undefined) {
+    branchBlockKeyAliases.value = {
+      ...branchBlockKeyAliases.value,
+      [committedBranch.recordLineId]: pendingBlockKey.value ?? getRecordRowKey(previousPending),
+    }
+  }
+  pendingBlockKey.value = null
+
+  if (clearPendingSubmitTransitionTimer !== null) {
+    window.clearTimeout(clearPendingSubmitTransitionTimer)
+  }
+  clearPendingSubmitTransitionTimer = window.setTimeout(() => {
+    pendingSubmitTransitionKind.value = null
+    clearPendingSubmitTransitionTimer = null
+  }, 520)
+}, { flush: 'sync' })
 
 const recordHeaders = computed(() => (
   props.recordText
@@ -169,28 +254,6 @@ const recordHeaders = computed(() => (
     .map(line => line.trim())
     .filter(line => line.startsWith('[') && ! line.startsWith('[5DStudy_'))
 ))
-
-const recordSections = computed(() => {
-  const sections: RecordRowSection[] = []
-  for (const row of props.rows) {
-    const kind = getRecordSectionKind(row)
-    const depth = getRecordSectionDepth(row)
-    const key = getRecordSectionKey(row)
-    const last = sections.at(-1)
-    if (last && last.kind === kind && last.depth === depth && last.key === key) {
-      last.rows.push(row)
-      continue
-    }
-    sections.push({
-      id: `${kind}-${depth}-${sections.length}-${getRecordRowKey(row)}`,
-      kind,
-      depth,
-      key,
-      rows: [row],
-    })
-  }
-  return sections
-})
 
 function getButtonText(button: GameToolbarButton): string {
   return t(button.labelKey, button.labelParams)
@@ -266,6 +329,42 @@ function isRecordCursorRow(row: GameRecordRow): row is GameRecordCursor {
   return row.kind === 'cursor'
 }
 
+function isPendingActionRow(row: GameRecordRow): row is GameRecordAction {
+  return isRecordActionRow(row) && row.pending === true
+}
+
+function setRecordNodeTransitionHeight(el: Element) {
+  if (el instanceof HTMLElement && el.classList.contains('record-node--cursor')) return
+  setTransitionHeightVariable(el, '--record-node-transition-height')
+}
+
+function setRecordMoveTransitionHeight(el: Element) {
+  setTransitionHeightVariable(el, '--record-move-transition-height')
+}
+
+function setTransitionHeightVariable(el: Element, property: string) {
+  if (! (el instanceof HTMLElement)) return
+
+  const height = measureTransitionHeight(el)
+  el.style.setProperty(property, `${height}px`)
+}
+
+function measureTransitionHeight(element: HTMLElement): number {
+  const previousHeight = element.style.height
+  const previousMaxHeight = element.style.maxHeight
+  const previousOverflow = element.style.overflow
+
+  element.style.height = 'auto'
+  element.style.maxHeight = 'none'
+  element.style.overflow = 'visible'
+  const height = element.getBoundingClientRect().height
+  element.style.height = previousHeight
+  element.style.maxHeight = previousMaxHeight
+  element.style.overflow = previousOverflow
+
+  return Math.max(0, height)
+}
+
 function isCurrentRecordRow(row: GameRecordRow) {
   return isRecordCursorRow(row) && row.current === true
 }
@@ -293,43 +392,117 @@ function canDeleteRecordFutureAtCursor(cursor: GameRecordCursor) {
     && cursor.hasFuture === true
 }
 
+function isConfirmingDeleteFutureAtCursor(cursor: GameRecordCursor) {
+  return confirmingDeleteFutureCursorKey.value === getRecordRowKey(cursor)
+}
+
+function handleDeleteFutureClick(cursor: GameRecordCursor) {
+  const key = getRecordRowKey(cursor)
+  if (confirmingDeleteFutureCursorKey.value === key) {
+    confirmingDeleteFutureCursorKey.value = null
+    emit('deleteFuture', cursor)
+    return
+  }
+
+  confirmingDeleteFutureCursorKey.value = key
+  emit('uiSound')
+}
+
+function closeDeleteFutureConfirmation(row: GameRecordRow) {
+  if (! isRecordCursorRow(row)) return
+  if (confirmingDeleteFutureCursorKey.value !== getRecordRowKey(row)) return
+
+  confirmingDeleteFutureCursorKey.value = null
+}
+
+function setHoverCursor(row: GameRecordRow) {
+  if (! isRecordCursorRow(row)) return
+  if (! hasHoverRecordCursorIcon(row)) return
+
+  activeHoverCursorKey.value = getRecordRowKey(row)
+}
+
+function clearHoverCursor(row: GameRecordRow) {
+  if (! isRecordCursorRow(row)) return
+  if (activeHoverCursorKey.value !== getRecordRowKey(row)) return
+
+  activeHoverCursorKey.value = null
+}
+
+function handleRecordRowMouseLeave(row: GameRecordRow, event: MouseEvent) {
+  closeDeleteFutureConfirmation(row)
+  clearHoverCursor(row)
+
+  const currentTarget = event.currentTarget
+  const activeElement = document.activeElement
+  if (
+    isRecordCursorRow(row)
+    && currentTarget instanceof HTMLElement
+    && activeElement instanceof HTMLElement
+    && currentTarget.contains(activeElement)
+  ) {
+    activeElement.blur()
+  }
+}
+
+function closeDeleteFutureConfirmationOnFocusOut(row: GameRecordRow, event: FocusEvent) {
+  const currentTarget = event.currentTarget
+  const relatedTarget = event.relatedTarget
+  if (
+    currentTarget instanceof HTMLElement
+    && relatedTarget instanceof Node
+    && currentTarget.contains(relatedTarget)
+  ) {
+    return
+  }
+
+  closeDeleteFutureConfirmation(row)
+  clearHoverCursor(row)
+}
+
 function hasHoverRecordCursorIcon(cursor: GameRecordCursor) {
   return canDeleteRecordFutureAtCursor(cursor)
     || canJumpToRecordCursor(cursor)
 }
 
-function getRecordSectionKind(row: GameRecordRow): RecordRowSection['kind'] {
-  if (isRecordCursorRow(row)) return row.branchDepth > 0 ? 'branch' : 'record'
-  if (row.pending) return 'pending'
-  if ((row.branchDepth ?? 0) > 0) return 'branch'
-  return isRecordDeductionAction(row) ? 'deduction' : 'record'
-}
-
-function getRecordSectionDepth(row: GameRecordRow) {
-  const depth = row.branchDepth ?? 0
-  return Math.max(0, depth - 1)
-}
-
-function getRecordSectionKey(row: GameRecordRow) {
-  if (isRecordCursorRow(row)) return row.branchDepth > 0 ? `branch:${row.recordLineId}` : 'record'
-  if ((row.branchDepth ?? 0) > 0) return `branch:${row.recordLineId ?? row.recordKey ?? row.index}`
-  if (row.pending) return `pending:${row.recordLineId ?? 'root'}`
-  if (isRecordDeductionAction(row)) return 'deduction'
-  return 'record'
-}
-
-function isRecordDeductionAction(action: GameRecordAction) {
-  return (
-    ! action.pending
-    && props.onlineSpectator
-    && props.deductionStartActionIndex !== null
-    && action.index >= props.deductionStartActionIndex
-  )
-}
-
 function getRecordRowKey(row: GameRecordRow) {
   if (isRecordCursorRow(row)) return row.recordKey
   return row.recordKey ?? `${row.serial}-${row.index}`
+}
+
+function getDeleteFuturePreviewKeys(nodes: RecordDisplayNode[], cursorKey: string): Set<string> {
+  const keys = new Set<string>()
+  collectDeleteFuturePreviewKeys(nodes, cursorKey, keys)
+  return keys
+}
+
+function collectDeleteFuturePreviewKeys(
+  nodes: RecordDisplayNode[],
+  cursorKey: string,
+  keys: Set<string>,
+): boolean {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]!
+    if (node.kind === 'row' && node.key === cursorKey) {
+      nodes.slice(index + 1).forEach(item => collectRecordNodeKeys(item, keys))
+      return true
+    }
+
+    if (node.kind === 'block' && collectDeleteFuturePreviewKeys(node.children, cursorKey, keys)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function collectRecordNodeKeys(node: RecordDisplayNode, keys: Set<string>) {
+  if (node.kind === 'row') {
+    if (isRecordActionRow(node.row)) keys.add(node.key)
+    return
+  }
+
+  node.children.forEach(child => collectRecordNodeKeys(child, keys))
 }
 
 function getRecordMoveKey(row: GameRecordAction, moveIndex: number) {
@@ -347,6 +520,11 @@ function getRecordRowClasses(row: GameRecordRow) {
     'record-row--cursor': isCursor,
     'record-row--cursor-current': isCursor && isCurrentRecordRow(row),
     'record-row--cursor-interactive': isCursor && hasHoverRecordCursorIcon(row),
+    'record-row--cursor-dimmed': isCursor
+      && isCurrentRecordRow(row)
+      && activeHoverCursorKey.value !== null
+      && activeHoverCursorKey.value !== getRecordRowKey(row),
+    'record-row--delete-preview': deleteFuturePreviewKeys.value.has(getRecordRowKey(row)),
   }
 }
 
@@ -790,6 +968,9 @@ function scrollElementIntoRecordView(element: HTMLElement | null) {
 onBeforeUnmount(() => {
   stopPanelResizeListeners?.()
   if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame)
+  if (clearPendingSubmitTransitionTimer !== null) {
+    window.clearTimeout(clearPendingSubmitTransitionTimer)
+  }
 })
 </script>
 
@@ -856,36 +1037,46 @@ onBeforeUnmount(() => {
           {{ header }}
         </div>
       </div>
-      <div
+      <RecordNodeList
         v-if="rows.length > 0"
+        :nodes="recordNodes"
         class="record-table"
+        :class="{
+          'record-table--pending-submit-append': pendingSubmitTransitionKind === 'append',
+          'record-table--pending-submit-branch': pendingSubmitTransitionKind === 'branch',
+          'record-table--pending-submit-absorb': pendingSubmitTransitionKind === 'absorb',
+          'record-table--pending-undo': pendingSubmitTransitionKind === 'undo',
+        }"
+        @before-enter="setRecordNodeTransitionHeight"
+        @enter="setRecordNodeTransitionHeight"
+        @before-leave="setRecordNodeTransitionHeight"
       >
+        <template #row="{ row }">
         <div
-          v-for="section in recordSections"
-          :key="section.id"
-          class="record-section"
-          :class="{
-            'record-section--branch': section.kind === 'branch',
-            'record-section--deduction': section.kind === 'deduction',
-            'record-section--pending': section.kind === 'pending',
-            'record-section--plain': section.kind === 'record',
-          }"
-          :style="{ '--record-section-indent': `calc(var(--button-content-gap) * ${section.depth * 2.4})` }"
+          class="record-row"
+          :class="getRecordRowClasses(row)"
+          :data-current-record-cursor="isCurrentRecordRow(row) ? 'true' : undefined"
+          :data-record-row-key="getRecordRowKey(row)"
+          @mouseenter="setHoverCursor(row)"
+          @focusin="setHoverCursor(row)"
+          @mouseleave="handleRecordRowMouseLeave(row, $event)"
+          @focusout="closeDeleteFutureConfirmationOnFocusOut(row, $event)"
         >
-          <div
-            v-for="row in section.rows"
-            :key="getRecordRowKey(row)"
-            class="record-row"
-            :class="getRecordRowClasses(row)"
-            :data-current-record-cursor="isCurrentRecordRow(row) ? 'true' : undefined"
-          >
-            <template v-if="isRecordActionRow(row)">
-              <span class="record-action">
-                  <span
-                    v-for="(move, moveIndex) in row.moves"
-                    :key="getRecordMoveKey(row, moveIndex)"
-                    class="record-move"
+              <template v-if="isRecordActionRow(row)">
+                <span class="record-action">
+                  <TransitionGroup
+                    name="record-move-transition"
+                    tag="span"
+                    class="record-action-move-list"
+                    @before-enter="setRecordMoveTransitionHeight"
+                    @enter="setRecordMoveTransitionHeight"
+                    @before-leave="setRecordMoveTransitionHeight"
                   >
+                    <span
+                      v-for="(move, moveIndex) in row.moves"
+                      :key="getRecordMoveKey(row, moveIndex)"
+                      class="record-move"
+                    >
                   <span
                     v-if="moveIndex === 0"
                     class="record-serial"
@@ -1032,7 +1223,8 @@ onBeforeUnmount(() => {
                       </span>
                     </span>
                   </span>
-                </span>
+                    </span>
+                  </TransitionGroup>
                 <span
                   v-if="(showRecordComments && row.commentsAfter?.length) || isEditingNewComment(row)"
                   class="record-comments record-comments--after"
@@ -1115,44 +1307,44 @@ onBeforeUnmount(() => {
                     </GameButton>
                   </span>
                 </span>
-              </span>
-            </template>
-            <template v-else-if="isRecordCursorRow(row)">
-              <span class="record-cursor-guide" />
-              <span class="record-action-icons">
-                <button
-                  v-if="canDeleteRecordFutureAtCursor(row)"
-                  class="record-action-icon record-action-icon--delete-future record-action-icon--side-action"
-                  type="button"
-                  :title="t('record.deleteFuture')"
-                  :aria-label="t('record.deleteFuture')"
-                  @click.stop="emit('deleteFuture', row)"
-                >
-                  <GameIcon name="delete-future" />
-                </button>
-                <span
-                  v-if="isCurrentRecordRow(row)"
-                  class="record-action-icon record-action-icon--current"
-                  :title="t('record.currentAction')"
-                  :aria-label="t('record.currentAction')"
-                >
-                  <GameIcon name="current" />
                 </span>
-                <button
-                  v-else-if="canJumpToRecordCursor(row)"
-                  class="record-action-icon record-action-icon--jump"
-                  type="button"
-                  :title="t('record.jumpToAction')"
-                  :aria-label="t('record.jumpToAction')"
-                  @click.stop="emit('rollbackCursor', row)"
-                >
-                  <GameIcon name="jump" />
-                </button>
-              </span>
-            </template>
-          </div>
+              </template>
+              <template v-else-if="isRecordCursorRow(row)">
+                <span class="record-cursor-guide" />
+                <span class="record-action-icons">
+                  <button
+                    v-if="canDeleteRecordFutureAtCursor(row)"
+                    class="record-action-icon record-action-icon--delete-future record-action-icon--side-action"
+                    type="button"
+                    :title="t('record.deleteFuture')"
+                    :aria-label="t('record.deleteFuture')"
+                    @click.stop="handleDeleteFutureClick(row)"
+                  >
+                    <GameIcon :name="isConfirmingDeleteFutureAtCursor(row) ? 'x' : 'delete-future'" />
+                  </button>
+                  <span
+                    v-if="isCurrentRecordRow(row)"
+                    class="record-action-icon record-action-icon--current"
+                    :title="t('record.currentAction')"
+                    :aria-label="t('record.currentAction')"
+                  >
+                    <GameIcon name="current" />
+                  </span>
+                  <button
+                    v-else-if="canJumpToRecordCursor(row)"
+                    class="record-action-icon record-action-icon--jump"
+                    type="button"
+                    :title="t('record.jumpToAction')"
+                    :aria-label="t('record.jumpToAction')"
+                    @click.stop="emit('rollbackCursor', row)"
+                  >
+                    <GameIcon name="jump" />
+                  </button>
+                </span>
+              </template>
         </div>
-      </div>
+        </template>
+      </RecordNodeList>
       <div
         v-else
         class="record-empty"
@@ -1293,73 +1485,42 @@ onBeforeUnmount(() => {
   --record-section-padding-left: calc(var(--button-content-gap) * 1.35);
   --record-row-inline-padding: var(--button-content-gap);
   --record-guide-start-offset: var(--record-row-inline-padding);
+  --record-table-row-gap: calc(var(--button-content-gap) * 1.05);
+  --record-cursor-fixed-width: calc(var(--record-action-min-width) + var(--button-content-gap) * 5);
 
-  display: grid;
-  grid-template-columns: max-content max-content max-content;
-  column-gap: var(--button-content-gap);
-  row-gap: calc(var(--button-content-gap) * 0.72);
   min-width: 100%;
-}
-
-.record-section--plain {
-  display: contents;
-}
-
-.record-section--branch,
-.record-section--deduction,
-.record-section--pending {
-  --record-guide-start-offset: calc(
-    var(--record-section-padding-left)
-    + var(--record-row-inline-padding)
-    + var(--record-block-border-width)
-  );
-
-  box-sizing: border-box;
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: max-content max-content max-content;
-  column-gap: var(--button-content-gap);
-  row-gap: calc(var(--button-content-gap) * 0.72);
-  margin: calc(var(--button-content-gap) * 0.16) 0 calc(var(--button-content-gap) * 0.16) var(--record-section-indent, 0px);
-  padding-left: var(--record-section-padding-left);
-  border-left: var(--record-block-border-width) solid;
-}
-
-.record-section--branch,
-.record-section--deduction {
-  border-left-color: var(--main-arrow-fill-color);
-}
-
-.record-section--pending {
-  border-left-color: rgb(220 206 96);
-}
-
-.record-section--branch {
-  margin-top: calc(var(--button-content-gap) * 0.5);
 }
 
 .record-row {
   position: relative;
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: subgrid;
-  align-items: baseline;
+  box-sizing: border-box;
+  isolation: isolate;
+  display: block;
   min-width: var(--record-action-min-width);
   padding: 2px var(--button-content-gap);
   border-radius: 8px;
   cursor: default;
+  transition: box-shadow 220ms ease;
 }
 
 .record-row--white {
-  grid-column: 1 / 3;
-  background: var(--record-white-bg);
+  --record-row-bg: var(--record-white-bg);
+
+  width: max-content;
+  background: var(--record-row-bg);
   color: var(--record-white-text);
 }
 
 .record-row--black {
-  grid-column: 1 / 3;
-  background: var(--record-black-bg);
+  --record-row-bg: var(--record-black-bg);
+
+  width: max-content;
+  background: var(--record-row-bg);
   color: var(--record-black-text);
+}
+
+.record-row--delete-preview {
+  box-shadow: inset 0 0 0 999px rgb(212 105 80 / 24%);
 }
 
 .record-row--cursor {
@@ -1372,8 +1533,15 @@ onBeforeUnmount(() => {
   --record-cursor-tag-fg: var(--record-participant-text-color, rgb(244, 245, 237));
   --record-cursor-tag-shadow-offset: var(--button-tiny-shadow-offset);
   --record-cursor-tag-height: calc(var(--record-cursor-size) + var(--record-cursor-tag-padding-y) * 2);
+  --record-cursor-guide-fade-start: calc(var(--record-guide-start-offset) * 0.45);
+  --record-cursor-guide-fade-width: calc(var(--button-content-gap) * 2.2);
 
+  display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
+  position: relative;
+  justify-self: start;
+  width: var(--record-cursor-fixed-width);
+  min-width: var(--record-cursor-fixed-width);
   height: var(--record-cursor-tag-height);
   align-items: center;
   column-gap: var(--button-content-gap);
@@ -1398,6 +1566,8 @@ onBeforeUnmount(() => {
 }
 
 .record-action {
+  position: relative;
+  z-index: 2;
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns:
@@ -1409,6 +1579,33 @@ onBeforeUnmount(() => {
   column-gap: var(--button-content-gap);
   row-gap: calc(var(--button-content-gap) * 0.35);
   min-width: var(--record-action-min-width);
+}
+
+.record-action-move-list {
+  display: contents;
+}
+
+.record-move-transition-enter-active,
+.record-move-transition-leave-active {
+  overflow: hidden;
+  transition:
+    height 260ms ease,
+    opacity 220ms ease,
+    transform 260ms ease;
+}
+
+.record-move-transition-enter-from,
+.record-move-transition-leave-to {
+  height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.record-move-transition-enter-to,
+.record-move-transition-leave-from {
+  height: var(--record-move-transition-height);
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .record-move > .record-serial {
@@ -1628,25 +1825,41 @@ onBeforeUnmount(() => {
 }
 
 .record-cursor-guide {
-  grid-column: 1;
-  position: relative;
-  align-self: center;
-  height: calc(var(--record-cursor-tag-height) * 0.72);
-  margin-left: calc(var(--record-guide-start-offset) * -1);
-  margin-right: calc(-1 * (var(--button-content-gap) + var(--record-cursor-tag-offset) + 1px));
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: calc(
+    var(--record-cursor-tag-offset)
+    + var(--button-content-gap)
+  );
+  left: calc(var(--record-guide-start-offset) * -1);
+  height: calc(var(--record-cursor-tag-height) * 0.25);
   pointer-events: auto;
+  transform: translateY(-50%);
 }
 
 .record-cursor-guide::before {
   position: absolute;
   top: 50%;
   right: 0;
-  left: 0;
+  left: var(--record-cursor-guide-fade-start);
   height: 2px;
   margin-top: -1px;
   background: var(--record-cursor-tag-bg);
   box-shadow: var(--record-cursor-tag-shadow-offset) var(--record-cursor-tag-shadow-offset) 0 var(--button-shadow-color);
   content: "";
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--record-cursor-guide-fade-width),
+    black 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--record-cursor-guide-fade-width),
+    black 100%
+  );
   opacity: 0;
   transform: scaleX(0);
   transform-origin: left center;
@@ -1667,6 +1880,7 @@ onBeforeUnmount(() => {
 .record-row--cursor .record-action-icons {
   grid-column: 2;
   position: relative;
+  z-index: 2;
   isolation: isolate;
   min-height: var(--record-cursor-size);
   padding: var(--record-cursor-tag-padding-y)
@@ -1734,6 +1948,15 @@ onBeforeUnmount(() => {
 .record-row--cursor-interactive:focus-within .record-action-icons::after {
   opacity: 1;
   transform: scaleX(1);
+}
+
+.record-row--cursor-dimmed .record-cursor-guide::before {
+  opacity: 0.34;
+}
+
+.record-row--cursor-dimmed .record-action-icons {
+  opacity: 0.44;
+  transition: opacity 160ms ease;
 }
 
 .record-action-icon {

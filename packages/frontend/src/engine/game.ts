@@ -416,14 +416,17 @@ export class Game extends Disposable(Empty) {
     if (this.isMoveAnimating() || this.pendingMoves.length > 0) return false
     const target = this.recordDocument.resolveCursorTarget(cursor)
     if (! target) return false
-    if (! this.recordDocument.hasFutureAt(target.recordLineId, target.recordActionIndex)) return false
 
-    this.recordDocument.deleteActiveEmptyLineIfLeaving(target.recordLineId)
-    this.recordDocument.deleteFuture(target.recordLineId, target.recordActionIndex)
-    const actions = this.recordDocument.getLineFullActions(target.recordLineId)
-    const targetActionIndex = this.recordDocument.getLinePrefixActions(target.recordLineId).length
-      + target.recordActionIndex
-    this.recordDocument.setActiveLine(target.recordLineId)
+    const nextTarget = this.recordDocument.deleteFutureAndResolveCursorTarget(
+      target.recordLineId,
+      target.recordActionIndex,
+    )
+    if (! nextTarget) return false
+
+    const actions = this.recordDocument.getLineFullActions(nextTarget.recordLineId)
+    const targetActionIndex = this.recordDocument.getLinePrefixActions(nextTarget.recordLineId).length
+      + nextTarget.recordActionIndex
+    this.recordDocument.setActiveLine(nextTarget.recordLineId)
     this.applyRecordActionPath(actions, targetActionIndex)
     return true
   }

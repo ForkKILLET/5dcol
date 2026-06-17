@@ -536,6 +536,37 @@ export class RecordDocument {
     this.deleteEmptyLineTree(this.activeLineId)
   }
 
+  public deleteFutureAndResolveCursorTarget(lineId: number, actionIndex: number): RecordCursorTarget | null {
+    const line = this.lines.get(lineId)
+    if (! line) return null
+
+    const localActionIndex = Scalar.clampInteger(
+      actionIndex,
+      0,
+      line.actions.length,
+    )
+    if (! this.hasFutureAt(line.id, localActionIndex)) return null
+
+    const nextTarget = line.parent && localActionIndex === 0
+      ? {
+          recordLineId: line.parent.lineId,
+          recordActionIndex: line.parent.beforeActionIndex,
+        }
+      : {
+          recordLineId: line.id,
+          recordActionIndex: localActionIndex,
+        }
+
+    this.deleteActiveEmptyLineIfLeaving(nextTarget.recordLineId)
+    this.deleteFuture(line.id, localActionIndex)
+    if (line.parent && localActionIndex === 0 && this.isEmptyLineTree(line.id)) {
+      this.deleteLineTree(line.id)
+    }
+    if (! this.lines.has(this.activeLineId)) this.activeLineId = nextTarget.recordLineId
+    this.pruneAnnotations()
+    return nextTarget
+  }
+
   public appendActionToActiveLine(action: Action, globalActionIndex: number): Action[] {
     const line = this.getActiveLine()
     const localActionIndex = this.getActiveLineLocalActionIndex(globalActionIndex)
