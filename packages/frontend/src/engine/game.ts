@@ -916,6 +916,12 @@ export class Game extends Disposable(Empty) {
     this.pointer.clickRecordFocus = recordFocusClick
     this.pointer.clickShiftKey = e.shiftKey
     this.pointer.clickDeselectPiece = this.pointer.clickButton === 2 && this.selectedPiece !== null
+    if (this.pointer.clickDeselectPiece) {
+      this.pendingArrowMarkerStart = null
+      this.dragArrowMarkerStart = null
+      this.cancelPieceSelection()
+      return
+    }
     if (this.pointer.clickButton === 2 && ! this.pointer.clickDeselectPiece) {
       this.dragArrowMarkerStart = this.getRecordMarkerSquareAtScreen(screen)
     }
@@ -1757,6 +1763,10 @@ export class Game extends Disposable(Empty) {
   }
 
   private handleRecordMarkerClick(screen: Vec2): boolean {
+    if (this.selectedPiece) {
+      this.cancelPieceSelection()
+      return true
+    }
     if (! this.canEditRecordMarkers()) return false
     const square = this.getRecordMarkerSquareAtScreen(screen)
     if (! square) return false
