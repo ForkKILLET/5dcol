@@ -603,36 +603,38 @@ function setStudyActionMenuOpen(id: string, open: boolean) {
           @remove="removeManualStudyServer"
         >
           <template #rooms>
-            <div
-              v-if="server.studies.length === 0"
-              class="study-empty"
-            >
-              {{ t('study.noOnlineRooms') }}
-            </div>
-            <template v-else>
-              <GameListItem
-                v-for="study in server.studies"
-                :key="study.id"
-                border
+            <div class="study-online-room-list">
+              <div
+                v-if="server.studies.length === 0"
+                class="study-online-empty"
               >
-                <template #title>
-                  <span>{{ study.name }}</span>
-                </template>
-                <template #meta>
-                  <span>{{ getStudyMeta(study) }}</span>
-                  <span>{{ getStudyMemberMeta(study) }}</span>
-                  <span>{{ getStudyVisibilityMeta(study) }}</span>
-                </template>
-                <template #actions>
-                  <GameButton
-                    size="small"
-                    @click="openOnlineStudy(server, study)"
-                  >
-                    <span>{{ t('button.open') }}</span>
-                  </GameButton>
-                </template>
-              </GameListItem>
-            </template>
+                {{ t('study.noOnlineRooms') }}
+              </div>
+              <template v-else>
+                <GameListItem
+                  v-for="(study, studyIndex) in server.studies"
+                  :key="study.id"
+                  :border="studyIndex > 0"
+                >
+                  <template #title>
+                    <span>{{ study.name }}</span>
+                  </template>
+                  <template #meta>
+                    <span>{{ getStudyMeta(study) }}</span>
+                    <span>{{ getStudyMemberMeta(study) }}</span>
+                    <span>{{ getStudyVisibilityMeta(study) }}</span>
+                  </template>
+                  <template #actions>
+                    <GameButton
+                      size="small"
+                      @click="openOnlineStudy(server, study)"
+                    >
+                      <span>{{ t('button.open') }}</span>
+                    </GameButton>
+                  </template>
+                </GameListItem>
+              </template>
+            </div>
           </template>
         </OnlineServerItem>
       </div>
@@ -697,6 +699,18 @@ function setStudyActionMenuOpen(id: string, open: boolean) {
 .study-empty {
   color: var(--button-text-color);
   font-size: calc(var(--button-font-size) * 0.72);
+}
+
+.study-online-empty {
+  font-size: 14px;
+  line-height: 1.25;
+  opacity: 0.78;
+}
+
+.study-online-room-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 0.5);
 }
 
 .study-list :deep(.game-list-item__meta > span + span::before) {

@@ -991,7 +991,7 @@ function submitImportDialog() {
     }
     importFiveDPGNGlyphTemplates(text)
     closeDialog(false)
-    startStudyGame(result.study, { kind: 'local' })
+    startStudyGame(result.study, { kind: 'local' }, { playSound: false })
     return
   }
 
@@ -1279,10 +1279,14 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   syncGameViewportInsets()
 }
 
-function startStudyGame(study: StudyDocument, source: StudyOpenSource = { kind: 'local' }) {
+function startStudyGame(
+  study: StudyDocument,
+  source: StudyOpenSource = { kind: 'local' },
+  { playSound = true }: { playSound?: boolean } = {},
+) {
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
-  playUISound()
+  if (playSound) playUISound()
   const workspace = getStudyWorkspace(study.id)
   activeLocalVersus.value = null
   activeLocalStudy.value = null
@@ -1345,6 +1349,10 @@ function startStudyGame(study: StudyDocument, source: StudyOpenSource = { kind: 
   }
   game.loadStudyDocument(study, { workspace: source.kind === 'local' ? workspace : undefined })
   syncGameViewportInsets()
+}
+
+function openStudyFromPage(study: StudyDocument, source?: StudyOpenSource) {
+  startStudyGame(study, source, { playSound: false })
 }
 
 function startOnlineGame(serverAddress: string, state: MatchGameState) {
@@ -2289,7 +2297,7 @@ watch([exportFormat, exportMode], () => {
           :active="mainMenuMode === 'study'"
           @close="closeStudyPage"
           @import-record="openImportDialog('local-study')"
-          @open-study="startStudyGame"
+          @open-study="openStudyFromPage"
           @ui-sound="playUISound"
         />
       </section>
