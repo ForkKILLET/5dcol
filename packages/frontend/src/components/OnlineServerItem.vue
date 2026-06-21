@@ -24,6 +24,7 @@ const props = defineProps<{
   expanded: boolean
   manual: boolean
   dynamicMeta: string[]
+  createLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -107,7 +108,7 @@ function formatBuildDate(buildDate: string) {
           size="small"
           @click="emit('createRoom', server)"
         >
-          <span>{{ t('match.createRoom') }}</span>
+          <span>{{ createLabel ?? t('match.createRoom') }}</span>
         </GameButton>
         <GameButton
           v-if="server.status !== 'connected' && server.status !== 'connecting'"

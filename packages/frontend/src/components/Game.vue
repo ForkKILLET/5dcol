@@ -99,7 +99,9 @@ type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'shar
 type GameImportFormat = 'pgn' | 'fen'
 type GameImportTarget = 'active-game' | 'local-versus' | 'local-study'
 type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'fiveDPGN'
-type StudyOpenSource = { kind: 'local' }
+type StudyOpenSource =
+  | { kind: 'local' }
+  | { kind: 'online', serverAddress: string, roomId: string, version: number }
 type MainMenuMode = 'home' | 'versus' | 'study'
 const dialogStack = useDialogStack<DialogMode>()
 const dialogMode = dialogStack.current
@@ -126,6 +128,7 @@ const gameStarted = ref(false)
 const mainMenuMode = ref<MainMenuMode>('home')
 const activeLocalVersus = ref<LocalVersusSummary | null>(null)
 const activeLocalStudy = ref<{ id: string; title: string } | null>(null)
+const activeOnlineStudy = ref<{ serverAddress: string; roomId: string; version: number; title: string } | null>(null)
 const coarsePointerQuery = window.matchMedia('(hover: none) and (pointer: coarse)')
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
 const initialViewportSize = getViewportSize()
@@ -1232,6 +1235,7 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   const localVersus = localGame ?? createLocalVersusGame(t('versus.untitled'))
   activeLocalVersus.value = localVersus
   activeLocalStudy.value = null
+  activeOnlineStudy.value = null
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1267,13 +1271,14 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   syncGameViewportInsets()
 }
 
-function startStudyGame(study: StudyDocument, _source: StudyOpenSource = { kind: 'local' }) {
+function startStudyGame(study: StudyDocument, source: StudyOpenSource = { kind: 'local' }) {
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
   playUISound()
   const workspace = getStudyWorkspace(study.id)
   activeLocalVersus.value = null
   activeLocalStudy.value = null
+  activeOnlineStudy.value = null
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1303,7 +1308,7 @@ function startStudyGame(study: StudyDocument, _source: StudyOpenSource = { kind:
     getRecordGlyphColor,
     canForfeitGame: () => false,
     canFinishGame: () => false,
-    initialWorkspace: workspace,
+    initialWorkspace: source.kind === 'local' ? workspace : undefined,
     onWorkspaceChange: updateWorkspace,
     onRecordMoveFocusRequest: focusRecordMoveFromBoard,
   })
@@ -1311,8 +1316,18 @@ function startStudyGame(study: StudyDocument, _source: StudyOpenSource = { kind:
   mainMenuMode.value = 'home'
   syncGameInputState()
   game.start()
-  activeLocalStudy.value = { id: study.id, title: study.title }
-  game.loadStudyDocument(study, { workspace })
+  if (source.kind === 'local') {
+    activeLocalStudy.value = { id: study.id, title: study.title }
+  }
+  else {
+    activeOnlineStudy.value = {
+      serverAddress: source.serverAddress,
+      roomId: source.roomId,
+      version: source.version,
+      title: study.title,
+    }
+  }
+  game.loadStudyDocument(study, { workspace: source.kind === 'local' ? workspace : undefined })
   syncGameViewportInsets()
 }
 
@@ -1321,6 +1336,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
 
   activeLocalStudy.value = null
   activeLocalVersus.value = null
+  activeOnlineStudy.value = null
   if (state.session) storeOnlineSession(serverAddress, state)
   stopOnlinePolling()
   onlineRoomRef.value = {
@@ -1789,6 +1805,7 @@ function returnToMainMenu(
   pendingLocalActionsSignature = ''
   activeLocalVersus.value = null
   activeLocalStudy.value = null
+  activeOnlineStudy.value = null
   game?.dispose()
   game = null
   toolbarButtons.value = []
