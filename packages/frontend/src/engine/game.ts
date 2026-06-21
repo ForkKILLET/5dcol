@@ -2248,7 +2248,7 @@ export class Game extends Disposable(Empty) {
     const options: FiveDPGN.ExportOptions = {
       ...this.getFiveDPGNExportOptions(),
       initialMultiverse: this.initialMultiverse,
-      studyAnnotations: this.recordDocument.serializeAnnotations(),
+      studyAnnotations: this.recordDocument.serializeFiveDPGNAnnotations(),
     }
     return {
       text: format === 'fen'

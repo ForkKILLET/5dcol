@@ -1,5 +1,5 @@
 import { Coord, FiveDPGN, Player, type Action, type Move, type Multiverse } from '@5dcol/core'
-import { type RecordAnnotation, type RecordDocument, type RecordLine } from '@engine/recordTree'
+import { type RecordDocument, type RecordLine } from '@engine/recordTree'
 
 export interface GameRecordAction {
   kind: 'action'
@@ -273,13 +273,7 @@ const getActionComments = (
   actionIndex: number,
   position: 'before' | 'after',
 ): GameRecordComment[] => (
-  document.getAnnotationsForTarget({
-    type: 'action',
-    lineId,
-    actionIndex,
-    position,
-  })
-    .filter(isCommentAnnotation)
+  document.getActionComments(lineId, actionIndex, position)
     .map(annotation => ({
       id: annotation.id,
       text: annotation.text,
@@ -295,28 +289,10 @@ const getMoveGlyphs = (
   actionIndex: number,
   moveIndex: number,
 ): GameRecordGlyph[] => (
-  document.getAnnotationsForTarget({
-    type: 'move',
-    lineId,
-    actionIndex,
-    moveIndex,
-  })
-    .filter(isGlyphAnnotation)
+  document.getMoveGlyphAnnotations(lineId, actionIndex, moveIndex)
     .map(annotation => ({
       id: annotation.id,
       glyph: annotation.glyph,
       authorId: annotation.authorId,
     }))
-)
-
-const isCommentAnnotation = (
-  annotation: RecordAnnotation,
-): annotation is Extract<RecordAnnotation, { type: 'comment' }> => (
-  annotation.type === 'comment'
-)
-
-const isGlyphAnnotation = (
-  annotation: RecordAnnotation,
-): annotation is Extract<RecordAnnotation, { type: 'glyph' }> => (
-  annotation.type === 'glyph'
 )

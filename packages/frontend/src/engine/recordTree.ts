@@ -78,10 +78,12 @@ export class RecordDocument {
   }
 
   public static fromFiveDPGN(input: string): RecordDocument {
-    return RecordDocument.fromActionTree(
-      stripActionTreeAnnotations(FiveDPGN.parseActionTree(input)),
-      FiveDPGN.parseStudyAnnotations(input) as RecordAnnotation[],
-    )
+    const document = RecordDocument.fromActionTree(stripActionTreeAnnotations(FiveDPGN.parseActionTree(input)))
+    document.replaceAnnotations([
+      ...document.annotations,
+      ...document.toRecordAnnotations(FiveDPGN.parseStudyAnnotations(input)),
+    ])
+    return document
   }
 
   public static fromStudyDocument(studyDocument: StudyDocument): RecordDocument | null {
@@ -198,6 +200,12 @@ export class RecordDocument {
     return this.getAnnotations()
   }
 
+  public serializeFiveDPGNAnnotations(): FiveDPGN.StudyAnnotation[] {
+    return this.annotations
+      .map(annotation => this.toFiveDPGNAnnotation(annotation))
+      .filter((annotation): annotation is FiveDPGN.StudyAnnotation => annotation !== null)
+  }
+
   public toStudyDocument({
     id,
     title,
@@ -279,6 +287,38 @@ export class RecordDocument {
     return this.getMoveGlyphTexts(lineId, actionIndex, moveIndex)
   }
 
+  public getActionComments(
+    lineId: number,
+    actionIndex: number,
+    position: 'before' | 'after',
+  ): Array<Extract<RecordAnnotation, { type: 'comment' }>> {
+    const target = this.createActionAnnotationTarget(lineId, actionIndex, position)
+    if (! target) return []
+
+    return this.annotations
+      .filter((annotation): annotation is Extract<RecordAnnotation, { type: 'comment' }> => (
+        annotation.type === 'comment'
+          && isSameRecordAnnotationTarget(annotation.target, target)
+      ))
+      .map(cloneAnnotation)
+  }
+
+  public getMoveGlyphAnnotations(
+    lineId: number,
+    actionIndex: number,
+    moveIndex: number,
+  ): Array<Extract<RecordAnnotation, { type: 'glyph' }>> {
+    const target = this.createMoveAnnotationTarget(lineId, actionIndex, moveIndex)
+    if (! target) return []
+
+    return this.annotations
+      .filter((annotation): annotation is Extract<RecordAnnotation, { type: 'glyph' }> => (
+        annotation.type === 'glyph'
+          && isSameRecordAnnotationTarget(annotation.target, target)
+      ))
+      .map(cloneAnnotation)
+  }
+
   public replaceAnnotations(annotations: RecordAnnotation[]) {
     this.annotations = parseStoredRecordAnnotations(annotations)
     this.pruneAnnotations()
@@ -306,13 +346,8 @@ export class RecordDocument {
       authorId?: string
     } = {},
   ): boolean {
-    const target: RecordAnnotationTarget = {
-      type: 'action',
-      lineId,
-      actionIndex,
-      position,
-    }
-    if (! this.isAnnotationTargetValid(target)) return false
+    const target = this.createActionAnnotationTarget(lineId, actionIndex, position)
+    if (! target) return false
 
     this.annotations = this.annotations.filter(annotation => ! (
       annotation.type === 'comment'
@@ -324,7 +359,7 @@ export class RecordDocument {
       .filter(text => text.length > 0)
       .forEach((text, index) => {
         this.annotations.push({
-          id: `comment:${lineId}:${actionIndex}:${position}:${now}:${index}`,
+          id: `comment:${target.actionId}:${position}:${now}:${index}`,
           type: 'comment',
           target,
           authorId,
@@ -347,13 +382,8 @@ export class RecordDocument {
       authorId?: string
     } = {},
   ): boolean {
-    const target: RecordAnnotationTarget = {
-      type: 'move',
-      lineId,
-      actionIndex,
-      moveIndex,
-    }
-    if (! this.isAnnotationTargetValid(target)) return false
+    const target = this.createMoveAnnotationTarget(lineId, actionIndex, moveIndex)
+    if (! target) return false
 
     this.annotations = this.annotations.filter(annotation => ! (
       annotation.type === 'glyph'
@@ -364,7 +394,7 @@ export class RecordDocument {
       .filter(glyph => glyph.length > 0)
       .forEach((glyph, index) => {
         this.annotations.push({
-          id: `glyph:${lineId}:${actionIndex}:${moveIndex}:${Date.now()}:${index}`,
+          id: `glyph:${target.actionId}:${moveIndex}:${Date.now()}:${index}`,
           type: 'glyph',
           target,
           authorId,
@@ -821,16 +851,14 @@ export class RecordDocument {
     position: 'before' | 'after',
     comments: readonly string[] | undefined,
   ) {
+    const target = this.createActionAnnotationTarget(lineId, actionIndex, position)
+    if (! target) return
+
     comments?.forEach((text, index) => {
       this.annotations.push({
-        id: `5dpgn-comment:${lineId}:${actionIndex}:${position}:${index}`,
+        id: `5dpgn-comment:${target.actionId}:${position}:${index}`,
         type: 'comment',
-        target: {
-          type: 'action',
-          lineId,
-          actionIndex,
-          position,
-        },
+        target,
         text,
         createdAt: 0,
         updatedAt: 0,
@@ -844,16 +872,14 @@ export class RecordDocument {
     moveGlyphs: readonly (readonly string[] | undefined)[] | undefined,
   ) {
     moveGlyphs?.forEach((glyphs, moveIndex) => {
+      const target = this.createMoveAnnotationTarget(lineId, actionIndex, moveIndex)
+      if (! target) return
+
       glyphs?.forEach((glyph, glyphIndex) => {
         this.annotations.push({
-          id: `5dpgn-glyph:${lineId}:${actionIndex}:${moveIndex}:${glyphIndex}`,
+          id: `5dpgn-glyph:${target.actionId}:${moveIndex}:${glyphIndex}`,
           type: 'glyph',
-          target: {
-            type: 'move',
-            lineId,
-            actionIndex,
-            moveIndex,
-          },
+          target,
           glyph,
         })
       })
@@ -990,35 +1016,132 @@ export class RecordDocument {
     return [...this.lines.values()].find(line => line.branchId === branchId)
   }
 
+  private getActionIdAt(lineId: number, actionIndex: number): string | null {
+    return this.lines.get(lineId)?.actionIds[actionIndex] ?? null
+  }
+
+  private getActionTargetById(actionId: string): { line: RecordLine, actionIndex: number, action: Action } | null {
+    for (const line of this.lines.values()) {
+      const actionIndex = line.actionIds.indexOf(actionId)
+      const action = actionIndex >= 0 ? line.actions[actionIndex] : undefined
+      if (action) return { line, actionIndex, action }
+    }
+    return null
+  }
+
+  private createActionAnnotationTarget(
+    lineId: number,
+    actionIndex: number,
+    position: 'before' | 'after',
+  ): Extract<RecordAnnotationTarget, { type: 'action' }> | null {
+    const actionId = this.getActionIdAt(lineId, actionIndex)
+    return actionId
+      ? {
+          type: 'action',
+          actionId,
+          position,
+        }
+      : null
+  }
+
+  private createMoveAnnotationTarget(
+    lineId: number,
+    actionIndex: number,
+    moveIndex: number,
+  ): Extract<RecordAnnotationTarget, { type: 'move' }> | null {
+    const actionId = this.getActionIdAt(lineId, actionIndex)
+    return actionId
+      ? {
+          type: 'move',
+          actionId,
+          moveIndex,
+        }
+      : null
+  }
+
+  private toRecordAnnotations(annotations: readonly FiveDPGN.StudyAnnotation[]): RecordAnnotation[] {
+    return annotations
+      .map(annotation => this.toRecordAnnotation(annotation))
+      .filter((annotation): annotation is RecordAnnotation => annotation !== null)
+  }
+
+  private toRecordAnnotation(annotation: FiveDPGN.StudyAnnotation): RecordAnnotation | null {
+    if (annotation.type === 'comment') {
+      const target = this.createActionAnnotationTarget(
+        annotation.target.lineId,
+        annotation.target.actionIndex,
+        annotation.target.position,
+      )
+      return target
+        ? {
+            ...annotation,
+            target,
+          }
+        : null
+    }
+
+    if (annotation.type === 'glyph') {
+      const target = this.createMoveAnnotationTarget(
+        annotation.target.lineId,
+        annotation.target.actionIndex,
+        annotation.target.moveIndex,
+      )
+      return target
+        ? {
+            ...annotation,
+            target,
+          }
+        : null
+    }
+
+    return annotation as RecordAnnotation
+  }
+
+  private toFiveDPGNAnnotation(annotation: RecordAnnotation): FiveDPGN.StudyAnnotation | null {
+    if (annotation.type === 'comment') {
+      const target = this.getActionTargetById(annotation.target.actionId)
+      return target
+        ? {
+            ...annotation,
+            target: {
+              type: 'action',
+              lineId: target.line.id,
+              actionIndex: target.actionIndex,
+              position: annotation.target.position,
+            },
+          }
+        : null
+    }
+
+    if (annotation.type === 'glyph') {
+      const target = this.getActionTargetById(annotation.target.actionId)
+      return target
+        ? {
+            ...annotation,
+            target: {
+              type: 'move',
+              lineId: target.line.id,
+              actionIndex: target.actionIndex,
+              moveIndex: annotation.target.moveIndex,
+            },
+          }
+        : null
+    }
+
+    return annotation as FiveDPGN.StudyAnnotation
+  }
+
   private getActionCommentTexts(
     lineId: number,
     actionIndex: number,
     position: 'before' | 'after',
   ): string[] {
-    return this.annotations
-      .filter((annotation): annotation is Extract<RecordAnnotation, { type: 'comment' }> => (
-        annotation.type === 'comment'
-          && isSameRecordAnnotationTarget(annotation.target, {
-            type: 'action',
-            lineId,
-            actionIndex,
-            position,
-          })
-      ))
+    return this.getActionComments(lineId, actionIndex, position)
       .map(annotation => annotation.text)
   }
 
   private getMoveGlyphTexts(lineId: number, actionIndex: number, moveIndex: number): string[] {
-    return this.annotations
-      .filter((annotation): annotation is Extract<RecordAnnotation, { type: 'glyph' }> => (
-        annotation.type === 'glyph'
-          && isSameRecordAnnotationTarget(annotation.target, {
-            type: 'move',
-            lineId,
-            actionIndex,
-            moveIndex,
-          })
-      ))
+    return this.getMoveGlyphAnnotations(lineId, actionIndex, moveIndex)
       .map(annotation => annotation.glyph)
   }
 
@@ -1042,17 +1165,11 @@ export class RecordDocument {
       case 'arrow':
         return this.getLineByBranchId(target.branchId) !== undefined
       case 'action': {
-        const line = this.lines.get(target.lineId)
-        if (! line) return false
-        if (target.position === 'before') return isIntegerInRange(target.actionIndex, 0, line.actions.length)
-        return isIntegerInRange(target.actionIndex, 0, line.actions.length - 1)
+        return this.getActionTargetById(target.actionId) !== null
       }
       case 'move': {
-        const line = this.lines.get(target.lineId)
-        if (! line) return false
-        if (! isIntegerInRange(target.actionIndex, 0, line.actions.length - 1)) return false
-        const action = line.actions[target.actionIndex]
-        return Boolean(action && isIntegerInRange(target.moveIndex, 0, action.moves.length - 1))
+        const targetAction = this.getActionTargetById(target.actionId)
+        return Boolean(targetAction && isIntegerInRange(target.moveIndex, 0, targetAction.action.moves.length - 1))
       }
     }
   }
@@ -1073,13 +1190,11 @@ export const isSameRecordAnnotationTarget = (
         && a.actionIndex === b.actionIndex
     case 'action':
       return b.type === 'action'
-        && a.lineId === b.lineId
-        && a.actionIndex === b.actionIndex
+        && a.actionId === b.actionId
         && a.position === b.position
     case 'move':
       return b.type === 'move'
-        && a.lineId === b.lineId
-        && a.actionIndex === b.actionIndex
+        && a.actionId === b.actionId
         && a.moveIndex === b.moveIndex
     case 'square':
       return b.type === 'square'

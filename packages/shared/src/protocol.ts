@@ -382,14 +382,12 @@ export type StudyPosition = z.infer<typeof StudyPositionSchema>
 export const RecordAnnotationTargetSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('action'),
-    lineId: z.number().int().nonnegative(),
-    actionIndex: z.number().int().nonnegative(),
+    actionId: z.string(),
     position: z.enum(['before', 'after']),
   }),
   z.object({
     type: z.literal('move'),
-    lineId: z.number().int().nonnegative(),
-    actionIndex: z.number().int().nonnegative(),
+    actionId: z.string(),
     moveIndex: z.number().int().nonnegative(),
   }),
   z.object({
@@ -421,8 +419,7 @@ export type RecordAnnotationTarget = z.infer<typeof RecordAnnotationTargetSchema
 
 export const RecordActionAnnotationTargetSchema = z.object({
   type: z.literal('action'),
-  lineId: z.number().int().nonnegative(),
-  actionIndex: z.number().int().nonnegative(),
+  actionId: z.string(),
   position: z.enum(['before', 'after']),
 })
 
@@ -430,8 +427,7 @@ export type RecordActionAnnotationTarget = z.infer<typeof RecordActionAnnotation
 
 export const RecordMoveAnnotationTargetSchema = z.object({
   type: z.literal('move'),
-  lineId: z.number().int().nonnegative(),
-  actionIndex: z.number().int().nonnegative(),
+  actionId: z.string(),
   moveIndex: z.number().int().nonnegative(),
 })
 

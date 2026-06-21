@@ -1299,11 +1299,8 @@ function applyStudyPatch(room: StudyRoom, patch: StudyPatch) {
         }))
       room.document.actions = room.document.actions
         .filter(action => ! removedActionIds.has(action.id))
-      room.document.annotations = room.document.annotations.filter((annotation) => {
-        if (annotation.type !== 'marker') return true
-        if (annotation.target.type !== 'square' && annotation.target.type !== 'arrow') return true
-        return ! removedBranchIds.has(annotation.target.branchId)
-      })
+      room.document.annotations = room.document.annotations
+        .filter(annotation => ! isStudyAnnotationRemovedByFuture(annotation, removedActionIds, removedBranchIds))
       room.document.updatedAt = now
       break
     }
@@ -1330,6 +1327,24 @@ function applyStudyPatch(room: StudyRoom, patch: StudyPatch) {
   }
   room.version += 1
   room.updatedAt = now
+}
+
+function isStudyAnnotationRemovedByFuture(
+  annotation: StudyDocument['annotations'][number],
+  removedActionIds: ReadonlySet<string>,
+  removedBranchIds: ReadonlySet<string>,
+): boolean {
+  switch (annotation.target.type) {
+    case 'action':
+    case 'move':
+      return removedActionIds.has(annotation.target.actionId)
+    case 'square':
+    case 'arrow':
+      return removedBranchIds.has(annotation.target.branchId)
+    case 'cursor':
+    case 'line':
+      return false
+  }
 }
 
 function resolveStudyPosition(
