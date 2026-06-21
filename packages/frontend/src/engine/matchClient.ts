@@ -1,22 +1,32 @@
 import {
   CreateMatchRoomResponseSchema,
+  CreateStudyRoomResponseSchema,
   ForfeitMatchRoomResponseSchema,
   GetMatchRoomStateResponseSchema,
   GetMatchSessionResponseSchema,
   GetMatchServerStatsResponseSchema,
+  GetStudyRoomStateResponseSchema,
   JoinMatchRoomResponseSchema,
+  JoinStudyRoomResponseSchema,
   LeaveMatchRoomResponseSchema,
   MatchRoomsResponseSchema,
   MatchServerInfoSchema,
+  StudyRoomsResponseSchema,
   SubmitMatchActionResponseSchema,
   parseMatchRoomEvent,
+  parseStudyRoomEvent,
 } from '@5dcol/shared/protocol'
 import type {
   CreateMatchRoomRequest,
   CreateMatchRoomResponse,
+  CreateStudyRoomRequest,
+  CreateStudyRoomResponse,
   ForfeitMatchRoomRequest,
+  GetStudyRoomStateResponse,
   JoinMatchRoomRequest,
   JoinMatchRoomResponse,
+  JoinStudyRoomRequest,
+  JoinStudyRoomResponse,
   LeaveMatchRoomRequest,
   MatchGameState,
   MatchRoomClientEvent,
@@ -24,6 +34,12 @@ import type {
   MatchRoom,
   MatchServerStats,
   MatchServerInfo,
+  StudyCommand,
+  StudyFollowMode,
+  StudyPosition,
+  StudyRoomClientEvent,
+  StudyRoomEvent,
+  StudyRoom,
   SubmitMatchActionRequest,
 } from '@5dcol/shared/protocol'
 import type { Move } from '@5dcol/core'
@@ -45,6 +61,7 @@ export interface MatchServerState {
 }
 
 export type MatchRoomEventListener = (event: MatchRoomEvent) => void
+export type StudyRoomEventListener = (event: StudyRoomEvent) => void
 export interface MatchRoomStateSubscriptionOptions {
   onOpen?: () => void
   onError?: () => void
@@ -52,6 +69,12 @@ export interface MatchRoomStateSubscriptionOptions {
 export interface MatchRoomStateSubscription {
   clearPendingAction(): void
   sendPendingAction(moves: Move[]): void
+  unsubscribe(): void
+}
+export interface StudyRoomStateSubscription {
+  sendCommand(baseVersion: number, command: StudyCommand): void
+  sendPresence(cursor: StudyPosition, mode: StudyFollowMode, followingUserId?: string): void
+  sendChatMessage(text: string): void
   unsubscribe(): void
 }
 
@@ -155,6 +178,37 @@ export class MatchClient {
     return response.state
   }
 
+  async getStudies(options: { userId?: string | null } = {}): Promise<StudyRoom[]> {
+    const query = new URLSearchParams()
+    if (options.userId) query.set('userId', options.userId)
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    const response = StudyRoomsResponseSchema.parse(await this.request(`/studies${suffix}`))
+    return response.rooms
+  }
+
+  async createStudy(request: CreateStudyRoomRequest = {}): Promise<CreateStudyRoomResponse> {
+    return CreateStudyRoomResponseSchema.parse(await this.request('/studies', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    }))
+  }
+
+  async joinStudy(studyId: string, request: JoinStudyRoomRequest = {}): Promise<JoinStudyRoomResponse> {
+    return JoinStudyRoomResponseSchema.parse(await this.request(
+      `/studies/${encodeURIComponent(studyId)}/join`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      },
+    ))
+  }
+
+  async getStudyState(studyId: string): Promise<GetStudyRoomStateResponse> {
+    return GetStudyRoomStateResponseSchema.parse(await this.request(
+      `/studies/${encodeURIComponent(studyId)}/state`,
+    ))
+  }
+
   subscribeRoomState(
     roomId: string,
     sessionId: string | null,
@@ -194,6 +248,51 @@ export class MatchClient {
     }
   }
 
+  subscribeStudyState(
+    studyId: string,
+    userId: string | null,
+    listener: StudyRoomEventListener,
+    options: MatchRoomStateSubscriptionOptions = {},
+  ): StudyRoomStateSubscription {
+    const query = new URLSearchParams()
+    if (userId) query.set('userId', userId)
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    const socket = new WebSocket(
+      this.getWebSocketUrl(`/studies/${encodeURIComponent(studyId)}/events${suffix}`),
+    )
+    socket.addEventListener('message', (event) => {
+      listener(parseStudyRoomEvent(event.data as string))
+    })
+    socket.addEventListener('open', () => {
+      options.onOpen?.()
+    })
+    socket.addEventListener('close', () => {
+      options.onError?.()
+    })
+    socket.addEventListener('error', () => {
+      options.onError?.()
+    })
+    return {
+      sendCommand(baseVersion, command) {
+        sendStudyClientEvent(socket, { type: 'command', baseVersion, command })
+      },
+      sendPresence(cursor, mode, followingUserId) {
+        sendStudyClientEvent(socket, {
+          type: 'presence',
+          cursor,
+          mode,
+          ...(followingUserId ? { followingUserId } : {}),
+        })
+      },
+      sendChatMessage(text) {
+        sendStudyClientEvent(socket, { type: 'chat-message', text })
+      },
+      unsubscribe() {
+        socket.close()
+      },
+    }
+  }
+
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch(this.getUrl(path), {
       ...init,
@@ -221,6 +320,11 @@ export class MatchClient {
 }
 
 function sendRoomClientEvent(socket: WebSocket, event: MatchRoomClientEvent) {
+  if (socket.readyState !== WebSocket.OPEN) return
+  socket.send(JSON.stringify(event))
+}
+
+function sendStudyClientEvent(socket: WebSocket, event: StudyRoomClientEvent) {
   if (socket.readyState !== WebSocket.OPEN) return
   socket.send(JSON.stringify(event))
 }
