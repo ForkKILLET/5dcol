@@ -462,3 +462,213 @@ export const StudyDocumentSchema = z.object({
 })
 
 export type StudyDocument = z.infer<typeof StudyDocumentSchema>
+
+export const RoomKindSchema = z.enum(['match', 'study'])
+export const StudyRoomVisibilitySchema = z.enum(['public', 'private'])
+export const StudyMemberRoleSchema = z.enum(['owner', 'moderator', 'editor', 'viewer'])
+export const StudyFollowModeSchema = z.enum(['free', 'following', 'broadcast'])
+
+export type RoomKind = z.infer<typeof RoomKindSchema>
+export type StudyRoomVisibility = z.infer<typeof StudyRoomVisibilitySchema>
+export type StudyMemberRole = z.infer<typeof StudyMemberRoleSchema>
+export type StudyFollowMode = z.infer<typeof StudyFollowModeSchema>
+
+export const StudyMemberSchema = z.object({
+  userId: z.string(),
+  nickname: z.string().nullable(),
+  role: StudyMemberRoleSchema,
+  color: z.string().optional(),
+  joinedAt: z.number(),
+})
+
+export type StudyMember = z.infer<typeof StudyMemberSchema>
+
+export const StudyPresenceSchema = z.object({
+  userId: z.string(),
+  nickname: z.string().nullable(),
+  cursor: RecordCursorSchema,
+  mode: StudyFollowModeSchema,
+  followingUserId: z.string().optional(),
+  updatedAt: z.number(),
+})
+
+export type StudyPresence = z.infer<typeof StudyPresenceSchema>
+
+export const StudyRoomSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  ownerUserId: z.string(),
+  visibility: StudyRoomVisibilitySchema,
+  document: StudyDocumentSchema,
+  members: z.array(StudyMemberSchema),
+  version: z.number().int().nonnegative(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+})
+
+export type StudyRoom = z.infer<typeof StudyRoomSchema>
+
+export const ChatMessageSchema = z.object({
+  id: z.string(),
+  roomKind: RoomKindSchema,
+  roomId: z.string(),
+  userId: z.string(),
+  nickname: z.string().nullable(),
+  text: z.string(),
+  createdAt: z.number(),
+})
+
+export type ChatMessage = z.infer<typeof ChatMessageSchema>
+
+export const StudyPatchSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('replace-document'),
+    document: StudyDocumentSchema,
+  }),
+  z.object({
+    type: z.literal('upsert-annotation'),
+    annotation: StoredRecordAnnotationSchema,
+  }),
+  z.object({
+    type: z.literal('delete-annotation'),
+    annotationId: z.string(),
+  }),
+])
+
+export type StudyPatch = z.infer<typeof StudyPatchSchema>
+
+export const CreateStudyRoomRequestSchema = z.object({
+  userId: z.string().optional(),
+  name: z.string().optional(),
+  nickname: z.string().optional(),
+  document: StudyDocumentSchema.optional(),
+  visibility: StudyRoomVisibilitySchema.optional().default('private'),
+}).nullish()
+
+export type CreateStudyRoomRequest = NonNullable<z.input<typeof CreateStudyRoomRequestSchema>>
+export type ParsedCreateStudyRoomRequest = NonNullable<z.output<typeof CreateStudyRoomRequestSchema>>
+
+export const CreateStudyRoomResponseSchema = z.object({
+  user: MatchUserSchema,
+  room: StudyRoomSchema,
+})
+
+export type CreateStudyRoomResponse = z.infer<typeof CreateStudyRoomResponseSchema>
+
+export const StudyRoomsRequestQuerySchema = z.object({
+  userId: z.string().optional(),
+})
+
+export type StudyRoomsRequestQuery = z.infer<typeof StudyRoomsRequestQuerySchema>
+
+export const StudyRoomsResponseSchema = z.object({
+  rooms: z.array(StudyRoomSchema),
+})
+
+export type StudyRoomsResponse = z.infer<typeof StudyRoomsResponseSchema>
+
+export const GetStudyRoomStateResponseSchema = z.object({
+  room: StudyRoomSchema,
+  presence: z.array(StudyPresenceSchema),
+  chat: z.array(ChatMessageSchema),
+})
+
+export type GetStudyRoomStateResponse = z.infer<typeof GetStudyRoomStateResponseSchema>
+
+export const JoinStudyRoomRequestSchema = z.object({
+  userId: z.string().optional(),
+  nickname: z.string().optional(),
+}).nullish()
+
+export type JoinStudyRoomRequest = NonNullable<z.infer<typeof JoinStudyRoomRequestSchema>>
+
+export const JoinStudyRoomResponseSchema = z.object({
+  user: MatchUserSchema,
+  room: StudyRoomSchema,
+})
+
+export type JoinStudyRoomResponse = z.infer<typeof JoinStudyRoomResponseSchema>
+
+export const StudyDocumentPatchRequestSchema = z.object({
+  userId: z.string(),
+  baseVersion: z.number().int().nonnegative(),
+  patch: StudyPatchSchema,
+})
+
+export type StudyDocumentPatchRequest = z.infer<typeof StudyDocumentPatchRequestSchema>
+
+export const StudyStateEventSchema = z.object({
+  type: z.literal('study-state'),
+  room: StudyRoomSchema,
+  presence: z.array(StudyPresenceSchema),
+  chat: z.array(ChatMessageSchema),
+})
+
+export type StudyStateEvent = z.infer<typeof StudyStateEventSchema>
+
+export const StudyDocumentPatchEventSchema = z.object({
+  type: z.literal('document-patch'),
+  version: z.number().int().nonnegative(),
+  patch: StudyPatchSchema,
+})
+
+export type StudyDocumentPatchEvent = z.infer<typeof StudyDocumentPatchEventSchema>
+
+export const StudyPresenceEventSchema = z.object({
+  type: z.literal('presence'),
+  presence: StudyPresenceSchema,
+})
+
+export type StudyPresenceEvent = z.infer<typeof StudyPresenceEventSchema>
+
+export const ChatMessageEventSchema = z.object({
+  type: z.literal('chat-message'),
+  message: ChatMessageSchema,
+})
+
+export type ChatMessageEvent = z.infer<typeof ChatMessageEventSchema>
+
+export const StudyRoomEventSchema = z.discriminatedUnion('type', [
+  StudyStateEventSchema,
+  StudyDocumentPatchEventSchema,
+  StudyPresenceEventSchema,
+  ChatMessageEventSchema,
+])
+
+export type StudyRoomEvent = z.infer<typeof StudyRoomEventSchema>
+
+export const StudyRoomClientEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('document-patch'),
+    baseVersion: z.number().int().nonnegative(),
+    patch: StudyPatchSchema,
+  }),
+  z.object({
+    type: z.literal('presence'),
+    cursor: RecordCursorSchema,
+    mode: StudyFollowModeSchema,
+    followingUserId: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal('chat-message'),
+    text: z.string(),
+  }),
+])
+
+export type StudyRoomClientEvent = z.infer<typeof StudyRoomClientEventSchema>
+
+export const StoredStudyRoomsFileSchema = z.object({
+  version: z.literal(STUDY_STORAGE_VERSION),
+  rooms: z.array(StudyRoomSchema),
+  chatMessages: z.array(ChatMessageSchema),
+})
+
+export type StoredStudyRoomsFile = z.infer<typeof StoredStudyRoomsFileSchema>
+
+export function parseStudyRoomEvent(value: unknown): StudyRoomEvent {
+  const data = typeof value === 'string'
+    ? JSON.parse(value) as unknown
+    : value
+
+  return StudyRoomEventSchema.parse(data)
+}
