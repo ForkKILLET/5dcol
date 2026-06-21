@@ -1,4 +1,4 @@
-import { computed, reactive, ref, type Ref } from 'vue'
+import { computed, reactive, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { z } from 'zod'
 import {
@@ -14,10 +14,15 @@ import {
 } from '@5dcol/shared/protocol'
 import { MatchClient, type MatchServerState } from '@engine/matchClient'
 import {
-  DEFAULT_ONLINE_SERVERS,
   DEFAULT_ONLINE_SERVER_IDS,
+  addOnlineCustomServer,
+  getOnlineServerEntries,
   normalizeOnlineServerAddress,
+  onlineCustomServerAddresses,
+  onlineServerOrder,
+  setCachedOnlineServerInfo,
   useOnlineIdentity,
+  type OnlineServerEntry,
 } from './online'
 import { useStorageReactive, useStorageRef } from './storage'
 
@@ -25,7 +30,6 @@ const MATCH_ROOM_SETTINGS_STORAGE_KEY = '5dcol.matchRoomSettings'
 const LAST_ONLINE_GAME_STORAGE_KEY = '5dcol.lastOnlineGame'
 const MATCH_REFRESH_INTERVAL_MS = 5000
 
-const DEFAULT_MATCH_SERVERS = DEFAULT_ONLINE_SERVERS
 export const DEFAULT_MATCH_SERVER_IDS = DEFAULT_ONLINE_SERVER_IDS
 
 export interface StoredOnlineSession {
@@ -85,7 +89,6 @@ interface UseMatchOptions {
 
 let activeMatchOptions: UseMatchOptions | null = null
 const matchPanelMode = ref<'servers' | 'room-settings'>('servers')
-const manualMatchServerAddress = ref('')
 const matchRoomName = ref('')
 const { onlineNickname: matchNickname, onlineUserId: matchUserId } = useOnlineIdentity()
 const lastOnlineGame = useStorageRef<StoredOnlineGame | null>(
@@ -109,24 +112,14 @@ const matchRoomSettings = useStorageReactive<MatchRoomSettings>(
   },
 )
 const expandedMatchServerIds = reactive(new Set(DEFAULT_MATCH_SERVER_IDS))
-const matchServers = reactive<MatchServerState[]>(Object
-  .entries(DEFAULT_MATCH_SERVERS)
-  .map(([address, { name }]) => ({
-    id: address,
-    address,
-    name,
-    version: '',
-    commitHash: '',
-    buildDate: '',
-    pingMs: null,
-    stats: null,
-    status: 'idle',
-    rooms: [],
-    error: '',
-  }))
-)
+const matchServers = reactive<MatchServerState[]>(getOnlineServerEntries()
+  .map(entry => createMatchServerState(entry)))
 const sharedRoom = ref<SharedRoomState | null>(null)
 let matchRefreshTimer: number | null = null
+
+watch([onlineCustomServerAddresses, onlineServerOrder], () => {
+  syncMatchServerRegistry()
+}, { deep: true })
 
 const hasUnfinishedOnlineGame = computed(() => (
   lastOnlineGame.value !== null
@@ -210,10 +203,6 @@ export function useMatch(options?: UseMatchOptions) {
     return server.address.replace(/^https?:\/\//, '')
   }
 
-  function isManualMatchServer(server: MatchServerState) {
-    return ! DEFAULT_MATCH_SERVER_IDS.has(server.id)
-  }
-
   function toggleMatchServerExpanded(server: MatchServerState) {
     getOptions().playUISound()
     if (expandedMatchServerIds.has(server.id)) {
@@ -222,47 +211,6 @@ export function useMatch(options?: UseMatchOptions) {
     else {
       expandedMatchServerIds.add(server.id)
     }
-  }
-
-  function addManualMatchServer() {
-    const address = normalizeMatchServerAddress(manualMatchServerAddress.value)
-    if (! address) return
-
-    getOptions().playUISound()
-    manualMatchServerAddress.value = ''
-    const existing = matchServers.find(server => server.address === address)
-    if (existing) {
-      expandedMatchServerIds.add(existing.id)
-      void connectMatchServer(existing)
-      return
-    }
-
-    const server: MatchServerState = {
-      id: address,
-      address,
-      status: 'idle',
-      name: '',
-      version: '',
-      commitHash: '',
-      buildDate: '',
-      pingMs: null,
-      stats: null,
-      rooms: [],
-      error: '',
-    }
-    matchServers.push(server)
-    expandedMatchServerIds.add(server.id)
-    void connectMatchServer(server)
-  }
-
-  function removeManualMatchServer(server: MatchServerState) {
-    if (! isManualMatchServer(server)) return
-
-    getOptions().playUISound()
-    const index = matchServers.findIndex(item => item.id === server.id)
-    if (index >= 0) matchServers.splice(index, 1)
-    expandedMatchServerIds.delete(server.id)
-    if (customRoomServerId.value === server.id) customRoomServerId.value = null
   }
 
   function normalizeMatchServerAddress(address: string) {
@@ -318,6 +266,7 @@ export function useMatch(options?: UseMatchOptions) {
       server.version = info.version
       server.commitHash = info.commitHash
       server.buildDate = info.buildDate
+      setCachedOnlineServerInfo(server.address, info)
       server.pingMs = pingMs
       server.stats = stats
       server.rooms = rooms
@@ -355,6 +304,7 @@ export function useMatch(options?: UseMatchOptions) {
       server.version = info.version
       server.commitHash = info.commitHash
       server.buildDate = info.buildDate
+      setCachedOnlineServerInfo(server.address, info)
       server.pingMs = pingMs
       server.stats = stats
       server.rooms = rooms
@@ -503,22 +453,22 @@ export function useMatch(options?: UseMatchOptions) {
   }
 
   function getOrAddMatchServer(address: string): MatchServerState {
-    const existing = matchServers.find(server => server.address === address)
+    const normalized = normalizeMatchServerAddress(address)
+    addOnlineCustomServer(normalized)
+    syncMatchServerRegistry()
+
+    const existing = matchServers.find(server => server.address === normalized)
     if (existing) return existing
 
-    const server: MatchServerState = {
-      id: address,
-      address,
-      name: address.replace(/^https?:\/\//, ''),
-      version: '',
-      commitHash: '',
-      buildDate: '',
-      pingMs: null,
-      stats: null,
-      status: 'idle',
-      rooms: [],
-      error: '',
-    }
+    const server = createMatchServerState(getOnlineServerEntries()
+      .find(entry => entry.address === normalized) ?? {
+        address: normalized,
+        builtIn: false,
+        buildDate: '',
+        commitHash: '',
+        name: '',
+        version: '',
+      })
     matchServers.push(server)
     expandedMatchServerIds.add(server.id)
     return server
@@ -593,7 +543,6 @@ export function useMatch(options?: UseMatchOptions) {
     hasUnfinishedOnlineGame,
     joinMatchRoom,
     lastOnlineGame,
-    manualMatchServerAddress,
     matchNickname,
     matchPanelMode,
     matchRoomName,
@@ -605,7 +554,6 @@ export function useMatch(options?: UseMatchOptions) {
     openVersusPage,
     openMatchRoomSettingsDialog,
     parseSharedRoomHash,
-    removeManualMatchServer,
     returnToMatchRoom,
     sharedRoom,
     startMatchServerRefresh,
@@ -615,11 +563,49 @@ export function useMatch(options?: UseMatchOptions) {
     toggleMatchServerExpanded,
     viewMatchRoom,
     createMatchRoom,
-    addManualMatchServer,
   }
 }
 
 function parseStoredOnlineGame(value: unknown): StoredOnlineGame | null {
   const result = StoredOnlineGameSchema.safeParse(value)
   return result.success ? result.data : null
+}
+
+function createMatchServerState(entry: OnlineServerEntry): MatchServerState {
+  return {
+    id: entry.address,
+    address: entry.address,
+    name: entry.name,
+    version: entry.version,
+    commitHash: entry.commitHash,
+    buildDate: entry.buildDate,
+    pingMs: null,
+    stats: null,
+    status: 'idle',
+    rooms: [],
+    error: '',
+  }
+}
+
+function syncMatchServerRegistry() {
+  const entries = getOnlineServerEntries()
+  const entryAddressSet = new Set(entries.map(entry => entry.address))
+  for (const server of matchServers) {
+    if (entryAddressSet.has(server.address)) continue
+    expandedMatchServerIds.delete(server.id)
+    if (customRoomServerId.value === server.id) customRoomServerId.value = null
+  }
+
+  const nextServers = entries.map(entry => {
+    const server = matchServers.find(item => item.address === entry.address)
+    if (! server) return createMatchServerState(entry)
+    if (server.status === 'idle' || ! server.name) {
+      server.name = entry.name
+      server.version = entry.version
+      server.commitHash = entry.commitHash
+      server.buildDate = entry.buildDate
+    }
+    return server
+  })
+  matchServers.splice(0, matchServers.length, ...nextServers)
 }

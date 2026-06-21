@@ -101,7 +101,7 @@ const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
 type GameImportTarget = 'active-game' | 'local-versus' | 'local-study'
-type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'fiveDPGN'
+type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'online' | 'fiveDPGN'
 type StudyOpenSource =
   | { kind: 'local' }
   | { kind: 'online', serverAddress: string, roomId: string, version: number }
@@ -776,6 +776,10 @@ function toggleSettingsDialog() {
 
 function openFiveDPGNSettingsFromExport() {
   openSettingsDialog('fiveDPGN')
+}
+
+function openOnlineSettingsDialog() {
+  openSettingsDialog('online')
 }
 
 function openGitHub() {
@@ -2289,6 +2293,7 @@ watch([exportFormat, exportMode], () => {
           :can-start-online-game="Boolean(gameRenderer && soundManager)"
           @close="closeVersusPage"
           @import-record="openImportDialog('local-versus')"
+          @open-online-settings="openOnlineSettingsDialog"
           @start-local-game="startLocalGame"
           @start-online-game="startOnlineGame"
           @ui-sound="playUISound"
@@ -2297,6 +2302,7 @@ watch([exportFormat, exportMode], () => {
           :active="mainMenuMode === 'study'"
           @close="closeStudyPage"
           @import-record="openImportDialog('local-study')"
+          @open-online-settings="openOnlineSettingsDialog"
           @open-study="openStudyFromPage"
           @ui-sound="playUISound"
         />

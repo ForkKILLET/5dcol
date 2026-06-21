@@ -9,6 +9,7 @@ defineProps<{
 
 const emit = defineEmits<{
   refresh: []
+  serverSettings: []
   back: []
 }>()
 
@@ -18,13 +19,21 @@ const { t } = useI18n({ useScope: 'global' })
 
 <template>
   <div class="online-panel-toolbar">
-    <div class="online-panel-toolbar__input">
-      <GameTextInput
-        v-model="nickname"
-        :placeholder="t('match.nicknamePlaceholder')"
-        spellcheck="false"
-      />
-    </div>
+    <label class="online-panel-toolbar__nickname">
+      <span class="online-panel-toolbar__input">
+        <GameTextInput
+          v-model="nickname"
+          :placeholder="t('match.nicknamePlaceholder')"
+          spellcheck="false"
+        />
+      </span>
+    </label>
+    <GameButton
+      size="small"
+      @click="emit('serverSettings')"
+    >
+      <span>{{ t('match.serverSettings') }}</span>
+    </GameButton>
     <GameButton
       size="small"
       @click="emit('refresh')"
@@ -43,7 +52,7 @@ const { t } = useI18n({ useScope: 'global' })
 
 <style scoped>
 .online-panel-toolbar {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   display: flex;
   align-items: baseline;
   justify-content: flex-end;
@@ -57,5 +66,13 @@ const { t } = useI18n({ useScope: 'global' })
   align-items: flex-start;
   min-width: 0;
   height: calc(32px + var(--small-button-shadow-offset));
+}
+
+.online-panel-toolbar__nickname {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--button-content-gap);
+  min-width: 0;
 }
 </style>

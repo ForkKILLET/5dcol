@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'branch' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'plus' | 'x'
+  name: 'branch' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'plus' | 'x'
 }>()
 </script>
 
@@ -36,6 +36,9 @@ defineProps<{
     </template>
     <template v-else-if="name === 'chevron-down'">
       <path d="M5 9l7 7 7-7" />
+    </template>
+    <template v-else-if="name === 'chevron-up'">
+      <path d="M5 15l7-7 7 7" />
     </template>
     <template v-else-if="name === 'current'">
       <circle

@@ -4,10 +4,13 @@ import { useI18n } from 'vue-i18n'
 import type { MatchServerStats, StudyDocument, StudyRoom } from '@5dcol/shared/protocol'
 import { MatchClient, type MatchServerConnectionStatus } from '@engine/matchClient'
 import {
-  DEFAULT_ONLINE_SERVERS,
   DEFAULT_ONLINE_SERVER_IDS,
-  normalizeOnlineServerAddress,
+  getOnlineServerEntries,
+  onlineCustomServerAddresses,
+  onlineServerOrder,
+  setCachedOnlineServerInfo,
   useOnlineIdentity,
+  type OnlineServerEntry,
 } from '@/composables/online'
 import { useLocalStudies } from '@/composables/study'
 import GameButton from './GameButton.vue'
@@ -16,7 +19,6 @@ import GameListItemMenu from './GameListItemMenu.vue'
 import GamePanel from './GamePanel.vue'
 import GameTab from './GameTab.vue'
 import GameTextInput from './GameTextInput.vue'
-import ManualServerPanel from './ManualServerPanel.vue'
 import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
 import OnlineServerItem from './OnlineServerItem.vue'
 
@@ -28,6 +30,7 @@ const emit = defineEmits<{
   close: []
   openStudy: [study: StudyDocument, source?: StudyOpenSource]
   importRecord: []
+  openOnlineSettings: []
   uiSound: []
 }>()
 
@@ -69,23 +72,9 @@ const activeTab = ref<'local' | 'online'>('local')
 const editingStudyId = ref<string | null>(null)
 const editingStudyTitle = ref('')
 const openStudyActionMenuId = ref<string | null>(null)
-const manualStudyServerAddress = ref('')
 const expandedStudyServerIds = reactive(new Set(DEFAULT_ONLINE_SERVER_IDS))
-const studyServers = reactive<StudyServerState[]>(Object
-  .entries(DEFAULT_ONLINE_SERVERS)
-  .map(([address, { name }]) => ({
-    id: address,
-    address,
-    name,
-    version: '',
-    commitHash: '',
-    buildDate: '',
-    pingMs: null,
-    stats: null,
-    status: 'idle',
-    studies: [],
-    error: '',
-  })))
+const studyServers = reactive<StudyServerState[]>(getOnlineServerEntries()
+  .map(entry => createStudyServerState(entry)))
 let studyRefreshTimer: number | null = null
 
 const pageTitle = computed(() => (
@@ -111,6 +100,10 @@ watch([
     stopStudyServerRefresh()
   }
 }, { immediate: true })
+
+watch([onlineCustomServerAddresses, onlineServerOrder], () => {
+  syncStudyServerRegistry()
+}, { deep: true })
 
 onUnmounted(() => {
   stopStudyServerRefresh()
@@ -146,6 +139,7 @@ async function connectStudyServer(server: StudyServerState) {
     server.version = info.version
     server.commitHash = info.commitHash
     server.buildDate = info.buildDate
+    setCachedOnlineServerInfo(server.address, info)
     server.pingMs = pingMs
     server.stats = stats
     server.studies = studies
@@ -182,6 +176,7 @@ async function refreshStudyServerRooms(server: StudyServerState) {
     server.version = info.version
     server.commitHash = info.commitHash
     server.buildDate = info.buildDate
+    setCachedOnlineServerInfo(server.address, info)
     server.pingMs = pingMs
     server.stats = stats
     server.studies = studies
@@ -239,46 +234,6 @@ function toggleStudyServerExpanded(server: StudyServerState) {
   }
 }
 
-function addManualStudyServer() {
-  const address = normalizeOnlineServerAddress(manualStudyServerAddress.value)
-  if (! address) return
-
-  emit('uiSound')
-  manualStudyServerAddress.value = ''
-  const existing = studyServers.find(server => server.address === address)
-  if (existing) {
-    expandedStudyServerIds.add(existing.id)
-    void connectStudyServer(existing)
-    return
-  }
-
-  const server: StudyServerState = {
-    id: address,
-    address,
-    status: 'idle',
-    name: '',
-    version: '',
-    commitHash: '',
-    buildDate: '',
-    pingMs: null,
-    stats: null,
-    studies: [],
-    error: '',
-  }
-  studyServers.push(server)
-  expandedStudyServerIds.add(server.id)
-  void connectStudyServer(server)
-}
-
-function removeManualStudyServer(server: StudyServerState) {
-  if (! isManualStudyServer(server)) return
-
-  emit('uiSound')
-  const index = studyServers.findIndex(item => item.id === server.id)
-  if (index >= 0) studyServers.splice(index, 1)
-  expandedStudyServerIds.delete(server.id)
-}
-
 async function createOnlineStudy(server: StudyServerState) {
   emit('uiSound')
   if (server.status !== 'connected') return
@@ -334,10 +289,6 @@ function upsertServerStudy(server: StudyServerState, study: StudyRoom) {
   const index = server.studies.findIndex(item => item.id === study.id)
   if (index >= 0) server.studies[index] = study
   else server.studies.unshift(study)
-}
-
-function isManualStudyServer(server: StudyServerState) {
-  return ! DEFAULT_ONLINE_SERVER_IDS.has(server.id)
 }
 
 function isStudyServerExpanded(server: StudyServerState) {
@@ -443,6 +394,44 @@ function isStudyActionMenuOpen(id: string) {
 function setStudyActionMenuOpen(id: string, open: boolean) {
   openStudyActionMenuId.value = open ? id : null
 }
+
+function createStudyServerState(entry: OnlineServerEntry): StudyServerState {
+  return {
+    id: entry.address,
+    address: entry.address,
+    status: 'idle',
+    name: entry.name,
+    version: entry.version,
+    commitHash: entry.commitHash,
+    buildDate: entry.buildDate,
+    pingMs: null,
+    stats: null,
+    studies: [],
+    error: '',
+  }
+}
+
+function syncStudyServerRegistry() {
+  const entries = getOnlineServerEntries()
+  const entryAddressSet = new Set(entries.map(entry => entry.address))
+  for (const server of studyServers) {
+    if (entryAddressSet.has(server.address)) continue
+    expandedStudyServerIds.delete(server.id)
+  }
+
+  const nextServers = entries.map(entry => {
+    const server = studyServers.find(item => item.address === entry.address)
+    if (! server) return createStudyServerState(entry)
+    if (server.status === 'idle' || ! server.name) {
+      server.name = entry.name
+      server.version = entry.version
+      server.commitHash = entry.commitHash
+      server.buildDate = entry.buildDate
+    }
+    return server
+  })
+  studyServers.splice(0, studyServers.length, ...nextServers)
+}
 </script>
 
 <template>
@@ -484,6 +473,15 @@ function setStudyActionMenuOpen(id: string, open: boolean) {
         </div>
       </div>
 
+      <OnlinePanelToolbar
+        v-if="activeTab === 'online'"
+        v-model:nickname="studyNickname"
+        class="study-online-toolbar"
+        :show-back="false"
+        @refresh="clickRefreshStudyServers"
+        @server-settings="emit('openOnlineSettings')"
+      />
+
       <div
         v-if="activeTab === 'local'"
         class="study-local-toolbar"
@@ -501,13 +499,6 @@ function setStudyActionMenuOpen(id: string, open: boolean) {
           <span>{{ t('button.import') }}</span>
         </GameButton>
       </div>
-      <OnlinePanelToolbar
-        v-else
-        v-model:nickname="studyNickname"
-        :show-back="false"
-        @refresh="clickRefreshStudyServers"
-      />
-
       <div
         v-if="activeTab === 'local'"
         class="study-list"
@@ -584,23 +575,17 @@ function setStudyActionMenuOpen(id: string, open: boolean) {
         v-else
         class="study-list"
       >
-        <ManualServerPanel
-          v-model:address="manualStudyServerAddress"
-          :placeholder="t('match.serverAddressPlaceholder')"
-          @add="addManualStudyServer"
-        />
         <OnlineServerItem
           v-for="server in studyServers"
           :key="server.id"
           :server="server"
           :expanded="isStudyServerExpanded(server)"
-          :manual="isManualStudyServer(server)"
+          :manual="false"
           :dynamic-meta="getStudyServerDynamicMeta(server)"
           :create-label="t('study.create')"
           @toggle="toggleStudyServerExpanded"
           @create-room="createOnlineStudy"
           @connect="clickConnectStudyServer"
-          @remove="removeManualStudyServer"
         >
           <template #rooms>
             <div class="study-online-room-list">
@@ -684,6 +669,10 @@ function setStudyActionMenuOpen(id: string, open: boolean) {
   display: flex;
   align-items: baseline;
   gap: calc(var(--button-content-gap) * 1.5);
+}
+
+.study-online-toolbar {
+  justify-content: flex-end;
 }
 
 .study-list {

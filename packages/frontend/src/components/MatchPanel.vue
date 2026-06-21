@@ -5,10 +5,8 @@ import type { MatchServerState } from '@engine/matchClient'
 import GameButton from './GameButton.vue'
 import GameListItem from './GameListItem.vue'
 import GameTextInput from './GameTextInput.vue'
-import ManualServerPanel from './ManualServerPanel.vue'
 import MatchRoomSettingsPanel from './MatchRoomSettingsPanel.vue'
 import MatchServerItem from './MatchServerItem.vue'
-import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
 
 type MatchPanelMode = 'servers' | 'room-settings'
 
@@ -17,31 +15,23 @@ const props = defineProps<{
   servers: MatchServerState[]
   customRoomServer: MatchServerState | null
   expandedServerIds: ReadonlySet<string>
-  defaultServerIds: ReadonlySet<string>
   roomSettings: MatchRoomSettings
   embedded?: boolean
-  showBack?: boolean
   showTitle?: boolean
 }>()
 
 const emit = defineEmits<{
-  refresh: []
-  back: []
   settingsBack: []
-  addServer: []
   openRoomSettings: []
   createRoom: []
   toggleServer: [server: MatchServerState]
   connectServer: [server: MatchServerState]
-  removeServer: [server: MatchServerState]
   openCustomRoom: [server: MatchServerState]
   returnRoom: [server: MatchServerState, room: MatchRoom]
   joinRoom: [server: MatchServerState, roomId: string]
   viewRoom: [server: MatchServerState, room: MatchRoom]
 }>()
 
-const manualAddress = defineModel<string>('manualAddress', { required: true })
-const nickname = defineModel<string>('nickname', { required: true })
 const roomName = defineModel<string>('roomName', { required: true })
 
 const { t } = useI18n({ useScope: 'global' })
@@ -50,12 +40,17 @@ function getDisplayAddress(server: MatchServerState) {
   return server.address.replace(/^https?:\/\//, '')
 }
 
-function isManualServer(server: MatchServerState) {
-  return ! props.defaultServerIds.has(server.id)
-}
-
 function isExpanded(server: MatchServerState) {
   return props.expandedServerIds.has(server.id)
+}
+
+function getTitle() {
+  switch (props.mode) {
+    case 'room-settings':
+      return t('dialog.matchRoomSettingsTitle')
+    case 'servers':
+      return t('match.title')
+  }
 }
 
 function forwardReturnRoom(server: MatchServerState, room: MatchRoom) {
@@ -76,26 +71,18 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
     class="match-card"
     :class="{ 'is-embedded': embedded }"
   >
-    <div class="match-card-header">
+    <div
+      v-if="showTitle !== false || mode === 'room-settings'"
+      class="match-card-header"
+    >
       <h2
         v-if="showTitle !== false"
         class="dialog-title"
       >
-        {{ mode === 'room-settings' ? t('dialog.matchRoomSettingsTitle') : t('match.title') }}
+        {{ getTitle() }}
       </h2>
       <div
-        v-if="mode === 'servers'"
-        class="match-card-actions"
-      >
-        <OnlinePanelToolbar
-          v-model:nickname="nickname"
-          :show-back="showBack"
-          @refresh="emit('refresh')"
-          @back="emit('back')"
-        />
-      </div>
-      <div
-        v-else
+        v-if="mode === 'room-settings'"
         class="match-card-actions"
       >
         <GameButton
@@ -110,11 +97,6 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
       v-if="mode === 'servers'"
       class="match-server-list"
     >
-      <ManualServerPanel
-        v-model:address="manualAddress"
-        :placeholder="t('match.serverAddressPlaceholder')"
-        @add="emit('addServer')"
-      />
       <section
         v-if="customRoomServer"
         class="match-custom-room-panel"
@@ -159,11 +141,10 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
         :key="server.id"
         :server="server"
         :expanded="isExpanded(server)"
-        :manual="isManualServer(server)"
+        :manual="false"
         @toggle="emit('toggleServer', $event)"
         @create-room="emit('openCustomRoom', $event)"
         @connect="emit('connectServer', $event)"
-        @remove="emit('removeServer', $event)"
         @return-room="forwardReturnRoom"
         @join-room="forwardJoinRoom"
         @view-room="forwardViewRoom"

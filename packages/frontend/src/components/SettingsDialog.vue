@@ -10,9 +10,10 @@ import GamePanel from './GamePanel.vue'
 import GameSlider from './GameSlider.vue'
 import GameTab from './GameTab.vue'
 import GameToggle from './GameToggle.vue'
+import OnlineServerSettingsPanel from './OnlineServerSettingsPanel.vue'
 import { UiSoundKey } from '@/composables/uiSound.ts'
 
-type SettingsTab = 'volume' | 'appearance' | 'game' | 'fiveDPGN'
+type SettingsTab = 'volume' | 'appearance' | 'game' | 'online' | 'fiveDPGN'
 
 const props = defineProps<{
   buttonStyle: StyleValue
@@ -30,7 +31,7 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'global' })
 const initialRenderer = ref(props.settings.renderer)
 const activeTab = ref<SettingsTab>(props.initialTab ?? 'volume')
-const settingsTabs: SettingsTab[] = ['volume', 'appearance', 'game', 'fiveDPGN']
+const settingsTabs: SettingsTab[] = ['volume', 'appearance', 'game', 'online', 'fiveDPGN']
 const rendererChanged = computed(() => props.settings.renderer !== initialRenderer.value)
 
 const playUISound = inject(UiSoundKey)
@@ -237,9 +238,14 @@ function setActiveTab(tab: SettingsTab) {
         </div>
 
         <FiveDPGNSettingsFields
-          v-else
+          v-else-if="activeTab === 'fiveDPGN'"
           :settings="settings.fiveDPGN"
           :button-style="buttonStyle"
+        />
+
+        <OnlineServerSettingsPanel
+          v-else-if="activeTab === 'online'"
+          @ui-sound="playUISound?.()"
         />
       </GamePanel>
     </div>

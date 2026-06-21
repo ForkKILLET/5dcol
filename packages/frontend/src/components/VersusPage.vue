@@ -11,6 +11,7 @@ import GamePanel from './GamePanel.vue'
 import GameTab from './GameTab.vue'
 import GameTextInput from './GameTextInput.vue'
 import MatchPanel from './MatchPanel.vue'
+import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
 
 const props = defineProps<{
   active: boolean
@@ -22,14 +23,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   importRecord: []
+  openOnlineSettings: []
   startLocalGame: [game: LocalVersusSummary]
   startOnlineGame: [serverAddress: string, state: MatchGameState]
   uiSound: []
 }>()
 
 const {
-  DEFAULT_MATCH_SERVER_IDS,
-  addManualMatchServer,
   clickConnectMatchServer,
   clickRefreshMatchServers,
   closeMatchRoomSettingsPanel,
@@ -38,7 +38,6 @@ const {
   customRoomServer,
   expandedMatchServerIds,
   joinMatchRoom,
-  manualMatchServerAddress,
   matchNickname,
   matchPanelMode,
   matchRoomName,
@@ -46,7 +45,6 @@ const {
   matchServers,
   openCustomRoomForm,
   openMatchRoomSettingsDialog,
-  removeManualMatchServer,
   returnToMatchRoom,
   startMatchServerRefresh,
   stopMatchServerRefresh,
@@ -75,9 +73,8 @@ const openLocalGameActionMenuId = ref<string | null>(null)
 const { t } = useI18n({ useScope: 'global' })
 const pageTitle = computed(() => {
   if (activeTab.value === 'local') return t('versus.localTitle')
-  return matchPanelMode.value === 'room-settings'
-    ? t('dialog.matchRoomSettingsTitle')
-    : t('versus.onlineTitle')
+  if (matchPanelMode.value === 'room-settings') return t('dialog.matchRoomSettingsTitle')
+  return t('versus.onlineTitle')
 })
 
 watch([
@@ -217,13 +214,24 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
         <h2 class="dialog-title">
           {{ pageTitle }}
         </h2>
-        <GameButton
-          size="small"
-          @click="close"
-        >
-          <span>{{ t('button.back') }}</span>
-        </GameButton>
+        <div class="versus-card-actions">
+          <GameButton
+            size="small"
+            @click="close"
+          >
+            <span>{{ t('button.back') }}</span>
+          </GameButton>
+        </div>
       </div>
+
+      <OnlinePanelToolbar
+        v-if="activeTab === 'online' && matchPanelMode === 'servers'"
+        v-model:nickname="matchNickname"
+        class="versus-online-toolbar"
+        :show-back="false"
+        @refresh="clickRefreshMatchServers"
+        @server-settings="emit('openOnlineSettings')"
+      />
 
       <div
         v-if="activeTab === 'local'"
@@ -317,28 +325,20 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
 
     <MatchPanel
       v-else
-      v-model:manual-address="manualMatchServerAddress"
-      v-model:nickname="matchNickname"
       v-model:room-name="matchRoomName"
       embedded
       class="versus-online-panel"
-      :show-back="false"
       :show-title="false"
       :room-settings="matchRoomSettings"
       :mode="matchPanelMode"
       :servers="matchServers"
       :custom-room-server="customRoomServer"
       :expanded-server-ids="expandedMatchServerIds"
-      :default-server-ids="DEFAULT_MATCH_SERVER_IDS"
-      @refresh="clickRefreshMatchServers"
-      @back="close"
       @settings-back="closeSettingsPanel"
-      @add-server="addManualMatchServer"
       @open-room-settings="openMatchRoomSettingsDialog"
       @create-room="createMatchRoom()"
       @toggle-server="toggleMatchServerExpanded"
       @connect-server="clickConnectMatchServer"
-      @remove-server="removeManualMatchServer"
       @open-custom-room="openCustomRoomForm"
       @return-room="returnToMatchRoom"
       @join-room="joinMatchRoom"
@@ -382,6 +382,17 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--button-content-gap) * 2);
+}
+
+.versus-card-actions {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--button-content-gap) * 1.5);
+  min-width: 0;
+}
+
+.versus-online-toolbar {
+  justify-content: flex-end;
 }
 
 .versus-tabs {

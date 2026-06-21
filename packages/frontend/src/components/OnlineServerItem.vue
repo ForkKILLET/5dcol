@@ -1,4 +1,5 @@
 <script setup lang="ts" generic="TServer extends OnlineServerItemServer">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MatchServerConnectionStatus } from '@engine/matchClient'
 import type { MatchServerStats } from '@5dcol/shared/protocol'
@@ -19,13 +20,21 @@ export interface OnlineServerItemServer {
   error: string
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   server: TServer
-  expanded: boolean
-  manual: boolean
-  dynamicMeta: string[]
+  expanded?: boolean
+  manual?: boolean
+  dynamicMeta?: string[]
   createLabel?: string
-}>()
+  collapsible?: boolean
+  panel?: boolean
+}>(), {
+  collapsible: true,
+  dynamicMeta: () => [],
+  expanded: false,
+  manual: false,
+  panel: true,
+})
 
 const emit = defineEmits<{
   toggle: [server: TServer]
@@ -35,6 +44,9 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n({ useScope: 'global' })
+
+const containerComponent = computed(() => props.panel ? GamePanel : 'section')
+const containerProps = computed(() => props.panel ? { tag: 'section' } : {})
 
 function getStatusText(status: MatchServerConnectionStatus) {
   switch (status) {
@@ -54,7 +66,7 @@ function getDisplayAddress(server: OnlineServerItemServer) {
 }
 
 function hasServerStaticMeta(server: OnlineServerItemServer) {
-  return Boolean(server.name || server.version || server.commitHash || server.buildDate)
+  return Boolean(server.version || server.commitHash || server.buildDate)
 }
 
 function formatBuildDate(buildDate: string) {
@@ -65,9 +77,14 @@ function formatBuildDate(buildDate: string) {
 </script>
 
 <template>
-  <GamePanel tag="section">
+  <component
+    :is="containerComponent"
+    v-bind="containerProps"
+    class="online-server-item"
+  >
     <div class="online-server-item__header">
       <GameButton
+        v-if="collapsible"
         size="small"
         shape="circle"
         :aria-label="expanded ? t('match.collapseServer') : t('match.expandServer')"
@@ -77,7 +94,15 @@ function formatBuildDate(buildDate: string) {
         <GameIcon :name="expanded ? 'chevron-down' : 'chevron-right'" />
       </GameButton>
       <div class="online-server-item__main">
-        <div class="online-server-item__address">{{ getDisplayAddress(server) }}</div>
+        <div class="online-server-item__title">
+          <span
+            v-if="server.name"
+            class="online-server-item__name"
+          >
+            {{ server.name }}
+          </span>
+          <span class="online-server-item__address">{{ getDisplayAddress(server) }}</span>
+        </div>
         <div class="online-server-item__meta">
           <div class="online-server-item__meta-line">
             <span
@@ -95,7 +120,6 @@ function formatBuildDate(buildDate: string) {
             v-if="hasServerStaticMeta(server)"
             class="online-server-item__meta-line"
           >
-            <span v-if="server.name">{{ server.name }}</span>
             <span v-if="server.version">v{{ server.version }}</span>
             <span v-if="server.commitHash">{{ server.commitHash }}</span>
             <span v-if="server.buildDate">{{ formatBuildDate(server.buildDate) }}</span>
@@ -103,27 +127,32 @@ function formatBuildDate(buildDate: string) {
         </div>
       </div>
       <div class="online-server-item__actions">
-        <GameButton
-          v-if="server.status === 'connected'"
-          size="small"
-          @click="emit('createRoom', server)"
+        <slot
+          name="actions"
+          :server="server"
         >
-          <span>{{ createLabel ?? t('match.createRoom') }}</span>
-        </GameButton>
-        <GameButton
-          v-if="server.status !== 'connected' && server.status !== 'connecting'"
-          size="small"
-          @click="emit('connect', server)"
-        >
-          <span>{{ t('match.connect') }}</span>
-        </GameButton>
-        <GameButton
-          v-if="manual"
-          size="small"
-          @click="emit('remove', server)"
-        >
-          <span>{{ t('match.removeServer') }}</span>
-        </GameButton>
+          <GameButton
+            v-if="server.status === 'connected'"
+            size="small"
+            @click="emit('createRoom', server)"
+          >
+            <span>{{ createLabel ?? t('match.createRoom') }}</span>
+          </GameButton>
+          <GameButton
+            v-if="server.status !== 'connected' && server.status !== 'connecting'"
+            size="small"
+            @click="emit('connect', server)"
+          >
+            <span>{{ t('match.connect') }}</span>
+          </GameButton>
+          <GameButton
+            v-if="manual"
+            size="small"
+            @click="emit('remove', server)"
+          >
+            <span>{{ t('match.removeServer') }}</span>
+          </GameButton>
+        </slot>
       </div>
     </div>
     <slot
@@ -131,15 +160,21 @@ function formatBuildDate(buildDate: string) {
       name="rooms"
     />
     <div
-      v-else-if="server.status === 'failed' && expanded"
+      v-else-if="server.status === 'failed' && (collapsible ? expanded : true)"
       class="online-server-item__error"
     >
       {{ server.error || t('match.failedMessage') }}
     </div>
-  </GamePanel>
+  </component>
 </template>
 
 <style scoped>
+.online-server-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--button-content-gap);
+}
+
 .online-server-item__header {
   display: flex;
   align-items: center;
@@ -152,12 +187,30 @@ function formatBuildDate(buildDate: string) {
   min-width: 0;
 }
 
+.online-server-item__title {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--button-content-gap) * 0.75);
+  min-width: 0;
+}
+
+.online-server-item__name,
 .online-server-item__address {
   overflow: hidden;
   font-size: 18px;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.online-server-item__name {
+  flex: 0 1 auto;
+}
+
+.online-server-item__address {
+  flex: 1 1 auto;
+  color: var(--button-text-color);
+  opacity: 0.62;
 }
 
 .online-server-item__meta,
