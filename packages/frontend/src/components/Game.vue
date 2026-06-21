@@ -11,6 +11,8 @@ import {
   type MatchRoomSettings,
   type MatchRoomStatus,
   type StudyDocument,
+  type StudyPatch,
+  type StudyPosition,
 } from '@5dcol/shared/protocol'
 
 import { Color4 } from '@engine/basic'
@@ -169,6 +171,7 @@ let onlineReconnectTimer: number | null = null
 let clockTimer: number | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineStudyStateSubscription: StudyRoomStateSubscription | null = null
+let onlineStudySubmitPending = false
 let gameResizeObserver: ResizeObserver | null = null
 let resizeFrame: number | null = null
 let onlineRoomStateSubscriptionActive = false
@@ -1238,6 +1241,7 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
   stopOnlineStudyStateSubscription()
+  onlineStudySubmitPending = false
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1314,6 +1318,9 @@ function startStudyGame(study: StudyDocument, source: StudyOpenSource = { kind: 
     initialWorkspace: source.kind === 'local' ? workspace : undefined,
     onWorkspaceChange: updateWorkspace,
     onRecordMoveFocusRequest: focusRecordMoveFromBoard,
+    onStudyActionSubmitRequest: source.kind === 'online'
+      ? (action, position) => submitOnlineStudyAction(source.serverAddress, source.roomId, action, position)
+      : undefined,
   })
   gameStarted.value = true
   mainMenuMode.value = 'home'
@@ -1606,6 +1613,7 @@ function startOnlineStudyStateSubscription(
 
       switch (event.type) {
         case 'study-state':
+          onlineStudySubmitPending = false
           activeOnlineStudy.value = {
             ...current,
             version: event.room.version,
@@ -1613,9 +1621,15 @@ function startOnlineStudyStateSubscription(
           }
           break
         case 'study-patch':
-          if (! game?.applyStudyPatch(event.patch)) {
-            void syncOnlineStudyState(serverAddress, roomId)
-            return
+          {
+            const followPatch = onlineStudySubmitPending
+              && isOnlineStudySubmitPatchByUser(event.patch, matchUserId.value)
+            if (! game?.applyStudyPatch(event.patch, { followPatch })) {
+              onlineStudySubmitPending = false
+              void syncOnlineStudyState(serverAddress, roomId)
+              return
+            }
+            if (followPatch) onlineStudySubmitPending = false
           }
           activeOnlineStudy.value = {
             ...current,
@@ -1623,6 +1637,7 @@ function startOnlineStudyStateSubscription(
           }
           break
         case 'command-rejected':
+          onlineStudySubmitPending = false
           void syncOnlineStudyState(serverAddress, roomId)
           break
         case 'presence':
@@ -1635,13 +1650,55 @@ function startOnlineStudyStateSubscription(
         onlineConnectionStatus.value = 'connected'
       },
       onError: () => {
+        onlineStudySubmitPending = false
         onlineConnectionStatus.value = 'reconnecting'
       },
     },
   )
 }
 
+function submitOnlineStudyAction(
+  serverAddress: string,
+  roomId: string,
+  action: Action,
+  position: StudyPosition,
+): boolean {
+  const current = activeOnlineStudy.value
+  if (! current || current.serverAddress !== serverAddress || current.roomId !== roomId) return false
+  if (onlineStudySubmitPending) return true
+  if (! onlineStudyStateSubscription || onlineConnectionStatus.value !== 'connected') {
+    onlineError.value = t('online.reconnecting')
+    onlineConnectionStatus.value = 'reconnecting'
+    return true
+  }
+
+  onlineStudySubmitPending = true
+  onlineStudyStateSubscription.sendCommand(current.version, {
+    type: 'submit-action',
+    position,
+    action,
+  })
+  return true
+}
+
+function isOnlineStudySubmitPatchByUser(patch: StudyPatch, userId: string | null): boolean {
+  if (! userId) return false
+  switch (patch.type) {
+    case 'append-action':
+      return patch.action.authorId === userId
+    case 'create-branch':
+      return patch.actions.some(action => action.authorId === userId)
+    case 'remove-future':
+    case 'upsert-annotation':
+    case 'delete-annotation':
+    case 'update-title':
+    case 'update-visibility':
+      return false
+  }
+}
+
 function stopOnlineStudyStateSubscription() {
+  onlineStudySubmitPending = false
   onlineStudyStateSubscription?.unsubscribe()
   onlineStudyStateSubscription = null
 }
@@ -1652,6 +1709,7 @@ async function syncOnlineStudyState(serverAddress: string, roomId: string) {
     const state = await client.getStudyState(roomId)
     const current = activeOnlineStudy.value
     if (! current || current.serverAddress !== serverAddress || current.roomId !== roomId) return
+    onlineStudySubmitPending = false
     activeOnlineStudy.value = {
       ...current,
       version: state.room.version,

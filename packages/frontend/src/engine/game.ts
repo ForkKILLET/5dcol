@@ -1,5 +1,5 @@
 import { Action, Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
-import type { StudyDocument, StudyPatch } from '@5dcol/shared/protocol'
+import type { StudyDocument, StudyPatch, StudyPosition } from '@5dcol/shared/protocol'
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
@@ -68,6 +68,7 @@ export interface GameContext {
   onImportRequest?: () => void
   onExportRequest?: (request: GameExportRequest) => void
   onReturnToMainMenuRequest?: (request?: GameReturnToMainMenuRequest) => void
+  onStudyActionSubmitRequest?: (action: Action, position: StudyPosition) => boolean
   onActionSubmitted?: (action: Action, actions: Action[]) => void
   onPendingActionChange?: (action: Action | null) => void
   onViewPlayerChange?: (player: Player) => void
@@ -636,7 +637,14 @@ export class Game extends Disposable(Empty) {
     return true
   }
 
-  public applyStudyPatch(patch: StudyPatch): boolean {
+  public applyStudyPatch(
+    patch: StudyPatch,
+    {
+      followPatch = false,
+    }: {
+      followPatch?: boolean
+    } = {},
+  ): boolean {
     const currentTarget = this.recordDocument.resolveCursorTarget({
       recordLineId: this.recordDocument.activeRecordLineId,
       recordActionIndex: this.recordDocument.getActiveLineLocalActionIndex(this.actionIndex),
@@ -644,9 +652,10 @@ export class Game extends Disposable(Empty) {
 
     if (! this.recordDocument.applyStudyPatch(patch)) return false
 
-    const nextTarget = currentTarget
+    const followTarget = followPatch ? this.getStudyPatchCursorTarget(patch) : null
+    const nextTarget = followTarget ?? (currentTarget
       ? this.recordDocument.resolveCursorTarget(currentTarget)
-      : null
+      : null)
     const fallbackLine = this.recordDocument.getLine(0)
     const target = nextTarget ?? {
       recordLineId: 0,
@@ -658,6 +667,35 @@ export class Game extends Disposable(Empty) {
     this.recordDocument.setActiveLine(target.recordLineId)
     this.applyRecordActionPath(actions, targetActionIndex)
     return true
+  }
+
+  private getStudyPatchCursorTarget(patch: StudyPatch): RecordCursorTarget | null {
+    switch (patch.type) {
+      case 'append-action':
+        return this.recordDocument.fromStudyPosition({
+          type: 'after',
+          actionId: patch.action.id,
+        })
+      case 'create-branch': {
+        const actionId = patch.branch.actionIds.at(-1)
+        if (actionId) {
+          return this.recordDocument.fromStudyPosition({
+            type: 'after',
+            actionId,
+          })
+        }
+        return patch.branch.parent
+          ? this.recordDocument.fromStudyPosition(patch.branch.parent)
+          : null
+      }
+      case 'remove-future':
+        return this.recordDocument.fromStudyPosition(patch.position)
+      case 'upsert-annotation':
+      case 'delete-annotation':
+      case 'update-title':
+      case 'update-visibility':
+        return null
+    }
   }
 
   public getStudyDocument({ id, title }: { id: string, title: string }): StudyDocument {
@@ -2164,6 +2202,17 @@ export class Game extends Disposable(Empty) {
         .filter(pendingMove => ! pendingMove.isPass)
         .map(pendingMove => pendingMove.move),
     }
+    const studyPosition = this.recordDocument.toStudyPosition({
+      recordLineId: this.recordDocument.activeRecordLineId,
+      recordActionIndex: this.recordDocument.getActiveLineLocalActionIndex(this.actionIndex),
+    })
+    if (studyPosition && this.ctx.onStudyActionSubmitRequest?.(action, studyPosition)) {
+      this.submitRequestedDuringMoveAnimation = false
+      this.deselectPiece()
+      this.syncToolbarButtons()
+      return
+    }
+
     this.appendActionToActiveRecordLine(action)
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
