@@ -7,6 +7,7 @@ import { GameState, Multiverse, type Action, Player } from '@5dcol/core'
 
 import {
   CreateStudyRoomRequestSchema,
+  ChatMessageSchema,
   MATCH_PROTOCOL_VERSION,
   MatchRoomClientEventSchema,
   MatchRoomSettingsSchema,
@@ -15,6 +16,7 @@ import {
   LeaveMatchRoomRequestSchema,
   ForfeitMatchRoomRequestSchema,
   JoinStudyRoomRequestSchema,
+  StudyRoomClientEventSchema,
   StudyRoomSchema,
   SubmitMatchActionRequestSchema,
   type ChatMessage,
@@ -51,7 +53,12 @@ import {
   type MatchSession,
   type MatchUser,
   type ParsedCreateStudyRoomRequest,
+  type StudyCommand,
   type StudyDocument,
+  type StudyPatch,
+  type StudyPresence,
+  type StudyRoomClientEvent,
+  type StudyRoomEvent,
   type StudyRoomsRequestQuery,
   type StudyRoomsResponse,
   type StudyRoom,
@@ -95,6 +102,11 @@ interface RoomSubscriber {
   socket: WebSocketLike
 }
 
+interface StudySubscriber {
+  userId: string
+  socket: WebSocketLike
+}
+
 interface WebSocketLike {
   send(data: string): void
   close(): void
@@ -105,6 +117,8 @@ interface WebSocketLike {
 const DEFAULT_SERVER_NAME = 'Debug Server'
 const FINISHED_ROOM_HISTORY_MS = 24 * 60 * 60 * 1000
 const FINISHED_ROOM_HISTORY_LIMIT = 10
+const STUDY_CHAT_HISTORY_LIMIT = 100
+const STUDY_CHAT_MESSAGE_MAX_LENGTH = 1200
 
 export function createBackendServer(options: BackendServerOptions) {
   const storage = createRoomStorage()
@@ -114,6 +128,8 @@ export function createBackendServer(options: BackendServerOptions) {
   const chatMessages = storageState.chatMessages ?? []
   const users: UserState[] = storageState.users
   const roomSubscribers = new Map<string, Set<RoomSubscriber>>()
+  const studySubscribers = new Map<string, Set<StudySubscriber>>()
+  const studyPresence = new Map<string, Map<string, StudyPresence>>()
   const onlineSessionCounts = new Map<string, number>()
   const app = Fastify()
   const saveAll = () => storage.saveState({ rooms, studyRooms, chatMessages, users })
@@ -247,6 +263,31 @@ export function createBackendServer(options: BackendServerOptions) {
           room,
           session,
         )
+      },
+    )
+
+    routeApp.get<{ Params: { id: string }, Querystring: { userId?: string, nickname?: string } }>(
+      '/studies/:id/events',
+      { websocket: true },
+      (socket, request) => {
+        const room = studyRooms.find(room => room.id === request.params.id)
+        const user = findUser(users, request.query.userId)
+        if (! room || ! user) {
+          socket.close()
+          return
+        }
+
+        addStudyMember(room, user, request.query.nickname)
+        saveAll()
+        subscribeStudyRoomState({
+          socket,
+          studySubscribers,
+          studyPresence,
+          chatMessages,
+          room,
+          user,
+          saveAll,
+        })
       },
     )
   })
@@ -445,7 +486,14 @@ export function createBackendServer(options: BackendServerOptions) {
           subscriber.socket.close()
         }
       }
+      for (const subscribers of studySubscribers.values()) {
+        for (const subscriber of subscribers) {
+          subscriber.socket.close()
+        }
+      }
       roomSubscribers.clear()
+      studySubscribers.clear()
+      studyPresence.clear()
       void app.close()
     },
   }
@@ -528,6 +576,7 @@ function getStudyChatMessages(messages: ChatMessage[], roomId: string): ChatMess
   return messages
     .filter(message => message.roomKind === 'study' && message.roomId === roomId)
     .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-STUDY_CHAT_HISTORY_LIMIT)
 }
 
 function leaveRoom(room: RoomState, session: SessionState) {
@@ -934,6 +983,247 @@ function parseRoomClientEvent(data: unknown): MatchRoomClientEvent | null {
   }
 }
 
+function subscribeStudyRoomState({
+  socket,
+  studySubscribers,
+  studyPresence,
+  chatMessages,
+  room,
+  user,
+  saveAll,
+}: {
+  socket: WebSocketLike
+  studySubscribers: Map<string, Set<StudySubscriber>>
+  studyPresence: Map<string, Map<string, StudyPresence>>
+  chatMessages: ChatMessage[]
+  room: StudyRoom
+  user: UserState
+  saveAll: () => void
+}) {
+  const subscriber: StudySubscriber = {
+    userId: user.id,
+    socket,
+  }
+  const subscribers = studySubscribers.get(room.id) ?? new Set<StudySubscriber>()
+  subscribers.add(subscriber)
+  studySubscribers.set(room.id, subscribers)
+
+  sendStudyState(socket, studyPresence, chatMessages, room)
+  socket.on('message', (data) => {
+    handleStudyClientEvent({
+      socket,
+      studySubscribers,
+      studyPresence,
+      chatMessages,
+      room,
+      user,
+      data,
+      saveAll,
+    })
+  })
+
+  socket.on('close', () => {
+    subscribers.delete(subscriber)
+    if (subscribers.size === 0) studySubscribers.delete(room.id)
+    const presenceByUser = studyPresence.get(room.id)
+    presenceByUser?.delete(user.id)
+    if (presenceByUser?.size === 0) studyPresence.delete(room.id)
+    broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
+  })
+}
+
+function handleStudyClientEvent({
+  socket,
+  studySubscribers,
+  studyPresence,
+  chatMessages,
+  room,
+  user,
+  data,
+  saveAll,
+}: {
+  socket: WebSocketLike
+  studySubscribers: Map<string, Set<StudySubscriber>>
+  studyPresence: Map<string, Map<string, StudyPresence>>
+  chatMessages: ChatMessage[]
+  room: StudyRoom
+  user: UserState
+  data: unknown
+  saveAll: () => void
+}) {
+  const event = parseStudyClientEvent(data)
+  if (! event) return
+
+  switch (event.type) {
+    case 'command': {
+      if (! canEditStudyRoom(room, user.id)) {
+        sendStudyCommandRejected(socket, 'permission-denied', room)
+        return
+      }
+      if (event.baseVersion > room.version) {
+        sendStudyCommandRejected(socket, 'conflict', room)
+        return
+      }
+
+      const patch = createStudyPatchFromCommand(room, event.command)
+      if (! patch) {
+        sendStudyCommandRejected(socket, 'unsupported', room)
+        return
+      }
+
+      applyStudyPatch(room, patch)
+      saveAll()
+      broadcastStudyEvent(studySubscribers, room.id, {
+        type: 'study-patch',
+        version: room.version,
+        patch,
+      })
+      break
+    }
+    case 'presence': {
+      const presence: StudyPresence = {
+        userId: user.id,
+        nickname: user.nickname,
+        cursor: event.cursor,
+        mode: event.mode,
+        followingUserId: event.followingUserId,
+        updatedAt: Date.now(),
+      }
+      const presenceByUser = studyPresence.get(room.id) ?? new Map<string, StudyPresence>()
+      presenceByUser.set(user.id, presence)
+      studyPresence.set(room.id, presenceByUser)
+      broadcastStudyEvent(studySubscribers, room.id, {
+        type: 'presence',
+        presence,
+      })
+      break
+    }
+    case 'chat-message': {
+      const text = event.text.trim().slice(0, STUDY_CHAT_MESSAGE_MAX_LENGTH)
+      if (! text) return
+
+      const message = ChatMessageSchema.parse({
+        id: randomUUID(),
+        roomKind: 'study',
+        roomId: room.id,
+        userId: user.id,
+        nickname: user.nickname,
+        text,
+        createdAt: Date.now(),
+      })
+      chatMessages.push(message)
+      pruneStudyChatMessages(chatMessages, room.id)
+      saveAll()
+      broadcastStudyEvent(studySubscribers, room.id, {
+        type: 'chat-message',
+        message,
+      })
+      break
+    }
+  }
+}
+
+function parseStudyClientEvent(data: unknown): StudyRoomClientEvent | null {
+  try {
+    const text = typeof data === 'string'
+      ? data
+      : data instanceof Buffer
+        ? data.toString('utf8')
+        : String(data)
+    return StudyRoomClientEventSchema.parse(JSON.parse(text) as unknown)
+  }
+  catch {
+    return null
+  }
+}
+
+function canEditStudyRoom(room: StudyRoom, userId: string): boolean {
+  const member = room.members.find(member => member.userId === userId)
+  return member?.role === 'owner'
+    || member?.role === 'moderator'
+    || member?.role === 'editor'
+}
+
+function createStudyPatchFromCommand(
+  room: StudyRoom,
+  command: StudyCommand,
+): StudyPatch | null {
+  switch (command.type) {
+    case 'submit-action':
+    case 'remove-future':
+      return null
+    case 'upsert-annotation':
+      return {
+        type: 'upsert-annotation',
+        annotation: command.annotation,
+      }
+    case 'delete-annotation':
+      return {
+        type: 'delete-annotation',
+        annotationId: command.annotationId,
+      }
+    case 'update-title': {
+      const title = command.title.trim()
+      if (! title || title === room.name) return null
+      return {
+        type: 'update-title',
+        title,
+      }
+    }
+    case 'update-visibility':
+      if (command.visibility === room.visibility) return null
+      return {
+        type: 'update-visibility',
+        visibility: command.visibility,
+      }
+  }
+}
+
+function applyStudyPatch(room: StudyRoom, patch: StudyPatch) {
+  const now = Date.now()
+  switch (patch.type) {
+    case 'append-action':
+    case 'create-branch':
+    case 'remove-future':
+      break
+    case 'upsert-annotation': {
+      const index = room.document.annotations.findIndex(annotation => annotation.id === patch.annotation.id)
+      if (index >= 0) room.document.annotations[index] = patch.annotation
+      else room.document.annotations.push(patch.annotation)
+      room.document.updatedAt = now
+      break
+    }
+    case 'delete-annotation':
+      room.document.annotations = room.document.annotations
+        .filter(annotation => annotation.id !== patch.annotationId)
+      room.document.updatedAt = now
+      break
+    case 'update-title':
+      room.name = patch.title
+      room.document.title = patch.title
+      room.document.updatedAt = now
+      break
+    case 'update-visibility':
+      room.visibility = patch.visibility
+      break
+  }
+  room.version += 1
+  room.updatedAt = now
+}
+
+function pruneStudyChatMessages(chatMessages: ChatMessage[], roomId: string) {
+  const keepMessages = getStudyChatMessages(chatMessages, roomId)
+  if (keepMessages.length < STUDY_CHAT_HISTORY_LIMIT) return
+
+  const keepIds = new Set(keepMessages.map(message => message.id))
+  for (let i = chatMessages.length - 1; i >= 0; i -= 1) {
+    const message = chatMessages[i]!
+    if (message.roomKind === 'study' && message.roomId === roomId && ! keepIds.has(message.id)) {
+      chatMessages.splice(i, 1)
+    }
+  }
+}
+
 function disconnectSession(
   rooms: RoomState[],
   roomSubscribers: Map<string, Set<RoomSubscriber>>,
@@ -972,6 +1262,69 @@ function broadcastRoomState(
 
   for (const subscriber of subscribers) {
     writeRoomStateEvent(roomSubscribers, subscriber, room, onlineSessionCounts)
+  }
+}
+
+function broadcastStudyState(
+  studySubscribers: Map<string, Set<StudySubscriber>>,
+  studyPresence: Map<string, Map<string, StudyPresence>>,
+  chatMessages: ChatMessage[],
+  room: StudyRoom,
+) {
+  const subscribers = studySubscribers.get(room.id)
+  if (! subscribers) return
+
+  for (const subscriber of subscribers) {
+    sendStudyState(subscriber.socket, studyPresence, chatMessages, room)
+  }
+}
+
+function sendStudyState(
+  socket: WebSocketLike,
+  studyPresence: Map<string, Map<string, StudyPresence>>,
+  chatMessages: ChatMessage[],
+  room: StudyRoom,
+) {
+  const event: StudyRoomEvent = {
+    type: 'study-state',
+    room,
+    presence: getStudyPresenceList(studyPresence, room.id),
+    chat: getStudyChatMessages(chatMessages, room.id),
+  }
+  socket.send(JSON.stringify(event))
+}
+
+function sendStudyCommandRejected(
+  socket: WebSocketLike,
+  reason: 'permission-denied' | 'target-not-found' | 'conflict' | 'unsupported',
+  room: StudyRoom,
+) {
+  const event: StudyRoomEvent = {
+    type: 'command-rejected',
+    reason,
+    currentVersion: room.version,
+  }
+  socket.send(JSON.stringify(event))
+}
+
+function getStudyPresenceList(
+  studyPresence: Map<string, Map<string, StudyPresence>>,
+  roomId: string,
+): StudyPresence[] {
+  return [...(studyPresence.get(roomId)?.values() ?? [])]
+    .sort((a, b) => a.updatedAt - b.updatedAt)
+}
+
+function broadcastStudyEvent(
+  studySubscribers: Map<string, Set<StudySubscriber>>,
+  roomId: string,
+  event: StudyRoomEvent,
+) {
+  const subscribers = studySubscribers.get(roomId)
+  if (! subscribers) return
+
+  for (const subscriber of subscribers) {
+    subscriber.socket.send(JSON.stringify(event))
   }
 }
 

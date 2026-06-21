@@ -483,6 +483,38 @@ export const StudyMemberSchema = z.object({
 
 export type StudyMember = z.infer<typeof StudyMemberSchema>
 
+export const StudyPositionSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('head'),
+    branchId: z.string(),
+  }),
+  z.object({
+    type: z.literal('after'),
+    actionId: z.string(),
+  }),
+])
+
+export type StudyPosition = z.infer<typeof StudyPositionSchema>
+
+export const StudyActionNodeSchema = z.object({
+  id: z.string(),
+  branchId: z.string(),
+  action: ActionSchema,
+  authorId: z.string().optional(),
+  createdAt: z.number(),
+})
+
+export type StudyActionNode = z.infer<typeof StudyActionNodeSchema>
+
+export const StudyBranchSchema = z.object({
+  id: z.string(),
+  parent: StudyPositionSchema.nullable(),
+  actionIds: z.array(z.string()),
+  createdAt: z.number(),
+})
+
+export type StudyBranch = z.infer<typeof StudyBranchSchema>
+
 export const StudyPresenceSchema = z.object({
   userId: z.string(),
   nickname: z.string().nullable(),
@@ -522,8 +554,21 @@ export type ChatMessage = z.infer<typeof ChatMessageSchema>
 
 export const StudyPatchSchema = z.discriminatedUnion('type', [
   z.object({
-    type: z.literal('replace-document'),
-    document: StudyDocumentSchema,
+    type: z.literal('append-action'),
+    branchId: z.string(),
+    position: StudyPositionSchema,
+    action: StudyActionNodeSchema,
+  }),
+  z.object({
+    type: z.literal('create-branch'),
+    branch: StudyBranchSchema,
+    actions: z.array(StudyActionNodeSchema),
+  }),
+  z.object({
+    type: z.literal('remove-future'),
+    position: StudyPositionSchema,
+    removedActionIds: z.array(z.string()),
+    removedBranchIds: z.array(z.string()),
   }),
   z.object({
     type: z.literal('upsert-annotation'),
@@ -533,9 +578,47 @@ export const StudyPatchSchema = z.discriminatedUnion('type', [
     type: z.literal('delete-annotation'),
     annotationId: z.string(),
   }),
+  z.object({
+    type: z.literal('update-title'),
+    title: z.string(),
+  }),
+  z.object({
+    type: z.literal('update-visibility'),
+    visibility: StudyRoomVisibilitySchema,
+  }),
 ])
 
 export type StudyPatch = z.infer<typeof StudyPatchSchema>
+
+export const StudyCommandSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('submit-action'),
+    position: StudyPositionSchema,
+    action: ActionSchema,
+  }),
+  z.object({
+    type: z.literal('remove-future'),
+    position: StudyPositionSchema,
+  }),
+  z.object({
+    type: z.literal('upsert-annotation'),
+    annotation: StoredRecordAnnotationSchema,
+  }),
+  z.object({
+    type: z.literal('delete-annotation'),
+    annotationId: z.string(),
+  }),
+  z.object({
+    type: z.literal('update-title'),
+    title: z.string(),
+  }),
+  z.object({
+    type: z.literal('update-visibility'),
+    visibility: StudyRoomVisibilitySchema,
+  }),
+])
+
+export type StudyCommand = z.infer<typeof StudyCommandSchema>
 
 export const CreateStudyRoomRequestSchema = z.object({
   userId: z.string().optional(),
@@ -592,7 +675,7 @@ export type JoinStudyRoomResponse = z.infer<typeof JoinStudyRoomResponseSchema>
 export const StudyDocumentPatchRequestSchema = z.object({
   userId: z.string(),
   baseVersion: z.number().int().nonnegative(),
-  patch: StudyPatchSchema,
+  command: StudyCommandSchema,
 })
 
 export type StudyDocumentPatchRequest = z.infer<typeof StudyDocumentPatchRequestSchema>
@@ -606,13 +689,21 @@ export const StudyStateEventSchema = z.object({
 
 export type StudyStateEvent = z.infer<typeof StudyStateEventSchema>
 
-export const StudyDocumentPatchEventSchema = z.object({
-  type: z.literal('document-patch'),
+export const StudyPatchEventSchema = z.object({
+  type: z.literal('study-patch'),
   version: z.number().int().nonnegative(),
   patch: StudyPatchSchema,
 })
 
-export type StudyDocumentPatchEvent = z.infer<typeof StudyDocumentPatchEventSchema>
+export type StudyPatchEvent = z.infer<typeof StudyPatchEventSchema>
+
+export const StudyCommandRejectedEventSchema = z.object({
+  type: z.literal('command-rejected'),
+  reason: z.enum(['permission-denied', 'target-not-found', 'conflict', 'unsupported']),
+  currentVersion: z.number().int().nonnegative(),
+})
+
+export type StudyCommandRejectedEvent = z.infer<typeof StudyCommandRejectedEventSchema>
 
 export const StudyPresenceEventSchema = z.object({
   type: z.literal('presence'),
@@ -630,7 +721,8 @@ export type ChatMessageEvent = z.infer<typeof ChatMessageEventSchema>
 
 export const StudyRoomEventSchema = z.discriminatedUnion('type', [
   StudyStateEventSchema,
-  StudyDocumentPatchEventSchema,
+  StudyPatchEventSchema,
+  StudyCommandRejectedEventSchema,
   StudyPresenceEventSchema,
   ChatMessageEventSchema,
 ])
@@ -639,9 +731,9 @@ export type StudyRoomEvent = z.infer<typeof StudyRoomEventSchema>
 
 export const StudyRoomClientEventSchema = z.discriminatedUnion('type', [
   z.object({
-    type: z.literal('document-patch'),
+    type: z.literal('command'),
     baseVersion: z.number().int().nonnegative(),
-    patch: StudyPatchSchema,
+    command: StudyCommandSchema,
   }),
   z.object({
     type: z.literal('presence'),
