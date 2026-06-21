@@ -6,10 +6,14 @@ import { fileURLToPath } from 'node:url'
 
 import { GameState, type Action } from '@5dcol/core'
 import {
+  ChatMessageSchema,
   MATCH_STORAGE_VERSION,
   MatchRoomFinishReasonSchema,
   MatchRoomSettingsSchema,
+  StudyRoomSchema,
+  type ChatMessage,
   type MatchRoomSettings,
+  type StudyRoom,
   type StoredMatchRoomsFile,
 } from '@5dcol/shared/protocol'
 import { drizzle } from 'drizzle-orm/node-sqlite'
@@ -17,20 +21,26 @@ import { asc, eq } from 'drizzle-orm'
 import type { RoomState } from './server.ts'
 import {
   actionsTable,
+  chatMessagesTable,
   metadataTable,
   roomsTable,
   sessionsTable,
   storageSchema,
+  studyRoomsTable,
   usersTable,
   type ActionRow,
+  type ChatMessageRow,
   type RoomRow,
   type SessionRow,
+  type StudyRoomRow,
   type UserRow,
 } from './storageSchema.ts'
 
 type StoredRoomsFile = StoredMatchRoomsFile<RoomState>
 export interface StorageState {
   rooms: RoomState[]
+  studyRooms?: StudyRoom[]
+  chatMessages?: ChatMessage[]
   users: UserState[]
 }
 
@@ -72,11 +82,27 @@ export function createRoomStorage(
     },
 
     save(rooms: RoomState[], users: UserState[] = []) {
-      saveState(db, { rooms, users: mergeUsers(users, getSessionUsers(rooms)) })
+      const current = loadState(db)
+      const studyRooms = current.studyRooms ?? []
+      const chatMessages = current.chatMessages ?? []
+      saveState(db, {
+        rooms,
+        studyRooms,
+        chatMessages,
+        users: mergeUsers(users, getSessionUsers(rooms), getStudyUsers(studyRooms), getChatUsers(chatMessages)),
+      })
     },
 
     saveState(state: StorageState) {
-      saveState(db, state)
+      const current = loadState(db)
+      const studyRooms = state.studyRooms ?? current.studyRooms ?? []
+      const chatMessages = state.chatMessages ?? current.chatMessages ?? []
+      saveState(db, {
+        ...state,
+        studyRooms,
+        chatMessages,
+        users: mergeUsers(state.users, getSessionUsers(state.rooms), getStudyUsers(studyRooms), getChatUsers(chatMessages)),
+      })
     },
   }
 }
@@ -126,6 +152,28 @@ function initializeDatabase(sqlite: DatabaseSync) {
       action_json TEXT NOT NULL,
       PRIMARY KEY (room_id, action_index)
     );
+
+    CREATE TABLE IF NOT EXISTS study_rooms (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      visibility TEXT NOT NULL,
+      document_json TEXT NOT NULL,
+      members_json TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      room_kind TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      nickname TEXT,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `)
   addColumnIfMissing(sqlite, 'sessions', 'user_id', 'TEXT')
 }
@@ -141,7 +189,12 @@ function migrateLegacyJsonIfNeeded(db: RoomDatabase, legacyJsonPath: string) {
   const existingRooms = db.select({ id: roomsTable.id }).from(roomsTable).limit(1).all()
   if (existingRooms.length === 0) {
     const rooms = loadLegacyRooms(legacyJsonPath)
-    if (rooms.length > 0) saveState(db, { rooms, users: getSessionUsers(rooms) })
+    if (rooms.length > 0) saveState(db, {
+      rooms,
+      studyRooms: [],
+      chatMessages: [],
+      users: getSessionUsers(rooms),
+    })
   }
 
   db.insert(metadataTable)
@@ -177,6 +230,12 @@ function loadState(db: RoomDatabase): StorageState {
   const roomRows = db.select().from(roomsTable).all()
   const userRows = db.select().from(usersTable).all()
   const sessionRows = db.select().from(sessionsTable).all()
+  const studyRoomRows = db.select().from(studyRoomsTable).all()
+  const chatRows = db
+    .select()
+    .from(chatMessagesTable)
+    .orderBy(asc(chatMessagesTable.createdAt))
+    .all()
   const actionRows = db
     .select()
     .from(actionsTable)
@@ -187,16 +246,36 @@ function loadState(db: RoomDatabase): StorageState {
   const actionsByRoom = groupBy(actionRows, row => row.roomId)
   const rooms = roomRows.map(row => rowToRoom(row, sessionsByRoom.get(row.id) ?? [], actionsByRoom.get(row.id) ?? []))
   const validRooms = rooms.filter(isValidRoom)
+  const studyRooms = studyRoomRows
+    .map(rowToStudyRoom)
+    .filter((room): room is StudyRoom => room !== null)
+  const chatMessages = chatRows.map(rowToChatMessage)
   return {
     rooms: validRooms,
-    users: mergeUsers(userRows.map(rowToUser), getSessionUsers(validRooms)),
+    studyRooms,
+    chatMessages,
+    users: mergeUsers(
+      userRows.map(rowToUser),
+      getSessionUsers(validRooms),
+      getStudyUsers(studyRooms),
+      getChatUsers(chatMessages),
+    ),
   }
 }
 
 function saveState(db: RoomDatabase, state: StorageState) {
   const storedRooms = state.rooms.map(toStoredRoom)
-  const users = mergeUsers(state.users, getSessionUsers(storedRooms))
+  const studyRooms = (state.studyRooms ?? []).map(toStoredStudyRoom)
+  const chatMessages = (state.chatMessages ?? []).map(message => ChatMessageSchema.parse(message))
+  const users = mergeUsers(
+    state.users,
+    getSessionUsers(storedRooms),
+    getStudyUsers(studyRooms),
+    getChatUsers(chatMessages),
+  )
   db.transaction((tx) => {
+    tx.delete(chatMessagesTable).run()
+    tx.delete(studyRoomsTable).run()
     tx.delete(actionsTable).run()
     tx.delete(sessionsTable).run()
     tx.delete(roomsTable).run()
@@ -239,24 +318,60 @@ function saveState(db: RoomDatabase, state: StorageState) {
         }).run()
       })
     }
+
+    for (const studyRoom of studyRooms) {
+      tx.insert(studyRoomsTable).values(studyRoomToRow(studyRoom)).run()
+    }
+
+    for (const message of chatMessages) {
+      tx.insert(chatMessagesTable).values(chatMessageToRow(message)).run()
+    }
   })
 }
 
 function roomToRow(room: RoomState): typeof roomsTable.$inferInsert {
   return {
-      id: room.id,
-      name: room.name,
-      maxPlayers: room.maxPlayers,
-      winner: room.winner,
-      finishReason: room.finishReason === null
-        ? null
-        : MatchRoomFinishReasonSchema.parse(room.finishReason),
-      settingsJson: JSON.stringify(room.settings),
-      password: null,
-      clockJson: JSON.stringify(room.clock),
+    id: room.id,
+    name: room.name,
+    maxPlayers: room.maxPlayers,
+    winner: room.winner,
+    finishReason: room.finishReason === null
+      ? null
+      : MatchRoomFinishReasonSchema.parse(room.finishReason),
+    settingsJson: JSON.stringify(room.settings),
+    password: null,
+    clockJson: JSON.stringify(room.clock),
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
+  }
+}
+
+function studyRoomToRow(room: StudyRoom): typeof studyRoomsTable.$inferInsert {
+  const parsed = StudyRoomSchema.parse(room)
+  return {
+    id: parsed.id,
+    name: parsed.name,
+    ownerUserId: parsed.ownerUserId,
+    visibility: parsed.visibility,
+    documentJson: JSON.stringify(parsed.document),
+    membersJson: JSON.stringify(parsed.members),
+    version: parsed.version,
+    createdAt: parsed.createdAt,
+    updatedAt: parsed.updatedAt,
+  }
+}
+
+function chatMessageToRow(message: ChatMessage): typeof chatMessagesTable.$inferInsert {
+  const parsed = ChatMessageSchema.parse(message)
+  return {
+    id: parsed.id,
+    roomKind: parsed.roomKind,
+    roomId: parsed.roomId,
+    userId: parsed.userId,
+    nickname: parsed.nickname,
+    text: parsed.text,
+    createdAt: parsed.createdAt,
   }
 }
 
@@ -284,6 +399,33 @@ function rowToRoom(room: RoomRow, sessions: SessionRow[], actions: ActionRow[]):
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
   }
+}
+
+function rowToStudyRoom(row: StudyRoomRow): StudyRoom | null {
+  const result = StudyRoomSchema.safeParse({
+    id: row.id,
+    name: row.name,
+    ownerUserId: row.ownerUserId,
+    visibility: row.visibility,
+    document: parseJson<StudyRoom['document']>(row.documentJson),
+    members: parseJson<StudyRoom['members']>(row.membersJson),
+    version: row.version,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  })
+  return result.success ? result.data : null
+}
+
+function rowToChatMessage(row: ChatMessageRow): ChatMessage {
+  return ChatMessageSchema.parse({
+    id: row.id,
+    roomKind: row.roomKind,
+    roomId: row.roomId,
+    userId: row.userId,
+    nickname: row.nickname,
+    text: row.text,
+    createdAt: row.createdAt,
+  })
 }
 
 function rowToUser(row: UserRow): UserState {
@@ -327,6 +469,38 @@ function getSessionUsers(rooms: RoomState[]): UserState[] {
   return [...users.values()]
 }
 
+function getStudyUsers(rooms: StudyRoom[]): UserState[] {
+  const now = Date.now()
+  const users = new Map<string, UserState>()
+  for (const room of rooms) {
+    for (const member of room.members) {
+      const existing = users.get(member.userId)
+      users.set(member.userId, {
+        id: member.userId,
+        nickname: existing?.nickname ?? member.nickname,
+        createdAt: existing?.createdAt ?? member.joinedAt ?? now,
+        updatedAt: Math.max(existing?.updatedAt ?? 0, member.joinedAt ?? now),
+      })
+    }
+  }
+  return [...users.values()]
+}
+
+function getChatUsers(messages: ChatMessage[]): UserState[] {
+  const now = Date.now()
+  const users = new Map<string, UserState>()
+  for (const message of messages) {
+    const existing = users.get(message.userId)
+    users.set(message.userId, {
+      id: message.userId,
+      nickname: existing?.nickname ?? message.nickname,
+      createdAt: existing?.createdAt ?? message.createdAt ?? now,
+      updatedAt: Math.max(existing?.updatedAt ?? 0, message.createdAt ?? now),
+    })
+  }
+  return [...users.values()]
+}
+
 function mergeUsers(...sources: UserState[][]): UserState[] {
   const users = new Map<string, UserState>()
   for (const source of sources) {
@@ -355,6 +529,10 @@ function toStoredRoom(room: RoomState): RoomState {
     ...room,
     actions: [],
   }
+}
+
+function toStoredStudyRoom(room: StudyRoom): StudyRoom {
+  return StudyRoomSchema.parse(room)
 }
 
 function isValidRoom(room: Partial<RoomState>): room is RoomState {

@@ -43,16 +43,42 @@ export const actionsTable = sqliteTable('actions', {
   primaryKey({ columns: [table.roomId, table.actionIndex] }),
 ])
 
+export const studyRoomsTable = sqliteTable('study_rooms', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  ownerUserId: text('owner_user_id').notNull(),
+  visibility: text('visibility').notNull(),
+  documentJson: text('document_json').notNull(),
+  membersJson: text('members_json').notNull(),
+  version: integer('version').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+export const chatMessagesTable = sqliteTable('chat_messages', {
+  id: text('id').primaryKey(),
+  roomKind: text('room_kind').notNull(),
+  roomId: text('room_id').notNull(),
+  userId: text('user_id').notNull(),
+  nickname: text('nickname'),
+  text: text('text').notNull(),
+  createdAt: integer('created_at').notNull(),
+})
+
 export const storageSchema = {
   actionsTable,
+  chatMessagesTable,
   metadataTable,
   roomsTable,
   sessionsTable,
+  studyRoomsTable,
   usersTable,
 }
 
 export type RoomRow = typeof roomsTable.$inferSelect
 export type SessionRow = typeof sessionsTable.$inferSelect
 export type ActionRow = typeof actionsTable.$inferSelect
+export type StudyRoomRow = typeof studyRoomsTable.$inferSelect
+export type ChatMessageRow = typeof chatMessagesTable.$inferSelect
 export type MetadataRow = typeof metadataTable.$inferSelect
 export type UserRow = typeof usersTable.$inferSelect
