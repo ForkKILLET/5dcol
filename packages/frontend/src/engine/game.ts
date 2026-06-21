@@ -1,5 +1,5 @@
 import { Action, Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
-import type { StudyDocument } from '@5dcol/shared/protocol'
+import type { StudyDocument, StudyPatch } from '@5dcol/shared/protocol'
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
@@ -633,6 +633,30 @@ export class Game extends Disposable(Empty) {
     this.syncToolbarButtons()
     this.syncRecord()
     this.syncStatus()
+    return true
+  }
+
+  public applyStudyPatch(patch: StudyPatch): boolean {
+    const currentTarget = this.recordDocument.resolveCursorTarget({
+      recordLineId: this.recordDocument.activeRecordLineId,
+      recordActionIndex: this.recordDocument.getActiveLineLocalActionIndex(this.actionIndex),
+    })
+
+    if (! this.recordDocument.applyStudyPatch(patch)) return false
+
+    const nextTarget = currentTarget
+      ? this.recordDocument.resolveCursorTarget(currentTarget)
+      : null
+    const fallbackLine = this.recordDocument.getLine(0)
+    const target = nextTarget ?? {
+      recordLineId: 0,
+      recordActionIndex: fallbackLine?.actions.length ?? 0,
+    }
+    const actions = this.recordDocument.getLineFullActions(target.recordLineId)
+    const targetActionIndex = this.recordDocument.getLinePrefixActions(target.recordLineId).length
+      + target.recordActionIndex
+    this.recordDocument.setActiveLine(target.recordLineId)
+    this.applyRecordActionPath(actions, targetActionIndex)
     return true
   }
 

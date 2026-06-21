@@ -20,7 +20,7 @@ import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, type GameWorkspaceState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
 import { getMainMenuLayout } from '@engine/mainMenuLayout'
-import { MatchClient, type MatchRoomStateSubscription } from '@engine/matchClient'
+import { MatchClient, type MatchRoomStateSubscription, type StudyRoomStateSubscription } from '@engine/matchClient'
 import { formatDuration } from '@engine/record'
 import {
   getRecordGlyphColor4,
@@ -168,6 +168,7 @@ let onlinePollTimer: number | null = null
 let onlineReconnectTimer: number | null = null
 let clockTimer: number | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
+let onlineStudyStateSubscription: StudyRoomStateSubscription | null = null
 let gameResizeObserver: ResizeObserver | null = null
 let resizeFrame: number | null = null
 let onlineRoomStateSubscriptionActive = false
@@ -1236,6 +1237,7 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   activeLocalVersus.value = localVersus
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
+  stopOnlineStudyStateSubscription()
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1279,6 +1281,7 @@ function startStudyGame(study: StudyDocument, source: StudyOpenSource = { kind: 
   activeLocalVersus.value = null
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
+  stopOnlineStudyStateSubscription()
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1326,6 +1329,7 @@ function startStudyGame(study: StudyDocument, source: StudyOpenSource = { kind: 
       version: source.version,
       title: study.title,
     }
+    startOnlineStudyStateSubscription(source.serverAddress, source.roomId, matchUserId.value)
   }
   game.loadStudyDocument(study, { workspace: source.kind === 'local' ? workspace : undefined })
   syncGameViewportInsets()
@@ -1337,6 +1341,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   activeLocalStudy.value = null
   activeLocalVersus.value = null
   activeOnlineStudy.value = null
+  stopOnlineStudyStateSubscription()
   if (state.session) storeOnlineSession(serverAddress, state)
   stopOnlinePolling()
   onlineRoomRef.value = {
@@ -1543,6 +1548,7 @@ function startOnlineRoomStateSubscription(
   userId: string | null,
 ) {
   stopOnlineRoomStateSubscription()
+  stopOnlineStudyStateSubscription()
   onlineRoomStateSubscriptionActive = true
   const client = new MatchClient(serverAddress)
   onlineRoomStateSubscription = client.subscribeRoomState(
@@ -1582,6 +1588,82 @@ function stopOnlineRoomStateSubscription() {
   stopOnlineReconnect()
   onlineRoomStateSubscription?.unsubscribe()
   onlineRoomStateSubscription = null
+}
+
+function startOnlineStudyStateSubscription(
+  serverAddress: string,
+  roomId: string,
+  userId: string | null,
+) {
+  stopOnlineStudyStateSubscription()
+  const client = new MatchClient(serverAddress)
+  onlineStudyStateSubscription = client.subscribeStudyState(
+    roomId,
+    userId,
+    (event) => {
+      const current = activeOnlineStudy.value
+      if (! current || current.serverAddress !== serverAddress || current.roomId !== roomId) return
+
+      switch (event.type) {
+        case 'study-state':
+          activeOnlineStudy.value = {
+            ...current,
+            version: event.room.version,
+            title: event.room.document.title,
+          }
+          break
+        case 'study-patch':
+          if (! game?.applyStudyPatch(event.patch)) {
+            void syncOnlineStudyState(serverAddress, roomId)
+            return
+          }
+          activeOnlineStudy.value = {
+            ...current,
+            version: event.version,
+          }
+          break
+        case 'command-rejected':
+          void syncOnlineStudyState(serverAddress, roomId)
+          break
+        case 'presence':
+        case 'chat-message':
+          break
+      }
+    },
+    {
+      onOpen: () => {
+        onlineConnectionStatus.value = 'connected'
+      },
+      onError: () => {
+        onlineConnectionStatus.value = 'reconnecting'
+      },
+    },
+  )
+}
+
+function stopOnlineStudyStateSubscription() {
+  onlineStudyStateSubscription?.unsubscribe()
+  onlineStudyStateSubscription = null
+}
+
+async function syncOnlineStudyState(serverAddress: string, roomId: string) {
+  try {
+    const client = new MatchClient(serverAddress)
+    const state = await client.getStudyState(roomId)
+    const current = activeOnlineStudy.value
+    if (! current || current.serverAddress !== serverAddress || current.roomId !== roomId) return
+    activeOnlineStudy.value = {
+      ...current,
+      version: state.room.version,
+      title: state.room.document.title,
+    }
+    game?.loadStudyDocument(state.room.document, { focus: false })
+    onlineConnectionStatus.value = 'connected'
+  }
+  catch (err) {
+    onlineConnectionStatus.value = 'reconnecting'
+    onlineError.value = err instanceof Error ? err.message : String(err)
+  }
 }
 
 function syncOnlinePendingAction(action: Action | null) {
@@ -1980,6 +2062,7 @@ onUnmounted(() => {
   stopMatchServerRefresh()
   stopOnlinePolling()
   stopOnlineRoomStateSubscription()
+  stopOnlineStudyStateSubscription()
   stopAmbience()
   if (clockTimer !== null) window.clearInterval(clockTimer)
   game?.dispose()
