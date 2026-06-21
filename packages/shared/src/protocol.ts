@@ -524,7 +524,7 @@ export type StudyMember = z.infer<typeof StudyMemberSchema>
 export const StudyPresenceSchema = z.object({
   userId: z.string(),
   nickname: z.string().nullable(),
-  cursor: RecordCursorSchema,
+  cursor: StudyPositionSchema,
   mode: StudyFollowModeSchema,
   followingUserId: z.string().optional(),
   updatedAt: z.number(),
@@ -743,7 +743,7 @@ export const StudyRoomClientEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('presence'),
-    cursor: RecordCursorSchema,
+    cursor: StudyPositionSchema,
     mode: StudyFollowModeSchema,
     followingUserId: z.string().optional(),
   }),

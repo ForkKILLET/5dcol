@@ -221,7 +221,7 @@ export class RecordDocument {
   public serializeStudyBranches(createdAt = Date.now()): StudyBranch[] {
     return [...this.lines.values()].map(line => ({
       id: line.branchId,
-      parent: line.parent ? this.toStudyPosition(line.parent.lineId, line.parent.beforeActionIndex) : null,
+      parent: line.parent ? this.createStudyPosition(line.parent.lineId, line.parent.beforeActionIndex) : null,
       actionIds: [...line.actionIds],
       createdAt: line.createdAt || createdAt,
     }))
@@ -522,6 +522,35 @@ export class RecordDocument {
       recordLineId: line.id,
       recordActionIndex: actionIndex,
     }
+  }
+
+  public toStudyPosition(target: RecordCursorTarget): StudyPosition | null {
+    const resolved = this.resolveCursorTarget(target)
+    if (! resolved) return null
+    return this.createStudyPosition(resolved.recordLineId, resolved.recordActionIndex)
+  }
+
+  public fromStudyPosition(position: StudyPosition): RecordCursorTarget | null {
+    if (position.type === 'head') {
+      const line = this.getLineByBranchId(position.branchId)
+      return line
+        ? {
+            recordLineId: line.id,
+            recordActionIndex: 0,
+          }
+        : null
+    }
+
+    for (const line of this.lines.values()) {
+      const actionIndex = line.actionIds.indexOf(position.actionId)
+      if (actionIndex >= 0) {
+        return {
+          recordLineId: line.id,
+          recordActionIndex: actionIndex + 1,
+        }
+      }
+    }
+    return null
   }
 
   public getActiveLineLocalActionIndex(globalActionIndex: number): number {
@@ -934,7 +963,7 @@ export class RecordDocument {
     return [...line.branchLineIdsBeforeAction.values()].flat()
   }
 
-  private toStudyPosition(lineId: number, beforeActionIndex: number): StudyPosition {
+  private createStudyPosition(lineId: number, beforeActionIndex: number): StudyPosition {
     const line = this.lines.get(lineId)
     if (! line || beforeActionIndex <= 0) {
       return {
@@ -947,6 +976,10 @@ export class RecordDocument {
       type: 'after',
       actionId: line.actionIds[beforeActionIndex - 1] ?? line.actionIds[line.actionIds.length - 1] ?? '',
     }
+  }
+
+  private getLineByBranchId(branchId: string): RecordLine | undefined {
+    return [...this.lines.values()].find(line => line.branchId === branchId)
   }
 
   private getActionCommentTexts(
