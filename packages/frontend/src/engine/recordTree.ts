@@ -7,6 +7,7 @@ import {
   type StudyActionNode,
   type StudyBranch,
   type StudyDocument,
+  type StudyPatch,
   type StudyPosition,
   type StoredRecordAnnotation,
   type StoredRecordLine,
@@ -322,6 +323,24 @@ export class RecordDocument {
   public replaceAnnotations(annotations: RecordAnnotation[]) {
     this.annotations = parseStoredRecordAnnotations(annotations)
     this.pruneAnnotations()
+  }
+
+  public applyStudyPatch(patch: StudyPatch): boolean {
+    switch (patch.type) {
+      case 'append-action':
+        return this.applyAppendStudyActionPatch(patch)
+      case 'create-branch':
+        return this.applyCreateStudyBranchPatch(patch)
+      case 'remove-future':
+        return this.applyRemoveStudyFuturePatch(patch)
+      case 'upsert-annotation':
+        return this.upsertAnnotation(patch.annotation)
+      case 'delete-annotation':
+        return this.deleteAnnotation(patch.annotationId)
+      case 'update-title':
+      case 'update-visibility':
+        return true
+    }
   }
 
   public upsertAnnotation(annotation: RecordAnnotation) {
@@ -909,6 +928,131 @@ export class RecordDocument {
     }
     this.lines.set(line.id, line)
     return line
+  }
+
+  private applyAppendStudyActionPatch(
+    patch: Extract<StudyPatch, { type: 'append-action' }>,
+  ): boolean {
+    if (this.getActionTargetById(patch.action.id)) return true
+
+    const target = this.resolveStudyPosition(patch.position)
+    if (! target || target.line.branchId !== patch.branchId) return false
+    if (target.actionIndex !== target.line.actions.length) return false
+
+    target.line.actions.push(patch.action.action)
+    target.line.actionIds.push(patch.action.id)
+    target.line.actionCreatedAts.push(patch.action.createdAt)
+    target.line.actionAuthorIds.push(patch.action.authorId)
+    return true
+  }
+
+  private applyCreateStudyBranchPatch(
+    patch: Extract<StudyPatch, { type: 'create-branch' }>,
+  ): boolean {
+    if (this.getLineByBranchId(patch.branch.id)) return true
+    if (! patch.branch.parent) return false
+
+    const parent = this.resolveStudyPosition(patch.branch.parent)
+    if (! parent) return false
+
+    const actionById = new Map(patch.actions.map(action => [action.id, action]))
+    const actionNodes: StudyActionNode[] = []
+    for (const actionId of patch.branch.actionIds) {
+      const action = actionById.get(actionId)
+      if (! action) return false
+      actionNodes.push(action)
+    }
+
+    const line: RecordLine = {
+      id: this.nextLineId++,
+      branchId: patch.branch.id,
+      createdAt: patch.branch.createdAt,
+      parent: {
+        lineId: parent.line.id,
+        beforeActionIndex: parent.actionIndex,
+      },
+      actions: actionNodes.map(action => action.action),
+      actionIds: [...patch.branch.actionIds],
+      actionCreatedAts: actionNodes.map(action => action.createdAt),
+      actionAuthorIds: actionNodes.map(action => action.authorId),
+      branchLineIdsBeforeAction: new Map(),
+      depth: parent.line.depth + 1,
+    }
+    this.lines.set(line.id, line)
+
+    const branchLineIds = parent.line.branchLineIdsBeforeAction.get(parent.actionIndex) ?? []
+    if (! branchLineIds.includes(line.id)) {
+      parent.line.branchLineIdsBeforeAction.set(parent.actionIndex, [...branchLineIds, line.id])
+    }
+    return true
+  }
+
+  private applyRemoveStudyFuturePatch(
+    patch: Extract<StudyPatch, { type: 'remove-future' }>,
+  ): boolean {
+    const removedBranchIds = new Set(patch.removedBranchIds)
+    const removedActionIds = new Set(patch.removedActionIds)
+
+    for (const line of [...this.lines.values()]) {
+      if (removedBranchIds.has(line.branchId)) this.deleteLineTree(line.id)
+    }
+
+    for (const line of this.lines.values()) {
+      this.removeStudyActionsFromLine(line, removedActionIds)
+      for (const [actionIndex, branchLineIds] of [...line.branchLineIdsBeforeAction.entries()]) {
+        const nextBranchLineIds = branchLineIds.filter((lineId) => {
+          const branchLine = this.lines.get(lineId)
+          return branchLine && ! removedBranchIds.has(branchLine.branchId)
+        })
+        if (nextBranchLineIds.length > 0 && actionIndex <= line.actions.length) {
+          line.branchLineIdsBeforeAction.set(actionIndex, nextBranchLineIds)
+        }
+        else {
+          line.branchLineIdsBeforeAction.delete(actionIndex)
+        }
+      }
+    }
+
+    if (! this.lines.has(this.activeLineId)) this.activeLineId = 0
+    this.pruneAnnotations()
+    return true
+  }
+
+  private removeStudyActionsFromLine(line: RecordLine, removedActionIds: ReadonlySet<string>) {
+    const actions: Action[] = []
+    const actionIds: string[] = []
+    const actionCreatedAts: number[] = []
+    const actionAuthorIds: (string | undefined)[] = []
+
+    line.actionIds.forEach((actionId, actionIndex) => {
+      if (removedActionIds.has(actionId)) return
+      const action = line.actions[actionIndex]
+      if (! action) return
+      actions.push(action)
+      actionIds.push(actionId)
+      actionCreatedAts.push(line.actionCreatedAts[actionIndex] ?? Date.now())
+      actionAuthorIds.push(line.actionAuthorIds[actionIndex])
+    })
+
+    line.actions = actions
+    line.actionIds = actionIds
+    line.actionCreatedAts = actionCreatedAts
+    line.actionAuthorIds = actionAuthorIds
+  }
+
+  private resolveStudyPosition(position: StudyPosition): { line: RecordLine, actionIndex: number } | null {
+    if (position.type === 'head') {
+      const line = this.getLineByBranchId(position.branchId)
+      return line ? { line, actionIndex: 0 } : null
+    }
+
+    const target = this.getActionTargetById(position.actionId)
+    return target
+      ? {
+          line: target.line,
+          actionIndex: target.actionIndex + 1,
+        }
+      : null
   }
 
   private getLinePrefixActionTargets(lineId: number): RecordCursorTarget[] {
