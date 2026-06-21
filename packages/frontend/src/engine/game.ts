@@ -1,5 +1,5 @@
 import { Action, Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
-import type { StudyDocument, StudyPatch, StudyPosition } from '@5dcol/shared/protocol'
+import type { StudyCommand, StudyDocument, StudyPatch, StudyPosition } from '@5dcol/shared/protocol'
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'
 import { getBoardRenderLayers } from '@engine/board'
@@ -20,7 +20,7 @@ import {
   getSpacelikeKey,
   parseRecordMarkerColor,
 } from '@engine/recordMarker'
-import { isActionPrefix, RecordDocument, type RecordArrowMarkerAnnotation, type RecordCursorTarget, type RecordSquareMarkerAnnotation } from '@engine/recordTree'
+import { isActionPrefix, RecordDocument, type RecordAnnotation, type RecordArrowMarkerAnnotation, type RecordCursorTarget, type RecordSquareMarkerAnnotation } from '@engine/recordTree'
 import { type Renderer, RenderItemType } from '@engine/renderer'
 import { PIECE_TO_TEXTURE_ID } from '@engine/texture'
 import { TimelineTilesPainter } from '@engine/painters/timelineTilesPainter'
@@ -62,6 +62,7 @@ export interface GameContext {
   canForfeitGame?: () => boolean
   canFinishGame?: () => boolean
   isExternallyFinished?: () => boolean
+  onStudyCommandRequest?: (command: StudyCommand) => boolean
   onToolbarChange?: (buttons: GameToolbarButton[]) => void
   onRecordChange?: (request: GameExportRequest) => void
   onStatusChange?: (status: GameStatusView) => void
@@ -417,12 +418,19 @@ export class Game extends Disposable(Empty) {
     if (this.isMoveAnimating() || this.pendingMoves.length > 0) return false
     const target = this.recordDocument.resolveCursorTarget(cursor)
     if (! target) return false
+    const studyPosition = this.recordDocument.toStudyPosition(target)
 
     const nextTarget = this.recordDocument.deleteFutureAndResolveCursorTarget(
       target.recordLineId,
       target.recordActionIndex,
     )
     if (! nextTarget) return false
+    if (studyPosition) {
+      this.sendStudyCommand({
+        type: 'remove-future',
+        position: studyPosition,
+      })
+    }
 
     const actions = this.recordDocument.getLineFullActions(nextTarget.recordLineId)
     const targetActionIndex = this.recordDocument.getLinePrefixActions(nextTarget.recordLineId).length
@@ -461,6 +469,7 @@ export class Game extends Disposable(Empty) {
     texts: readonly string[]
   }): boolean {
     if (this.isOnlineGame()) return false
+    const annotationsBefore = this.recordDocument.getAnnotations()
     const changed = this.recordDocument.replaceActionComments(
       recordLineId,
       recordActionIndex,
@@ -470,6 +479,7 @@ export class Game extends Disposable(Empty) {
     )
     if (! changed) return false
 
+    this.sendStudyAnnotationChanges(annotationsBefore, this.recordDocument.getAnnotations())
     this.persistGameState()
     return true
   }
@@ -486,6 +496,7 @@ export class Game extends Disposable(Empty) {
     glyphs: readonly string[]
   }): boolean {
     if (this.isOnlineGame()) return false
+    const annotationsBefore = this.recordDocument.getAnnotations()
     const changed = this.recordDocument.replaceMoveGlyphs(
       recordLineId,
       recordActionIndex,
@@ -495,6 +506,7 @@ export class Game extends Disposable(Empty) {
     )
     if (! changed) return false
 
+    this.sendStudyAnnotationChanges(annotationsBefore, this.recordDocument.getAnnotations())
     this.persistGameState()
     return true
   }
@@ -696,6 +708,36 @@ export class Game extends Disposable(Empty) {
       case 'update-visibility':
         return null
     }
+  }
+
+  private sendStudyCommand(command: StudyCommand): boolean {
+    return this.ctx.onStudyCommandRequest?.(command) ?? false
+  }
+
+  private sendStudyAnnotationChanges(
+    before: readonly RecordAnnotation[],
+    after: readonly RecordAnnotation[],
+  ) {
+    if (! this.ctx.onStudyCommandRequest) return
+
+    const beforeIds = new Set(before.map(annotation => annotation.id))
+    const afterIds = new Set(after.map(annotation => annotation.id))
+    before
+      .filter(annotation => ! afterIds.has(annotation.id))
+      .forEach((annotation) => {
+        this.sendStudyCommand({
+          type: 'delete-annotation',
+          annotationId: annotation.id,
+        })
+      })
+    after
+      .filter(annotation => ! beforeIds.has(annotation.id))
+      .forEach((annotation) => {
+        this.sendStudyCommand({
+          type: 'upsert-annotation',
+          annotation,
+        })
+      })
   }
 
   public getStudyDocument({ id, title }: { id: string, title: string }): StudyDocument {
@@ -1884,6 +1926,7 @@ export class Game extends Disposable(Empty) {
 
   private toggleSquareMarker(square: RecordMarkerSquare): boolean {
     const target = this.getCurrentRecordCursorTarget()
+    const annotationsBefore = this.recordDocument.getAnnotations()
     const changed = this.recordDocument.toggleSquareMarker(
       target.recordLineId,
       target.recordActionIndex,
@@ -1893,6 +1936,7 @@ export class Game extends Disposable(Empty) {
     )
     if (! changed) return false
 
+    this.sendStudyAnnotationChanges(annotationsBefore, this.recordDocument.getAnnotations())
     this.deselectPiece()
     this.playUISound()
     this.persistGameState()
@@ -1902,6 +1946,7 @@ export class Game extends Disposable(Empty) {
 
   private toggleArrowMarker(from: RecordMarkerSquare, to: RecordMarkerSquare): boolean {
     const target = this.getCurrentRecordCursorTarget()
+    const annotationsBefore = this.recordDocument.getAnnotations()
     const changed = this.recordDocument.toggleArrowMarker(
       target.recordLineId,
       target.recordActionIndex,
@@ -1913,6 +1958,7 @@ export class Game extends Disposable(Empty) {
     )
     if (! changed) return false
 
+    this.sendStudyAnnotationChanges(annotationsBefore, this.recordDocument.getAnnotations())
     this.deselectPiece()
     this.playUISound()
     this.persistGameState()

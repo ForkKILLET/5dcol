@@ -10,6 +10,7 @@ import {
   type MatchRoom,
   type MatchRoomSettings,
   type MatchRoomStatus,
+  type StudyCommand,
   type StudyDocument,
   type StudyPatch,
   type StudyPosition,
@@ -522,6 +523,7 @@ function getButtonText(button: GameToolbarButton): string {
 }
 
 function getRecordAuthorId() {
+  if (activeOnlineStudy.value && matchUserId.value) return matchUserId.value
   return onlineSession.value?.userId ?? 'local'
 }
 
@@ -1318,6 +1320,9 @@ function startStudyGame(study: StudyDocument, source: StudyOpenSource = { kind: 
     initialWorkspace: source.kind === 'local' ? workspace : undefined,
     onWorkspaceChange: updateWorkspace,
     onRecordMoveFocusRequest: focusRecordMoveFromBoard,
+    onStudyCommandRequest: source.kind === 'online'
+      ? command => sendOnlineStudyCommand(source.serverAddress, source.roomId, command)
+      : undefined,
     onStudyActionSubmitRequest: source.kind === 'online'
       ? (action, position) => submitOnlineStudyAction(source.serverAddress, source.roomId, action, position)
       : undefined,
@@ -1666,18 +1671,32 @@ function submitOnlineStudyAction(
   const current = activeOnlineStudy.value
   if (! current || current.serverAddress !== serverAddress || current.roomId !== roomId) return false
   if (onlineStudySubmitPending) return true
-  if (! onlineStudyStateSubscription || onlineConnectionStatus.value !== 'connected') {
-    onlineError.value = t('online.reconnecting')
-    onlineConnectionStatus.value = 'reconnecting'
-    return true
-  }
 
   onlineStudySubmitPending = true
-  onlineStudyStateSubscription.sendCommand(current.version, {
+  if (! sendOnlineStudyCommand(serverAddress, roomId, {
     type: 'submit-action',
     position,
     action,
-  })
+  })) {
+    onlineStudySubmitPending = false
+  }
+  return true
+}
+
+function sendOnlineStudyCommand(
+  serverAddress: string,
+  roomId: string,
+  command: StudyCommand,
+): boolean {
+  const current = activeOnlineStudy.value
+  if (! current || current.serverAddress !== serverAddress || current.roomId !== roomId) return false
+  if (! onlineStudyStateSubscription || onlineConnectionStatus.value !== 'connected') {
+    onlineError.value = t('online.reconnecting')
+    onlineConnectionStatus.value = 'reconnecting'
+    return false
+  }
+
+  onlineStudyStateSubscription.sendCommand(current.version, command)
   return true
 }
 
