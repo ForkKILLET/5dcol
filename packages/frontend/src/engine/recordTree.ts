@@ -249,24 +249,28 @@ export class RecordDocument {
       .map(cloneAnnotation)
   }
 
-  public getSquareMarkersAt(lineId: number, actionIndex: number): RecordSquareMarkerAnnotation[] {
+  public getSquareMarkersAt(lineId: number, _actionIndex: number): RecordSquareMarkerAnnotation[] {
+    const branchId = this.lines.get(lineId)?.branchId
+    if (! branchId) return []
+
     return this.annotations
       .filter((annotation): annotation is RecordSquareMarkerAnnotation => (
         annotation.type === 'marker'
           && annotation.target.type === 'square'
-          && annotation.target.lineId === lineId
-          && annotation.target.actionIndex === actionIndex
+          && annotation.target.branchId === branchId
       ))
       .map(cloneAnnotation)
   }
 
-  public getArrowMarkersAt(lineId: number, actionIndex: number): RecordArrowMarkerAnnotation[] {
+  public getArrowMarkersAt(lineId: number, _actionIndex: number): RecordArrowMarkerAnnotation[] {
+    const branchId = this.lines.get(lineId)?.branchId
+    if (! branchId) return []
+
     return this.annotations
       .filter((annotation): annotation is RecordArrowMarkerAnnotation => (
         annotation.type === 'marker'
           && annotation.target.type === 'arrow'
-          && annotation.target.lineId === lineId
-          && annotation.target.actionIndex === actionIndex
+          && annotation.target.branchId === branchId
       ))
       .map(cloneAnnotation)
   }
@@ -372,7 +376,7 @@ export class RecordDocument {
 
   public toggleSquareMarker(
     lineId: number,
-    actionIndex: number,
+    _actionIndex: number,
     m: number,
     coord: Coord,
     {
@@ -383,10 +387,12 @@ export class RecordDocument {
       color?: string
     },
   ): boolean {
+    const branchId = this.lines.get(lineId)?.branchId
+    if (! branchId) return false
+
     const target: RecordAnnotationTarget = {
       type: 'square',
-      lineId,
-      actionIndex,
+      branchId,
       m,
       coord,
     }
@@ -403,7 +409,7 @@ export class RecordDocument {
     }
 
     this.annotations.push({
-      id: `marker:${lineId}:${actionIndex}:${coord.l}:${m}:${coord.x}:${coord.y}:${Date.now()}`,
+      id: `marker:${branchId}:${coord.l}:${m}:${coord.x}:${coord.y}:${Date.now()}`,
       type: 'marker',
       target,
       authorId,
@@ -414,7 +420,7 @@ export class RecordDocument {
 
   public toggleArrowMarker(
     lineId: number,
-    actionIndex: number,
+    _actionIndex: number,
     from: Coord,
     fromPlayer: number,
     to: Coord,
@@ -427,10 +433,12 @@ export class RecordDocument {
       color?: string
     },
   ): boolean {
+    const branchId = this.lines.get(lineId)?.branchId
+    if (! branchId) return false
+
     const target: RecordAnnotationTarget = {
       type: 'arrow',
-      lineId,
-      actionIndex,
+      branchId,
       from,
       fromPlayer,
       to,
@@ -449,7 +457,7 @@ export class RecordDocument {
     }
 
     this.annotations.push({
-      id: `marker-arrow:${lineId}:${actionIndex}:${from.l}:${from.t}:${from.x}:${from.y}:${to.l}:${to.t}:${to.x}:${to.y}:${Date.now()}`,
+      id: `marker-arrow:${branchId}:${from.l}:${from.t}:${from.x}:${from.y}:${to.l}:${to.t}:${to.x}:${to.y}:${Date.now()}`,
       type: 'marker',
       target,
       authorId,
@@ -1019,20 +1027,29 @@ export class RecordDocument {
   }
 
   private isAnnotationTargetValid(target: RecordAnnotationTarget): boolean {
-    const line = this.lines.get(target.lineId)
-    if (! line) return false
-
     switch (target.type) {
-      case 'line':
+      case 'line': {
+        const line = this.lines.get(target.lineId)
+        if (! line) return false
         return true
-      case 'cursor':
+      }
+      case 'cursor': {
+        const line = this.lines.get(target.lineId)
+        if (! line) return false
+        return isIntegerInRange(target.actionIndex, 0, line.actions.length)
+      }
       case 'square':
       case 'arrow':
-        return isIntegerInRange(target.actionIndex, 0, line.actions.length)
-      case 'action':
+        return this.getLineByBranchId(target.branchId) !== undefined
+      case 'action': {
+        const line = this.lines.get(target.lineId)
+        if (! line) return false
         if (target.position === 'before') return isIntegerInRange(target.actionIndex, 0, line.actions.length)
         return isIntegerInRange(target.actionIndex, 0, line.actions.length - 1)
+      }
       case 'move': {
+        const line = this.lines.get(target.lineId)
+        if (! line) return false
         if (! isIntegerInRange(target.actionIndex, 0, line.actions.length - 1)) return false
         const action = line.actions[target.actionIndex]
         return Boolean(action && isIntegerInRange(target.moveIndex, 0, action.moves.length - 1))
@@ -1045,31 +1062,35 @@ export const isSameRecordAnnotationTarget = (
   a: RecordAnnotationTarget,
   b: RecordAnnotationTarget,
 ): boolean => {
-  if (a.type !== b.type || a.lineId !== b.lineId) return false
+  if (a.type !== b.type) return false
 
   switch (a.type) {
     case 'line':
-      return true
+      return b.type === 'line' && a.lineId === b.lineId
     case 'cursor':
-      return b.type === 'cursor' && a.actionIndex === b.actionIndex
+      return b.type === 'cursor'
+        && a.lineId === b.lineId
+        && a.actionIndex === b.actionIndex
     case 'action':
       return b.type === 'action'
+        && a.lineId === b.lineId
         && a.actionIndex === b.actionIndex
         && a.position === b.position
     case 'move':
       return b.type === 'move'
+        && a.lineId === b.lineId
         && a.actionIndex === b.actionIndex
         && a.moveIndex === b.moveIndex
     case 'square':
       return b.type === 'square'
-        && a.actionIndex === b.actionIndex
+        && a.branchId === b.branchId
         && a.m === b.m
         && a.coord.l === b.coord.l
         && a.coord.x === b.coord.x
         && a.coord.y === b.coord.y
     case 'arrow':
       return b.type === 'arrow'
-        && a.actionIndex === b.actionIndex
+        && a.branchId === b.branchId
         && a.from.l === b.from.l
         && a.from.t === b.from.t
         && a.from.x === b.from.x

@@ -366,6 +366,19 @@ export const StoredRecordLineSchema = z.object({
 
 export type StoredRecordLine = z.infer<typeof StoredRecordLineSchema>
 
+export const StudyPositionSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('head'),
+    branchId: z.string(),
+  }),
+  z.object({
+    type: z.literal('after'),
+    actionId: z.string(),
+  }),
+])
+
+export type StudyPosition = z.infer<typeof StudyPositionSchema>
+
 export const RecordAnnotationTargetSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('action'),
@@ -381,15 +394,13 @@ export const RecordAnnotationTargetSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('square'),
-    lineId: z.number().int().nonnegative(),
-    actionIndex: z.number().int().nonnegative(),
+    branchId: z.string(),
     m: z.number().int(),
     coord: CoordSchema,
   }),
   z.object({
     type: z.literal('arrow'),
-    lineId: z.number().int().nonnegative(),
-    actionIndex: z.number().int().nonnegative(),
+    branchId: z.string(),
     from: CoordSchema,
     fromPlayer: PlayerSchema.optional(),
     to: CoordSchema,
@@ -454,19 +465,6 @@ export const StoredRecordAnnotationSchema = z.discriminatedUnion('type', [
 ])
 
 export type StoredRecordAnnotation = z.infer<typeof StoredRecordAnnotationSchema>
-
-export const StudyPositionSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('head'),
-    branchId: z.string(),
-  }),
-  z.object({
-    type: z.literal('after'),
-    actionId: z.string(),
-  }),
-])
-
-export type StudyPosition = z.infer<typeof StudyPositionSchema>
 
 export const StudyActionNodeSchema = z.object({
   id: z.string(),

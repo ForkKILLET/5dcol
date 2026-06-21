@@ -110,15 +110,13 @@ export type StudyAnnotationTarget =
   }
   | {
     type: 'square'
-    lineId: number
-    actionIndex: number
+    branchId: string
     m: number
     coord: Coord
   }
   | {
     type: 'arrow'
-    lineId: number
-    actionIndex: number
+    branchId: string
     from: Coord
     fromPlayer?: Player
     to: Coord
@@ -1698,8 +1696,7 @@ const formatStudyAnnotationHeaders = (
       case 'square':
         output.push({ key: '5DStudy_Square', value: formatFlowMap({
           author: getStudyAnnotationMemberIndex(memberIndexes, annotation.authorId),
-          line: annotation.target.lineId,
-          action: annotation.target.actionIndex,
+          branch: annotation.target.branchId,
           at: formatMarkerCoord(annotation.target.coord, annotation.target.m),
           ...(annotation.label ? { label: annotation.label } : {}),
         }) })
@@ -1708,8 +1705,7 @@ const formatStudyAnnotationHeaders = (
       case 'arrow':
         output.push({ key: '5DStudy_Arrow', value: formatFlowMap({
           author: getStudyAnnotationMemberIndex(memberIndexes, annotation.authorId),
-          line: annotation.target.lineId,
-          action: annotation.target.actionIndex,
+          branch: annotation.target.branchId,
           from: formatMarkerCoord(
             annotation.target.from,
             Coord.boardIndex(annotation.target.from, annotation.target.fromPlayer ?? Player.W),
@@ -2073,18 +2069,16 @@ const parseStudySquareMarkerAnnotation = (
   members: readonly string[],
 ): StudyMarkerAnnotation | null => {
   const item = parseFlowMap(value)
-  const lineId = readFlowInteger(item.line)
-  const actionIndex = readFlowInteger(item.action)
+  const branchId = readFlowString(item.branch)
   const target = parseMarkerCoord(readFlowString(item.at))
   const authorId = readAuthorId(item.author, members)
-  if (lineId === null || actionIndex === null || target === null || authorId === null) return null
+  if (! branchId || target === null || authorId === null) return null
   return {
     id: `5dpgn-study-square:${index}`,
     type: 'marker',
     target: {
       type: 'square',
-      lineId,
-      actionIndex,
+      branchId,
       m: target.m,
       coord: target.coord,
     },
@@ -2100,19 +2094,17 @@ const parseStudyArrowMarkerAnnotation = (
   members: readonly string[],
 ): StudyMarkerAnnotation | null => {
   const item = parseFlowMap(value)
-  const lineId = readFlowInteger(item.line)
-  const actionIndex = readFlowInteger(item.action)
+  const branchId = readFlowString(item.branch)
   const from = parseMarkerCoord(readFlowString(item.from))
   const to = parseMarkerCoord(readFlowString(item.to))
   const authorId = readAuthorId(item.author, members)
-  if (lineId === null || actionIndex === null || from === null || to === null || authorId === null) return null
+  if (! branchId || from === null || to === null || authorId === null) return null
   return {
     id: `5dpgn-study-arrow:${index}`,
     type: 'marker',
     target: {
       type: 'arrow',
-      lineId,
-      actionIndex,
+      branchId,
       from: from.coord,
       fromPlayer: from.player,
       to: to.coord,
