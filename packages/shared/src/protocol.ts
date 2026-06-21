@@ -450,39 +450,6 @@ export const StoredRecordAnnotationSchema = z.discriminatedUnion('type', [
 
 export type StoredRecordAnnotation = z.infer<typeof StoredRecordAnnotationSchema>
 
-export const StudyDocumentSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  initialMultiverse: MultiverseSchema,
-  rootLineId: z.number().int().nonnegative().catch(0),
-  lines: z.array(StoredRecordLineSchema),
-  annotations: z.array(StoredRecordAnnotationSchema),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-})
-
-export type StudyDocument = z.infer<typeof StudyDocumentSchema>
-
-export const RoomKindSchema = z.enum(['match', 'study'])
-export const StudyRoomVisibilitySchema = z.enum(['public', 'private'])
-export const StudyMemberRoleSchema = z.enum(['owner', 'moderator', 'editor', 'viewer'])
-export const StudyFollowModeSchema = z.enum(['free', 'following', 'broadcast'])
-
-export type RoomKind = z.infer<typeof RoomKindSchema>
-export type StudyRoomVisibility = z.infer<typeof StudyRoomVisibilitySchema>
-export type StudyMemberRole = z.infer<typeof StudyMemberRoleSchema>
-export type StudyFollowMode = z.infer<typeof StudyFollowModeSchema>
-
-export const StudyMemberSchema = z.object({
-  userId: z.string(),
-  nickname: z.string().nullable(),
-  role: StudyMemberRoleSchema,
-  color: z.string().optional(),
-  joinedAt: z.number(),
-})
-
-export type StudyMember = z.infer<typeof StudyMemberSchema>
-
 export const StudyPositionSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('head'),
@@ -514,6 +481,40 @@ export const StudyBranchSchema = z.object({
 })
 
 export type StudyBranch = z.infer<typeof StudyBranchSchema>
+
+export const StudyDocumentSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  initialMultiverse: MultiverseSchema,
+  rootBranchId: z.string(),
+  branches: z.array(StudyBranchSchema),
+  actions: z.array(StudyActionNodeSchema),
+  annotations: z.array(StoredRecordAnnotationSchema),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+})
+
+export type StudyDocument = z.infer<typeof StudyDocumentSchema>
+
+export const RoomKindSchema = z.enum(['match', 'study'])
+export const StudyRoomVisibilitySchema = z.enum(['public', 'private'])
+export const StudyMemberRoleSchema = z.enum(['owner', 'moderator', 'editor', 'viewer'])
+export const StudyFollowModeSchema = z.enum(['free', 'following', 'broadcast'])
+
+export type RoomKind = z.infer<typeof RoomKindSchema>
+export type StudyRoomVisibility = z.infer<typeof StudyRoomVisibilitySchema>
+export type StudyMemberRole = z.infer<typeof StudyMemberRoleSchema>
+export type StudyFollowMode = z.infer<typeof StudyFollowModeSchema>
+
+export const StudyMemberSchema = z.object({
+  userId: z.string(),
+  nickname: z.string().nullable(),
+  role: StudyMemberRoleSchema,
+  color: z.string().optional(),
+  joinedAt: z.number(),
+})
+
+export type StudyMember = z.infer<typeof StudyMemberSchema>
 
 export const StudyPresenceSchema = z.object({
   userId: z.string(),

@@ -622,7 +622,7 @@ export class Game extends Disposable(Empty) {
     const recordDocument = RecordDocument.fromStudyDocument(studyDocument)
     if (! recordDocument) return false
 
-    const actions = recordDocument.getLineFullActions(studyDocument.rootLineId)
+    const actions = recordDocument.getLineFullActions(0)
     this.loadCoreGameState(CoreGameState.create(actions, [], studyDocument.initialMultiverse), {
       focus: false,
       recordDocument,

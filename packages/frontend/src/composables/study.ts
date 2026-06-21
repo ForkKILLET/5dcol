@@ -238,7 +238,7 @@ function toLocalStudySummary(study: StudyDocument): LocalStudySummary {
   return {
     id: study.id,
     title: study.title,
-    actionCount: study.lines.reduce((sum, line) => sum + line.actions.length, 0),
+    actionCount: study.actions.length,
     annotationCount: study.annotations.length,
     createdAt: study.createdAt,
     updatedAt: study.updatedAt,

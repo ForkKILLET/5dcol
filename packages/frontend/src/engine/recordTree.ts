@@ -4,7 +4,10 @@ import {
   StoredRecordAnnotationSchema,
   StoredRecordLineSchema,
   type RecordAnnotationTarget,
+  type StudyActionNode,
+  type StudyBranch,
   type StudyDocument,
+  type StudyPosition,
   type StoredRecordAnnotation,
   type StoredRecordLine,
 } from '@5dcol/shared/protocol'
@@ -80,12 +83,11 @@ export class RecordDocument {
     const parsed = StudyDocumentSchema.safeParse(studyDocument)
     if (! parsed.success) return null
 
+    const state = toStoredRecordTree(parsed.data)
+    if (! state) return null
+
     const document = new RecordDocument([], [])
-    const restored = document.restore({
-      recordLines: parsed.data.lines,
-      recordAnnotations: parsed.data.annotations,
-      activeRecordLineId: parsed.data.rootLineId,
-    }, [])
+    const restored = document.restore(state, [])
     return restored ? document : null
   }
 
@@ -187,12 +189,33 @@ export class RecordDocument {
       id,
       title,
       initialMultiverse,
-      rootLineId: 0,
-      lines: this.serializeLines(),
+      rootBranchId: toStudyBranchId(0),
+      branches: this.serializeStudyBranches(createdAt),
+      actions: this.serializeStudyActions(createdAt),
       annotations: this.serializeAnnotations(),
       createdAt,
       updatedAt,
     })
+  }
+
+  public serializeStudyBranches(createdAt = Date.now()): StudyBranch[] {
+    return [...this.lines.values()].map(line => ({
+      id: toStudyBranchId(line.id),
+      parent: line.parent ? toStudyPosition(line.parent.lineId, line.parent.beforeActionIndex) : null,
+      actionIds: line.actions.map((_, actionIndex) => toStudyActionId(line.id, actionIndex)),
+      createdAt,
+    }))
+  }
+
+  public serializeStudyActions(createdAt = Date.now()): StudyActionNode[] {
+    return [...this.lines.values()].flatMap(line => (
+      line.actions.map((action, actionIndex) => ({
+        id: toStudyActionId(line.id, actionIndex),
+        branchId: toStudyBranchId(line.id),
+        action,
+        createdAt,
+      }))
+    ))
   }
 
   public getAnnotations(): RecordAnnotation[] {
@@ -1000,6 +1023,148 @@ const isSameRecordCursorTarget = (a: RecordCursorTarget, b: RecordCursorTarget):
   a.recordLineId === b.recordLineId
     && a.recordActionIndex === b.recordActionIndex
 )
+
+const toStudyBranchId = (lineId: number): string => `branch:${lineId}`
+
+const toStudyActionId = (lineId: number, actionIndex: number): string => `action:${lineId}:${actionIndex}`
+
+const toStudyPosition = (lineId: number, beforeActionIndex: number): StudyPosition => {
+  if (beforeActionIndex <= 0) {
+    return {
+      type: 'head',
+      branchId: toStudyBranchId(lineId),
+    }
+  }
+
+  return {
+    type: 'after',
+    actionId: toStudyActionId(lineId, beforeActionIndex - 1),
+  }
+}
+
+const toStoredRecordTree = (studyDocument: StudyDocument): StoredRecordTree | null => {
+  const branchById = new Map(studyDocument.branches.map(branch => [branch.id, branch]))
+  const actionById = new Map(studyDocument.actions.map(action => [action.id, action]))
+  const rootBranch = branchById.get(studyDocument.rootBranchId)
+  if (! rootBranch) return null
+
+  const branchLineIds = new Map<string, number>([[rootBranch.id, 0]])
+  let nextLineId = 1
+  for (const branch of studyDocument.branches) {
+    if (branch.id === rootBranch.id) continue
+    branchLineIds.set(branch.id, nextLineId)
+    nextLineId += 1
+  }
+
+  const branchDepths = new Map<string, number>()
+  const visitingBranches = new Set<string>()
+  const getBranchDepth = (branchId: string): number | null => {
+    if (branchDepths.has(branchId)) return branchDepths.get(branchId)!
+    const branch = branchById.get(branchId)
+    if (! branch || visitingBranches.has(branchId)) return null
+    visitingBranches.add(branchId)
+
+    const parentBranchId = branch.parent
+      ? getStudyPositionBranchId(branch.parent, actionById)
+      : null
+    const parentDepth = parentBranchId === null ? -1 : getBranchDepth(parentBranchId)
+    visitingBranches.delete(branchId)
+    if (parentDepth === null) return null
+
+    const depth = parentDepth + 1
+    branchDepths.set(branchId, depth)
+    return depth
+  }
+
+  const recordLines = new Map<number, RecordLine>()
+  for (const branch of studyDocument.branches) {
+    const lineId = branchLineIds.get(branch.id)
+    const depth = getBranchDepth(branch.id)
+    if (lineId === undefined || depth === null) return null
+
+    const parent = branch.parent
+      ? toRecordLineParent(branch.parent, branchById, actionById, branchLineIds)
+      : null
+    if (branch.parent && ! parent) return null
+
+    const actions: Action[] = []
+    for (const actionId of branch.actionIds) {
+      const action = actionById.get(actionId)
+      if (! action || action.branchId !== branch.id) return null
+      actions.push(action.action)
+    }
+
+    recordLines.set(lineId, {
+      id: lineId,
+      parent,
+      actions,
+      branchLineIdsBeforeAction: new Map(),
+      depth,
+    })
+  }
+
+  for (const branch of studyDocument.branches) {
+    if (! branch.parent) continue
+    const lineId = branchLineIds.get(branch.id)
+    const parent = toRecordLineParent(branch.parent, branchById, actionById, branchLineIds)
+    if (lineId === undefined || ! parent) return null
+
+    const parentLine = recordLines.get(parent.lineId)
+    if (! parentLine) return null
+    const branchIds = parentLine.branchLineIdsBeforeAction.get(parent.beforeActionIndex) ?? []
+    branchIds.push(lineId)
+    parentLine.branchLineIdsBeforeAction.set(parent.beforeActionIndex, branchIds)
+  }
+
+  return {
+    recordLines: [...recordLines.values()].map(line => ({
+      id: line.id,
+      parent: line.parent,
+      actions: line.actions,
+      branchLineIdsBeforeAction: [...line.branchLineIdsBeforeAction.entries()],
+      depth: line.depth,
+    })),
+    recordAnnotations: studyDocument.annotations,
+    activeRecordLineId: 0,
+    nextRecordLineId: nextLineId,
+  }
+}
+
+const getStudyPositionBranchId = (
+  position: StudyPosition,
+  actionById: Map<string, StudyActionNode>,
+): string | null => {
+  if (position.type === 'head') return position.branchId
+  return actionById.get(position.actionId)?.branchId ?? null
+}
+
+const toRecordLineParent = (
+  position: StudyPosition,
+  branchById: Map<string, StudyBranch>,
+  actionById: Map<string, StudyActionNode>,
+  branchLineIds: Map<string, number>,
+): RecordLine['parent'] | null => {
+  if (position.type === 'head') {
+    const lineId = branchLineIds.get(position.branchId)
+    return lineId === undefined
+      ? null
+      : {
+          lineId,
+          beforeActionIndex: 0,
+        }
+  }
+
+  const action = actionById.get(position.actionId)
+  if (! action) return null
+  const branch = branchById.get(action.branchId)
+  const lineId = branchLineIds.get(action.branchId)
+  const actionIndex = branch?.actionIds.indexOf(action.id) ?? -1
+  if (! branch || lineId === undefined || actionIndex < 0) return null
+  return {
+    lineId,
+    beforeActionIndex: actionIndex + 1,
+  }
+}
 
 const parseStoredRecordLine = (line: unknown): StoredRecordLine | null => {
   const result = StoredRecordLineSchema.safeParse(line)
