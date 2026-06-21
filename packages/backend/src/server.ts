@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyReply } from 'fastify'
-import { GameState, type Action, Player } from '@5dcol/core'
+import { GameState, Multiverse, type Action, Player } from '@5dcol/core'
 
 import {
+  CreateStudyRoomRequestSchema,
   MATCH_PROTOCOL_VERSION,
   MatchRoomClientEventSchema,
   MatchRoomSettingsSchema,
@@ -13,16 +14,24 @@ import {
   JoinMatchRoomRequestSchema,
   LeaveMatchRoomRequestSchema,
   ForfeitMatchRoomRequestSchema,
+  JoinStudyRoomRequestSchema,
+  StudyRoomSchema,
   SubmitMatchActionRequestSchema,
+  type ChatMessage,
   type CreateMatchRoomRequest,
   type CreateMatchRoomResponse,
+  type CreateStudyRoomRequest,
+  type CreateStudyRoomResponse,
   type ForfeitMatchRoomRequest,
   type ForfeitMatchRoomResponse,
   type GetMatchServerStatsResponse,
   type GetMatchRoomStateResponse,
   type GetMatchSessionResponse,
+  type GetStudyRoomStateResponse,
   type JoinMatchRoomResponse,
   type JoinMatchRoomRequest,
+  type JoinStudyRoomRequest,
+  type JoinStudyRoomResponse,
   type LeaveMatchRoomRequest,
   type LeaveMatchRoomResponse,
   type MatchErrorResponse,
@@ -41,6 +50,11 @@ import {
   type MatchServerInfo,
   type MatchSession,
   type MatchUser,
+  type ParsedCreateStudyRoomRequest,
+  type StudyDocument,
+  type StudyRoomsRequestQuery,
+  type StudyRoomsResponse,
+  type StudyRoom,
   type SubmitMatchActionRequest,
   type SubmitMatchActionResponse,
 } from '@5dcol/shared/protocol'
@@ -96,10 +110,13 @@ export function createBackendServer(options: BackendServerOptions) {
   const storage = createRoomStorage()
   const storageState = storage.loadState()
   const rooms: RoomState[] = storageState.rooms
+  const studyRooms = storageState.studyRooms ?? []
+  const chatMessages = storageState.chatMessages ?? []
   const users: UserState[] = storageState.users
   const roomSubscribers = new Map<string, Set<RoomSubscriber>>()
   const onlineSessionCounts = new Map<string, number>()
   const app = Fastify()
+  const saveAll = () => storage.saveState({ rooms, studyRooms, chatMessages, users })
 
   void app.register(cors, {
     origin: true,
@@ -153,7 +170,7 @@ export function createBackendServer(options: BackendServerOptions) {
     rooms.push(room)
     const user = getOrCreateUser(users, body.userId, body?.nickname)
     const session = createSession(room, user, getCreatorPlayer(settings.creatorPlayer), body?.nickname)
-    storage.saveState({ rooms, users })
+    saveAll()
     reply.code(201)
     return {
       user: toUserView(user),
@@ -226,7 +243,7 @@ export function createBackendServer(options: BackendServerOptions) {
           roomSubscribers,
           onlineSessionCounts,
           rooms,
-          rooms => storage.saveState({ rooms, users }),
+          () => saveAll(),
           room,
           session,
         )
@@ -247,7 +264,7 @@ export function createBackendServer(options: BackendServerOptions) {
 
       const user = getOrCreateUser(users, body.userId, body.nickname)
       const session = createSession(room, user, player, body.nickname)
-      storage.saveState({ rooms, users })
+      saveAll()
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         user: toUserView(user),
@@ -272,7 +289,7 @@ export function createBackendServer(options: BackendServerOptions) {
       leaveRoom(room, session)
       onlineSessionCounts.delete(session.id)
       pruneUnrecordedRooms(rooms)
-      storage.saveState({ rooms, users })
+      saveAll()
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         state: toGameStateView(room, null, onlineSessionCounts, {
@@ -293,7 +310,7 @@ export function createBackendServer(options: BackendServerOptions) {
       if (! session) return sendError(reply, 403, 'Invalid session')
 
       forfeitRoom(room, session)
-      storage.saveState({ rooms, users })
+      saveAll()
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         state: toGameStateView(room, session, onlineSessionCounts, {
@@ -334,12 +351,83 @@ export function createBackendServer(options: BackendServerOptions) {
       if (room.finishReason === null) room.clock.turnStartedAt = now
       else room.clock.turnStartedAt = null
       room.updatedAt = now
-      storage.saveState({ rooms, users })
+      saveAll()
       broadcastRoomState(roomSubscribers, room, onlineSessionCounts)
       return {
         state: toGameStateView(room, session, onlineSessionCounts, {
           spectatorCount: getRoomSpectatorCount(roomSubscribers, room),
         }),
+      }
+    },
+  )
+
+  app.get<{ Querystring: StudyRoomsRequestQuery }>('/studies', async (request): Promise<StudyRoomsResponse> => ({
+    rooms: getListedStudyRooms(studyRooms, request.query.userId),
+  }))
+
+  app.post<{ Body: CreateStudyRoomRequest }>('/studies', async (request, reply): Promise<CreateStudyRoomResponse> => {
+    const body = CreateStudyRoomRequestSchema.parse(request.body ?? {}) as ParsedCreateStudyRoomRequest
+    const user = getOrCreateUser(users, body.userId, body.nickname)
+    const now = Date.now()
+    const roomId = randomUUID()
+    const name = body.name?.trim() || getDefaultStudyRoomName(roomId)
+    const document = createStudyDocument({
+      document: body.document,
+      id: randomUUID(),
+      title: name,
+      now,
+    })
+    const room = StudyRoomSchema.parse({
+      id: roomId,
+      name,
+      ownerUserId: user.id,
+      visibility: body.visibility,
+      document,
+      members: [{
+        userId: user.id,
+        nickname: user.nickname,
+        role: 'owner',
+        joinedAt: now,
+      }],
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    })
+    studyRooms.push(room)
+    saveAll()
+    reply.code(201)
+    return {
+      user: toUserView(user),
+      room,
+    }
+  })
+
+  app.get<{ Params: { id: string } }>(
+    '/studies/:id/state',
+    async (request, reply): Promise<GetStudyRoomStateResponse | MatchErrorResponse> => {
+      const room = studyRooms.find(room => room.id === request.params.id)
+      if (! room) return sendError(reply, 404, 'Study not found')
+      return {
+        room,
+        presence: [],
+        chat: getStudyChatMessages(chatMessages, room.id),
+      }
+    },
+  )
+
+  app.post<{ Params: { id: string }, Body: JoinStudyRoomRequest }>(
+    '/studies/:id/join',
+    async (request, reply): Promise<JoinStudyRoomResponse | MatchErrorResponse> => {
+      const body = JoinStudyRoomRequestSchema.parse(request.body) ?? {}
+      const room = studyRooms.find(room => room.id === request.params.id)
+      if (! room) return sendError(reply, 404, 'Study not found')
+
+      const user = getOrCreateUser(users, body.userId, body.nickname)
+      addStudyMember(room, user, body.nickname)
+      saveAll()
+      return {
+        user: toUserView(user),
+        room,
       }
     },
   )
@@ -361,6 +449,85 @@ export function createBackendServer(options: BackendServerOptions) {
       void app.close()
     },
   }
+}
+
+function getDefaultStudyRoomName(roomId: string) {
+  return roomId.split('-')[0] || roomId.slice(0, 8)
+}
+
+function createStudyDocument({
+  document,
+  id,
+  title,
+  now,
+}: {
+  document?: StudyDocument
+  id: string
+  title: string
+  now: number
+}): StudyDocument {
+  if (document) {
+    return {
+      ...document,
+      title: document.title.trim() || title,
+      updatedAt: now,
+    }
+  }
+
+  return {
+    id,
+    title,
+    initialMultiverse: Multiverse.createInitial(),
+    rootLineId: 0,
+    lines: [{
+      id: 0,
+      parent: null,
+      actions: [],
+      branchLineIdsBeforeAction: [],
+      depth: 0,
+    }],
+    annotations: [],
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function getListedStudyRooms(rooms: StudyRoom[], userId: string | null | undefined): StudyRoom[] {
+  const ownUserId = userId ?? null
+  return rooms
+    .filter(room => room.visibility === 'public' || isStudyMember(room, ownUserId))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+function isStudyMember(room: StudyRoom, userId: string | null): boolean {
+  return userId !== null && room.members.some(member => member.userId === userId)
+}
+
+function addStudyMember(room: StudyRoom, user: UserState, nickname: string | null | undefined) {
+  const normalizedNickname = normalizeNickname(nickname) ?? user.nickname
+  const now = Date.now()
+  const existing = room.members.find(member => member.userId === user.id)
+  user.nickname = normalizedNickname
+  user.updatedAt = now
+  if (existing) {
+    existing.nickname = normalizedNickname
+    room.updatedAt = now
+    return
+  }
+
+  room.members.push({
+    userId: user.id,
+    nickname: normalizedNickname,
+    role: room.ownerUserId === user.id ? 'owner' : 'editor',
+    joinedAt: now,
+  })
+  room.updatedAt = now
+}
+
+function getStudyChatMessages(messages: ChatMessage[], roomId: string): ChatMessage[] {
+  return messages
+    .filter(message => message.roomKind === 'study' && message.roomId === roomId)
+    .sort((a, b) => a.createdAt - b.createdAt)
 }
 
 function leaveRoom(room: RoomState, session: SessionState) {
