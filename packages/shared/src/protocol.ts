@@ -347,11 +347,16 @@ export type RecordCursor = z.infer<typeof RecordCursorSchema>
 
 export const StoredRecordLineSchema = z.object({
   id: z.number().int().nonnegative(),
+  branchId: z.string().optional(),
+  createdAt: z.number().optional(),
   parent: z.object({
     lineId: z.number().int().nonnegative(),
     beforeActionIndex: z.number().int().nonnegative(),
   }).nullable(),
   actions: z.array(ActionSchema),
+  actionIds: z.array(z.string()).optional(),
+  actionCreatedAts: z.array(z.number()).optional(),
+  actionAuthorIds: z.array(z.string().nullable()).optional(),
   branchLineIdsBeforeAction: z.array(z.tuple([
     z.number().int().nonnegative(),
     z.array(z.number().int().nonnegative()),

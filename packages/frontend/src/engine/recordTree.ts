@@ -20,11 +20,16 @@ export interface RecordCursorTarget {
 
 export interface RecordLine {
   id: number
+  branchId: string
+  createdAt: number
   parent: {
     lineId: number
     beforeActionIndex: number
   } | null
   actions: Action[]
+  actionIds: string[]
+  actionCreatedAts: number[]
+  actionAuthorIds: (string | undefined)[]
   branchLineIdsBeforeAction: Map<number, number[]>
   depth: number
 }
@@ -114,8 +119,13 @@ export class RecordDocument {
     this.activeLineId = 0
     this.lines.set(0, {
       id: 0,
+      branchId: createRecordEntityId('branch'),
+      createdAt: Date.now(),
       parent: null,
       actions: [...actions],
+      actionIds: actions.map(() => createRecordEntityId('action')),
+      actionCreatedAts: actions.map(() => Date.now()),
+      actionAuthorIds: actions.map(() => undefined),
       branchLineIdsBeforeAction: new Map(),
       depth: 0,
     })
@@ -132,8 +142,13 @@ export class RecordDocument {
       if (! parsed) return false
       lines.set(parsed.id, {
         id: parsed.id,
+        branchId: parsed.branchId ?? createRecordEntityId('branch'),
+        createdAt: parsed.createdAt ?? Date.now(),
         parent: parsed.parent,
         actions: [...parsed.actions],
+        actionIds: normalizeRecordActionIds(parsed.actions, parsed.actionIds),
+        actionCreatedAts: normalizeRecordActionCreatedAts(parsed.actions, parsed.actionCreatedAts),
+        actionAuthorIds: normalizeRecordActionAuthorIds(parsed.actions, parsed.actionAuthorIds),
         branchLineIdsBeforeAction: new Map(parsed.branchLineIdsBeforeAction),
         depth: parsed.depth,
       })
@@ -167,8 +182,13 @@ export class RecordDocument {
   public serializeLines(): StoredRecordLine[] {
     return [...this.lines.values()].map(line => ({
       id: line.id,
+      branchId: line.branchId,
+      createdAt: line.createdAt,
       parent: line.parent,
       actions: line.actions,
+      actionIds: line.actionIds,
+      actionCreatedAts: line.actionCreatedAts,
+      actionAuthorIds: line.actionAuthorIds.map(authorId => authorId ?? null),
       branchLineIdsBeforeAction: [...line.branchLineIdsBeforeAction.entries()],
       depth: line.depth,
     }))
@@ -189,7 +209,7 @@ export class RecordDocument {
       id,
       title,
       initialMultiverse,
-      rootBranchId: toStudyBranchId(0),
+      rootBranchId: this.lines.get(0)?.branchId ?? createRecordEntityId('branch'),
       branches: this.serializeStudyBranches(createdAt),
       actions: this.serializeStudyActions(createdAt),
       annotations: this.serializeAnnotations(),
@@ -200,20 +220,21 @@ export class RecordDocument {
 
   public serializeStudyBranches(createdAt = Date.now()): StudyBranch[] {
     return [...this.lines.values()].map(line => ({
-      id: toStudyBranchId(line.id),
-      parent: line.parent ? toStudyPosition(line.parent.lineId, line.parent.beforeActionIndex) : null,
-      actionIds: line.actions.map((_, actionIndex) => toStudyActionId(line.id, actionIndex)),
-      createdAt,
+      id: line.branchId,
+      parent: line.parent ? this.toStudyPosition(line.parent.lineId, line.parent.beforeActionIndex) : null,
+      actionIds: [...line.actionIds],
+      createdAt: line.createdAt || createdAt,
     }))
   }
 
   public serializeStudyActions(createdAt = Date.now()): StudyActionNode[] {
     return [...this.lines.values()].flatMap(line => (
       line.actions.map((action, actionIndex) => ({
-        id: toStudyActionId(line.id, actionIndex),
-        branchId: toStudyBranchId(line.id),
+        id: line.actionIds[actionIndex] ?? createRecordEntityId('action'),
+        branchId: line.branchId,
         action,
-        createdAt,
+        authorId: line.actionAuthorIds[actionIndex],
+        createdAt: line.actionCreatedAts[actionIndex] ?? createdAt,
       }))
     ))
   }
@@ -625,6 +646,9 @@ export class RecordDocument {
     }
 
     line.actions.push(action)
+    line.actionIds.push(createRecordEntityId('action'))
+    line.actionCreatedAts.push(Date.now())
+    line.actionAuthorIds.push(undefined)
     return this.getLineFullActions(line.id)
   }
 
@@ -640,6 +664,9 @@ export class RecordDocument {
     if (! line) return
 
     line.actions = line.actions.slice(0, actionIndex)
+    line.actionIds = line.actionIds.slice(0, actionIndex)
+    line.actionCreatedAts = line.actionCreatedAts.slice(0, actionIndex)
+    line.actionAuthorIds = line.actionAuthorIds.slice(0, actionIndex)
     for (const key of [...line.branchLineIdsBeforeAction.keys()]) {
       if (key < actionIndex) continue
       const branchIds = line.branchLineIdsBeforeAction.get(key) ?? []
@@ -686,8 +713,13 @@ export class RecordDocument {
     this.activeLineId = 0
     const root: RecordLine = {
       id: 0,
+      branchId: createRecordEntityId('branch'),
+      createdAt: Date.now(),
       parent: null,
       actions: [],
+      actionIds: [],
+      actionCreatedAts: [],
+      actionAuthorIds: [],
       branchLineIdsBeforeAction: new Map(),
       depth: 0,
     }
@@ -718,6 +750,9 @@ export class RecordDocument {
       }
 
       line.actions.push(mainlineVariation.action)
+      line.actionIds.push(createRecordEntityId('action'))
+      line.actionCreatedAts.push(Date.now())
+      line.actionAuthorIds.push(undefined)
       this.addActionTreeVariationAnnotations(line.id, actionIndex, mainlineVariation)
       currentTree = mainlineVariation.subtree
     }
@@ -726,6 +761,9 @@ export class RecordDocument {
   private populateLineFromVariation(line: RecordLine, variation: FiveDPGN.ActionTreeVariation) {
     const actionIndex = line.actions.length
     line.actions.push(variation.action)
+    line.actionIds.push(createRecordEntityId('action'))
+    line.actionCreatedAts.push(Date.now())
+    line.actionAuthorIds.push(undefined)
     this.addActionTreeVariationAnnotations(line.id, actionIndex, variation)
     this.populateLineFromActionTree(line, variation.subtree)
   }
@@ -796,8 +834,13 @@ export class RecordDocument {
   }): RecordLine {
     const line: RecordLine = {
       id: this.nextLineId++,
+      branchId: createRecordEntityId('branch'),
+      createdAt: Date.now(),
       parent,
       actions: [...actions],
+      actionIds: actions.map(() => createRecordEntityId('action')),
+      actionCreatedAts: actions.map(() => Date.now()),
+      actionAuthorIds: actions.map(() => undefined),
       branchLineIdsBeforeAction: new Map(),
       depth,
     }
@@ -889,6 +932,21 @@ export class RecordDocument {
 
   private getLineChildIds(line: RecordLine): number[] {
     return [...line.branchLineIdsBeforeAction.values()].flat()
+  }
+
+  private toStudyPosition(lineId: number, beforeActionIndex: number): StudyPosition {
+    const line = this.lines.get(lineId)
+    if (! line || beforeActionIndex <= 0) {
+      return {
+        type: 'head',
+        branchId: line?.branchId ?? this.lines.get(0)?.branchId ?? 'root',
+      }
+    }
+
+    return {
+      type: 'after',
+      actionId: line.actionIds[beforeActionIndex - 1] ?? line.actionIds[line.actionIds.length - 1] ?? '',
+    }
   }
 
   private getActionCommentTexts(
@@ -1024,24 +1082,6 @@ const isSameRecordCursorTarget = (a: RecordCursorTarget, b: RecordCursorTarget):
     && a.recordActionIndex === b.recordActionIndex
 )
 
-const toStudyBranchId = (lineId: number): string => `branch:${lineId}`
-
-const toStudyActionId = (lineId: number, actionIndex: number): string => `action:${lineId}:${actionIndex}`
-
-const toStudyPosition = (lineId: number, beforeActionIndex: number): StudyPosition => {
-  if (beforeActionIndex <= 0) {
-    return {
-      type: 'head',
-      branchId: toStudyBranchId(lineId),
-    }
-  }
-
-  return {
-    type: 'after',
-    actionId: toStudyActionId(lineId, beforeActionIndex - 1),
-  }
-}
-
 const toStoredRecordTree = (studyDocument: StudyDocument): StoredRecordTree | null => {
   const branchById = new Map(studyDocument.branches.map(branch => [branch.id, branch]))
   const actionById = new Map(studyDocument.actions.map(action => [action.id, action]))
@@ -1096,8 +1136,13 @@ const toStoredRecordTree = (studyDocument: StudyDocument): StoredRecordTree | nu
 
     recordLines.set(lineId, {
       id: lineId,
+      branchId: branch.id,
+      createdAt: branch.createdAt,
       parent,
       actions,
+      actionIds: branch.actionIds,
+      actionCreatedAts: branch.actionIds.map(actionId => actionById.get(actionId)?.createdAt ?? Date.now()),
+      actionAuthorIds: branch.actionIds.map(actionId => actionById.get(actionId)?.authorId),
       branchLineIdsBeforeAction: new Map(),
       depth,
     })
@@ -1119,8 +1164,13 @@ const toStoredRecordTree = (studyDocument: StudyDocument): StoredRecordTree | nu
   return {
     recordLines: [...recordLines.values()].map(line => ({
       id: line.id,
+      branchId: line.branchId,
+      createdAt: line.createdAt,
       parent: line.parent,
       actions: line.actions,
+      actionIds: line.actionIds,
+      actionCreatedAts: line.actionCreatedAts,
+      actionAuthorIds: line.actionAuthorIds.map(authorId => authorId ?? null),
       branchLineIdsBeforeAction: [...line.branchLineIdsBeforeAction.entries()],
       depth: line.depth,
     })),
@@ -1170,6 +1220,31 @@ const parseStoredRecordLine = (line: unknown): StoredRecordLine | null => {
   const result = StoredRecordLineSchema.safeParse(line)
   return result.success ? result.data : null
 }
+
+const normalizeRecordActionIds = (
+  actions: readonly Action[],
+  actionIds: readonly string[] | undefined,
+): string[] => (
+  actions.map((_, index) => actionIds?.[index] ?? createRecordEntityId('action'))
+)
+
+const normalizeRecordActionCreatedAts = (
+  actions: readonly Action[],
+  actionCreatedAts: readonly number[] | undefined,
+): number[] => (
+  actions.map((_, index) => actionCreatedAts?.[index] ?? Date.now())
+)
+
+const normalizeRecordActionAuthorIds = (
+  actions: readonly Action[],
+  actionAuthorIds: readonly (string | null)[] | undefined,
+): (string | undefined)[] => (
+  actions.map((_, index) => actionAuthorIds?.[index] ?? undefined)
+)
+
+const createRecordEntityId = (prefix: 'action' | 'branch'): string => (
+  `${prefix}:${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}:${Math.random().toString(36).slice(2)}`}`
+)
 
 const parseStoredRecordAnnotation = (annotation: unknown): StoredRecordAnnotation | null => {
   const result = StoredRecordAnnotationSchema.safeParse(annotation)
