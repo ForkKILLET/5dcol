@@ -150,6 +150,11 @@ function getServerDynamicMeta(server: SettingsServerState) {
   return [
     server.pingMs === null ? '' : t('match.ping', { ms: String(server.pingMs) }),
     server.stats ? t('match.connections', { count: String(server.stats.connectionCount) }) : '',
+    server.stats ? t('match.serverStats', {
+      finished: String(server.stats.finishedRoomCount),
+      playing: String(server.stats.playingRoomCount),
+      rooms: String(server.stats.roomCount),
+    }) : '',
   ].filter(Boolean)
 }
 </script>
