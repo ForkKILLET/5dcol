@@ -74,7 +74,7 @@ function toggleCollapsed() {
   --dock-button-size: calc(var(--button-small-height) * 1.08);
   --dock-state-size: calc(var(--button-tiny-height) * 0.45);
   --dock-handle-height: calc(var(--button-small-height) * 0.58);
-  --dock-handle-rise: calc(var(--button-small-height) * 0.45);
+  --dock-handle-rise: calc(var(--dock-handle-height) + var(--button-small-border));
   position: absolute;
   left: 50%;
   bottom: 0;
@@ -107,14 +107,14 @@ function toggleCollapsed() {
 .game-dock-handle {
   position: absolute;
   left: 50%;
-  top: calc((var(--dock-handle-rise) + var(--button-small-border)) * -1);
+  top: calc(var(--dock-handle-rise) * -1);
   z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
   width: calc(var(--button-small-height) * 2.25);
-  height: var(--dock-handle-height);
+  height: var(--dock-handle-rise);
   border: var(--button-small-border) solid var(--button-border-color);
   border-radius: calc(var(--button-small-height) * 0.35) calc(var(--button-small-height) * 0.35) 0 0;
   background: var(--button-fill-color);
@@ -125,17 +125,6 @@ function toggleCollapsed() {
   transform: translateX(-50%);
 }
 
-.game-dock-handle::after {
-  position: absolute;
-  left: var(--button-small-border);
-  right: var(--button-small-border);
-  bottom: calc(var(--button-small-border) * -1);
-  height: var(--button-small-border);
-  background: var(--button-fill-color);
-  border-bottom: var(--button-small-border) solid var(--button-border-color);
-  content: '';
-}
-
 .game-dock--collapsed .game-dock-body {
   opacity: 0;
   pointer-events: none;
@@ -143,15 +132,8 @@ function toggleCollapsed() {
 
 .game-dock-handle:hover,
 .game-dock-handle:focus-visible {
-  border-color: var(--button-hover-border-color);
   background: var(--button-hover-fill-color);
   color: var(--button-hover-text-color);
-}
-
-.game-dock-handle:hover::after,
-.game-dock-handle:focus-visible::after {
-  background: var(--button-hover-fill-color);
-  border-bottom-color: var(--button-hover-border-color);
 }
 
 .game-dock-handle :deep(.game-icon) {
