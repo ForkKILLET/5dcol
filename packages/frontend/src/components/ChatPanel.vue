@@ -92,14 +92,8 @@ function getAuthorName(message: ChatMessage) {
 
 <style scoped>
 .chat-panel {
-  position: absolute;
-  left: var(--button-top);
-  top: calc(var(--button-top) + 120px);
-  z-index: 2;
-  width: min(360px, calc(100vw - var(--button-top) * 2));
-  max-height: min(420px, calc(var(--app-height) - var(--button-top) * 2));
+  max-height: min(360px, calc(var(--app-height) - var(--button-top) * 2));
   color: var(--button-text-color);
-  pointer-events: auto;
 }
 
 .chat-panel-title {

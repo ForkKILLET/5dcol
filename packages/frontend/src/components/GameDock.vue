@@ -4,7 +4,7 @@ import GameIcon from './GameIcon.vue'
 
 export type GameDockItem = {
   disabled?: boolean
-  icon: 'chat' | 'clock' | 'record'
+  icon: 'chat' | 'clock' | 'members' | 'record'
   id: string
   label: string
   pressed?: boolean

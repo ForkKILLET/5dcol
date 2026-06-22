@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'plus' | 'record' | 'x'
+  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'plus' | 'record' | 'x'
 }>()
 </script>
 
@@ -90,6 +90,16 @@ defineProps<{
       <path d="M6 6.5h12" />
       <path d="M6 12h12" />
       <path d="M6 17.5h12" />
+    </template>
+    <template v-else-if="name === 'members'">
+      <circle
+        cx="9"
+        cy="8"
+        r="3"
+      />
+      <path d="M4 19c.7-3.4 2.4-5 5-5s4.3 1.6 5 5" />
+      <path d="M14.5 6.5a2.7 2.7 0 0 1 0 5.2" />
+      <path d="M15.2 14.2c2.2.4 3.7 1.9 4.4 4.8" />
     </template>
     <template v-else-if="name === 'glyph'">
       <path d="M12 4l2.3 4.7 5.2.8-3.8 3.7.9 5.2L12 16l-4.6 2.4.9-5.2-3.8-3.7 5.2-.8z" />

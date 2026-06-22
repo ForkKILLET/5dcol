@@ -13,6 +13,7 @@ import {
   type MatchRoomStatus,
   type StudyCommand,
   type StudyDocument,
+  type StudyMember,
   type StudyPatch,
   type StudyPresence,
   type StudyPosition,
@@ -65,6 +66,7 @@ import GameDock from './GameDock.vue'
 import GameIcon from './GameIcon.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
+import MembersPanel from './MembersPanel.vue'
 import RecordPanel from './RecordPanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
 import StudyPage from './StudyPage.vue'
@@ -102,9 +104,11 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordCurrentCursor = ref({ recordLineId: 0, recordActionIndex: 0 })
 const recordFocusedMove = ref<(GameRecordMoveFocusTarget & { pulseId: number }) | null>(null)
+const onlineStudyMembers = ref<StudyMember[]>([])
 const onlineStudyPresence = ref<StudyPresence[]>([])
 const onlineStudyChatMessages = ref<ChatMessage[]>([])
 let recordFocusedMovePulseId = 0
+const membersPanelOpen = ref(false)
 const chatPanelOpen = ref(false)
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
@@ -387,10 +391,10 @@ const recordActionButtons = computed(() => (
 const menuButtons = computed(() => (
   secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
-type GameDockItemId = 'record' | 'clock' | 'chat'
+type GameDockItemId = 'record' | 'clock' | 'members' | 'chat'
 const gameDockItems = computed(() => {
   const items: Array<{
-    icon: 'chat' | 'clock' | 'record'
+    icon: 'chat' | 'clock' | 'members' | 'record'
     id: GameDockItemId
     label: string
     pressed: boolean
@@ -410,6 +414,12 @@ const gameDockItems = computed(() => {
   ]
 
   if (activeOnlineStudy.value) {
+    items.push({
+      id: 'members',
+      icon: 'members',
+      label: t('button.members'),
+      pressed: membersPanelOpen.value,
+    })
     items.push({
       id: 'chat',
       icon: 'chat',
@@ -601,6 +611,37 @@ function getRecordAuthorColor(authorId: string) {
   return getRecordMarkerAuthorColor(authorId)
 }
 
+function getStudyMemberDisplayName(member: StudyMember | undefined, presence: StudyPresence | undefined): string {
+  return member?.nickname?.trim()
+    || presence?.nickname?.trim()
+    || (member?.userId === matchUserId.value ? matchNickname.value.trim() : '')
+    || t('members.anonymous')
+}
+
+function getStudyMemberPositionText(
+  presence: StudyPresence | undefined,
+  cursor: GameRecordCursor | null | undefined,
+): string {
+  if (! presence) return t('members.positionOffline')
+  if (! cursor) return t('members.positionUnknown')
+  return t('members.positionCursor', {
+    action: String(cursor.recordActionIndex),
+    line: String(cursor.recordLineId + 1),
+  })
+}
+
+function resolveRecordCursorTarget(
+  target: { recordLineId: number, recordActionIndex: number } | null | undefined,
+): GameRecordCursor | null {
+  if (! target) return null
+  const cursor = recordActions.value.find(row => (
+    row.kind === 'cursor'
+    && row.recordLineId === target.recordLineId
+    && row.recordActionIndex === target.recordActionIndex
+  ))
+  return cursor?.kind === 'cursor' ? cursor : null
+}
+
 const recordPresenceCursors = computed(() => (
   onlineStudyPresence.value
     .filter(presence => presence.userId !== matchUserId.value)
@@ -618,6 +659,33 @@ const recordPresenceCursors = computed(() => (
     })
     .filter((cursor): cursor is NonNullable<typeof cursor> => cursor !== null)
 ))
+const onlineStudyMemberRows = computed(() => {
+  const presenceByUser = new Map(onlineStudyPresence.value.map(presence => [presence.userId, presence]))
+  const memberByUser = new Map(onlineStudyMembers.value.map(member => [member.userId, member]))
+  const userIds = [
+    ...onlineStudyMembers.value.map(member => member.userId),
+    ...onlineStudyPresence.value
+      .map(presence => presence.userId)
+      .filter(userId => ! memberByUser.has(userId)),
+  ]
+
+  return userIds.map((userId) => {
+    const member = memberByUser.get(userId)
+    const presence = presenceByUser.get(userId)
+    const cursor = resolveRecordCursorTarget(presence ? game?.getRecordCursorFromStudyPosition(presence.cursor) : null)
+    const current = userId === matchUserId.value
+    return {
+      id: userId,
+      name: getStudyMemberDisplayName(member, presence),
+      role: member ? t(`members.role.${member.role}`) : t('members.role.member'),
+      color: member?.color ?? getRecordAuthorColor(userId),
+      online: Boolean(presence),
+      current,
+      position: getStudyMemberPositionText(presence, cursor),
+      canJump: Boolean(cursor) && ! current,
+    }
+  })
+})
 
 function getRecordGlyphColor(glyph: string) {
   return getRecordGlyphColor4(glyph, customRecordGlyphTemplates.value)
@@ -710,6 +778,12 @@ function toggleChatPanel() {
   chatPanelOpen.value = ! chatPanelOpen.value
 }
 
+function toggleMembersPanel() {
+  if (! activeOnlineStudy.value) return
+  playUISound()
+  membersPanelOpen.value = ! membersPanelOpen.value
+}
+
 function focusRecordMoveFromBoard(target: GameRecordMoveFocusTarget) {
   if (! gameStarted.value) return
   const request = game?.getFiveDPGNExport()
@@ -766,10 +840,22 @@ function clickGameDockItem(id: string) {
     case 'clock':
       toggleClockPanel()
       break
+    case 'members':
+      toggleMembersPanel()
+      break
     case 'chat':
       toggleChatPanel()
       break
   }
+}
+
+function jumpToOnlineStudyMember(userId: string) {
+  const presence = onlineStudyPresence.value.find(item => item.userId === userId)
+  if (! presence) return
+  const cursor = resolveRecordCursorTarget(game?.getRecordCursorFromStudyPosition(presence.cursor))
+  if (! cursor) return
+  recordPanelOpen.value = true
+  rollbackToRecordCursor(cursor)
 }
 
 function playMainMenuAnnihilateSound() {
@@ -1563,8 +1649,10 @@ function startStudyGame(
   stopOnlineStudyStateSubscription()
   onlineError.value = ''
   onlineStudySaveStatus.value = 'saved'
+  onlineStudyMembers.value = []
   onlineStudyChatMessages.value = []
   onlineConnectionStatus.value = source.kind === 'online' ? 'connecting' : 'offline'
+  membersPanelOpen.value = source.kind === 'online'
   chatPanelOpen.value = source.kind === 'online'
   game = new Game({
     renderer: gameRenderer,
@@ -1903,6 +1991,7 @@ function startOnlineStudyStateSubscription(
         case 'study-state':
           onlineStudySubmitPending = false
           onlineStudySaveStatus.value = 'saved'
+          onlineStudyMembers.value = event.room.members
           onlineStudyPresence.value = event.presence
           onlineStudyChatMessages.value = [...event.chat].sort((a, b) => a.createdAt - b.createdAt)
           activeOnlineStudy.value = {
@@ -2019,6 +2108,7 @@ function stopOnlineStudyStateSubscription() {
   onlineStudySubmitPending = false
   onlineStudySaveStatus.value = 'saved'
   onlineStudyPresenceSignature = ''
+  onlineStudyMembers.value = []
   onlineStudyPresence.value = []
   onlineStudyChatMessages.value = []
   onlineStudyStateSubscription?.unsubscribe()
@@ -2038,6 +2128,7 @@ async function syncOnlineStudyState(serverAddress: string, roomId: string) {
       version: state.room.version,
       title: state.room.document.title,
     }
+    onlineStudyMembers.value = state.room.members
     onlineStudyPresence.value = state.presence
     onlineStudyChatMessages.value = [...state.chat].sort((a, b) => a.createdAt - b.createdAt)
     game?.loadStudyDocument(state.room.document, { focus: false })
@@ -2281,6 +2372,8 @@ function returnToMainMenu(
   recordCurrentCursor.value = { recordLineId: 0, recordActionIndex: 0 }
   recordFocusedMove.value = null
   recordPanelOpen.value = false
+  membersPanelOpen.value = false
+  chatPanelOpen.value = false
   secondaryMenuOpen.value = false
   closeDialog(false)
   gameStarted.value = false
@@ -2696,20 +2789,36 @@ watch([exportFormat, exportMode], () => {
         </div>
       </div>
 
-      <ChatPanel
-        v-if="activeOnlineStudy && chatPanelOpen"
+      <div
+        v-if="activeOnlineStudy && (membersPanelOpen || chatPanelOpen)"
+        class="game-left-panel-stack"
         :style="menuButtonStyle"
-        :messages="onlineStudyChatMessages"
-        :current-user-id="matchUserId"
-        :get-author-color="getRecordMarkerAuthorColor"
-        :disabled="onlineConnectionStatus !== 'connected'"
-        :title="t('chat.title')"
-        :empty-text="t('chat.empty')"
-        :placeholder="t('chat.placeholder')"
-        :send-label="t('chat.send')"
-        @send="sendOnlineStudyChatMessage"
-        @ui-sound="playUISound"
-      />
+      >
+        <MembersPanel
+          v-if="membersPanelOpen"
+          :members="onlineStudyMemberRows"
+          :title="t('members.title')"
+          :empty-text="t('members.empty')"
+          :you-label="t('members.you')"
+          :online-label="t('members.online')"
+          :offline-label="t('members.offline')"
+          :jump-label="t('members.jump')"
+          @jump="jumpToOnlineStudyMember"
+        />
+        <ChatPanel
+          v-if="chatPanelOpen"
+          :messages="onlineStudyChatMessages"
+          :current-user-id="matchUserId"
+          :get-author-color="getRecordMarkerAuthorColor"
+          :disabled="onlineConnectionStatus !== 'connected'"
+          :title="t('chat.title')"
+          :empty-text="t('chat.empty')"
+          :placeholder="t('chat.placeholder')"
+          :send-label="t('chat.send')"
+          @send="sendOnlineStudyChatMessage"
+          @ui-sound="playUISound"
+        />
+      </div>
 
       <div
         v-if="gameStarted"
@@ -3399,6 +3508,19 @@ canvas {
   font-size: 20px;
   line-height: 1;
   pointer-events: none;
+}
+
+.game-left-panel-stack {
+  position: absolute;
+  left: var(--button-top);
+  top: calc(var(--button-top) + 120px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 1.5);
+  width: min(360px, calc(100vw - var(--button-top) * 2));
+  max-height: calc(var(--app-height) - var(--button-top) * 2 - 120px);
+  pointer-events: auto;
 }
 
 .clock-row {
