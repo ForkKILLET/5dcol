@@ -1460,6 +1460,7 @@ function startStudyGame(
     autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
+    toolbarMode: 'study',
     getFiveDPGNExportMetadata,
     getFiveDPGNGlyphTemplates,
     onViewPlayerChange: updateViewPlayer,

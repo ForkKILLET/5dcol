@@ -51,6 +51,7 @@ export interface GameContext {
   showMoveTravelAnimation?: boolean
   fiveDPGNOptions?: FiveDPGN.ExportOptions
   initialWorkspace?: GameWorkspaceState | null
+  toolbarMode?: 'game' | 'study'
   getFiveDPGNExportMetadata?: () => Pick<FiveDPGN.ExportOptions, 'headers' | 'result'>
   getFiveDPGNGlyphTemplates?: () => FiveDPGN.StudyGlyphTemplate[]
   getUISoundVolume?: () => number
@@ -1638,7 +1639,8 @@ export class Game extends Disposable(Empty) {
   }
 
   private getToolbarButtons(): ButtonConfig[] {
-    const finishGameButton = this.shouldShowFinishGameButton()
+    const studyToolbar = this.ctx.toolbarMode === 'study'
+    const finishGameButton = ! studyToolbar && this.shouldShowFinishGameButton()
       ? {
           id: 'submit-moves',
           disabled: this.ctx.canFinishGame?.() === false,
@@ -1696,7 +1698,7 @@ export class Game extends Disposable(Empty) {
           this.submitMoves()
         },
       },
-      {
+      ...(studyToolbar ? [] : [{
         id: 'forfeit-game',
         disabled: this.ctx.canForfeitGame?.() === false,
         colorPreset: getPlayerButtonColor(this.player),
@@ -1707,7 +1709,7 @@ export class Game extends Disposable(Empty) {
           this.playForfeitSound()
           this.ctx.onReturnToMainMenuRequest?.({ forfeit: true })
         },
-      },
+      } satisfies ButtonConfig]),
       {
         id: 'export-5dpgn',
         disabled: false,
