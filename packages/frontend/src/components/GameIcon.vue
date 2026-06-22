@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'branch' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'plus' | 'x'
+  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'plus' | 'record' | 'x'
 }>()
 </script>
 
@@ -72,6 +72,24 @@ defineProps<{
     </template>
     <template v-else-if="name === 'comment'">
       <path d="M5 5.5h14v10H10l-5 4z" />
+    </template>
+    <template v-else-if="name === 'chat'">
+      <path d="M5 5.5h14v10H9.5L5 19z" />
+      <path d="M8.5 9h7" />
+      <path d="M8.5 12h5" />
+    </template>
+    <template v-else-if="name === 'clock'">
+      <circle
+        cx="12"
+        cy="12"
+        r="8"
+      />
+      <path d="M12 7.5V12l3.5 2" />
+    </template>
+    <template v-else-if="name === 'record'">
+      <path d="M6 6.5h12" />
+      <path d="M6 12h12" />
+      <path d="M6 17.5h12" />
     </template>
     <template v-else-if="name === 'glyph'">
       <path d="M12 4l2.3 4.7 5.2.8-3.8 3.7.9 5.2L12 16l-4.6 2.4.9-5.2-3.8-3.7 5.2-.8z" />

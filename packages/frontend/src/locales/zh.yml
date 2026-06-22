@@ -25,6 +25,8 @@ button.rename: "重命名"
 button.delete: "删除"
 button.settings: "设置"
 
+panel.dock: "面板"
+
 main.start: "开始"
 main.resume: "继续"
 main.match: "匹配"

@@ -61,6 +61,7 @@ import { UiSoundKey } from '@/composables/uiSound'
 import ChatPanel from './ChatPanel.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
+import GameDock from './GameDock.vue'
 import GameIcon from './GameIcon.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
@@ -386,6 +387,39 @@ const recordActionButtons = computed(() => (
 const menuButtons = computed(() => (
   secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
+type GameDockItemId = 'record' | 'clock' | 'chat'
+const gameDockItems = computed(() => {
+  const items: Array<{
+    icon: 'chat' | 'clock' | 'record'
+    id: GameDockItemId
+    label: string
+    pressed: boolean
+  }> = [
+    {
+      id: 'record',
+      icon: 'record',
+      label: t('button.record'),
+      pressed: recordPanelOpen.value,
+    },
+    {
+      id: 'clock',
+      icon: 'clock',
+      label: t('button.clock'),
+      pressed: gameSettings.showClock,
+    },
+  ]
+
+  if (activeOnlineStudy.value) {
+    items.push({
+      id: 'chat',
+      icon: 'chat',
+      label: t('button.chat'),
+      pressed: chatPanelOpen.value,
+    })
+  }
+
+  return items
+})
 const uiOverlayOpen = computed(() => (
   secondaryMenuOpen.value || dialogMode.value !== 'none' || ! gameStarted.value
 ))
@@ -718,20 +752,24 @@ function sendOnlineStudyChatMessage(text: string) {
   onlineStudyStateSubscription.sendChatMessage(text)
 }
 
-function clickRecordMenuButton() {
-  toggleRecordPanel()
-  secondaryMenuOpen.value = false
-}
-
-function clickChatMenuButton() {
-  toggleChatPanel()
-  secondaryMenuOpen.value = false
-}
-
 function toggleClockPanel() {
   if (! gameStarted.value) return
   playUISound()
   gameSettings.showClock = ! gameSettings.showClock
+}
+
+function clickGameDockItem(id: string) {
+  switch (id as GameDockItemId) {
+    case 'record':
+      toggleRecordPanel()
+      break
+    case 'clock':
+      toggleClockPanel()
+      break
+    case 'chat':
+      toggleChatPanel()
+      break
+  }
 }
 
 function playMainMenuAnnihilateSound() {
@@ -2632,6 +2670,14 @@ watch([exportFormat, exportMode], () => {
         </GameButton>
       </div>
 
+      <GameDock
+        v-if="gameStarted"
+        :style="menuButtonStyle"
+        :items="gameDockItems"
+        :label="t('panel.dock')"
+        @select="clickGameDockItem"
+      />
+
       <div
         v-if="clockRows.length > 0"
         class="clock-card"
@@ -2722,31 +2768,6 @@ watch([exportFormat, exportMode], () => {
           @click.stop
           @keydown.tab="trapSecondaryMenuTab"
         >
-          <GameButton
-            size="secondary"
-            :style="menuButtonStyle"
-            :pressed="recordPanelOpen"
-            @click="clickRecordMenuButton"
-          >
-            <span>{{ t('button.record') }}</span>
-          </GameButton>
-          <GameButton
-            size="secondary"
-            :style="menuButtonStyle"
-            :pressed="gameSettings.showClock"
-            @click="toggleClockPanel"
-          >
-            <span>{{ t('button.clock') }}</span>
-          </GameButton>
-          <GameButton
-            v-if="activeOnlineStudy"
-            size="secondary"
-            :style="menuButtonStyle"
-            :pressed="chatPanelOpen"
-            @click="clickChatMenuButton"
-          >
-            <span>{{ t('button.chat') }}</span>
-          </GameButton>
           <GameButton
             size="secondary"
             :style="menuButtonStyle"

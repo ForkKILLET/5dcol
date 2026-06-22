@@ -25,6 +25,8 @@ button.rename: "Rename"
 button.delete: "Delete"
 button.settings: "Settings"
 
+panel.dock: "Panels"
+
 main.start: "Start"
 main.resume: "Resume"
 main.match: "Match"
