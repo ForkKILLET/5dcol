@@ -407,13 +407,16 @@ const gameDockItems = computed(() => {
       label: t('button.record'),
       pressed: recordPanelOpen.value,
     },
-    {
+  ]
+
+  if (! activeLocalStudy.value && ! activeOnlineStudy.value) {
+    items.push({
       id: 'clock',
       icon: 'clock',
       label: t('button.clock'),
       pressed: gameSettings.showClock,
-    },
-  ]
+    })
+  }
 
   if (activeOnlineStudy.value) {
     items.push({

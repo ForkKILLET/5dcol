@@ -71,6 +71,8 @@ function toggleCollapsed() {
 .game-dock {
   --dock-button-size: calc(var(--button-small-height) * 1.08);
   --dock-state-size: calc(var(--button-tiny-height) * 0.45);
+  --dock-expanded-height: calc(var(--dock-button-size) + var(--dock-state-size) * 2.45);
+  --dock-expanded-width: calc((var(--dock-button-size) + var(--button-content-gap) * 1.25) * 5);
   position: absolute;
   left: 50%;
   bottom: 0;
@@ -89,21 +91,25 @@ function toggleCollapsed() {
   pointer-events: auto;
   transform: translateX(-50%);
   transition:
+    border-radius 180ms ease,
+    min-width 180ms ease,
     padding 180ms ease,
     width 180ms ease;
 }
 
 .game-dock--collapsed {
+  min-width: calc(var(--button-small-height) * 2.25);
   padding:
-    calc(var(--button-content-gap) * 0.9)
-    calc(var(--button-content-gap) * 1.6)
-    calc(var(--button-content-gap) * 0.65);
+    calc(var(--button-content-gap) * 0.7)
+    calc(var(--button-content-gap) * 1.25)
+    calc(var(--button-content-gap) * 0.85);
 }
 
 .game-dock-handle {
   position: absolute;
   left: 50%;
   top: calc(var(--button-small-height) * -0.45);
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -120,6 +126,17 @@ function toggleCollapsed() {
   transform: translateX(-50%);
 }
 
+.game-dock-handle::after {
+  position: absolute;
+  left: calc(var(--button-small-border) * -0.5);
+  right: calc(var(--button-small-border) * -0.5);
+  bottom: calc(var(--button-border) * -1);
+  height: calc(var(--button-border) + var(--button-small-border));
+  background: var(--button-fill-color);
+  content: '';
+  transition: background 120ms ease;
+}
+
 .game-dock-handle:hover,
 .game-dock-handle:focus-visible {
   border-color: var(--button-hover-border-color);
@@ -127,7 +144,14 @@ function toggleCollapsed() {
   color: var(--button-hover-text-color);
 }
 
+.game-dock-handle:hover::after,
+.game-dock-handle:focus-visible::after {
+  background: var(--button-hover-fill-color);
+}
+
 .game-dock-handle :deep(.game-icon) {
+  position: relative;
+  z-index: 1;
   width: calc(var(--button-small-icon-size) * 0.8);
   height: calc(var(--button-small-icon-size) * 0.8);
 }
@@ -136,20 +160,23 @@ function toggleCollapsed() {
   display: flex;
   align-items: center;
   gap: calc(var(--button-content-gap) * 1.25);
-  max-width: calc((var(--dock-button-size) + var(--button-content-gap) * 1.25) * 5);
+  max-width: var(--dock-expanded-width);
+  max-height: var(--dock-expanded-height);
   overflow: hidden;
   opacity: 1;
   transition:
+    max-height 190ms ease,
     max-width 190ms ease,
-    opacity 140ms ease,
+    opacity 150ms ease,
     transform 190ms ease;
 }
 
 .game-dock--collapsed .game-dock-items {
   max-width: 0;
+  max-height: 0;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(calc(var(--button-small-height) * 0.25));
+  transform: translateY(calc(var(--button-small-height) * 0.18));
 }
 
 .game-dock-button {
@@ -161,7 +188,7 @@ function toggleCollapsed() {
   box-sizing: border-box;
   width: var(--dock-button-size);
   height: var(--dock-button-size);
-  margin-top: var(--dock-state-size);
+  margin-top: calc(var(--dock-state-size) * 1.85 + var(--button-tiny-shadow-offset));
   padding: 0;
   border: var(--button-small-border) solid var(--button-border-color);
   border-radius: 50%;
@@ -201,7 +228,7 @@ function toggleCollapsed() {
 .game-dock-button-state {
   position: absolute;
   left: 50%;
-  top: calc(var(--dock-state-size) * -1.65);
+  top: calc(var(--dock-state-size) * -1.25);
   box-sizing: border-box;
   width: var(--dock-state-size);
   height: var(--dock-state-size);
