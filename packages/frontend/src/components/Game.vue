@@ -2784,7 +2784,9 @@ watch([exportFormat, exportMode], () => {
         :style="menuButtonStyle"
         :items="gameDockItems"
         :label="t('panel.dock')"
+        :collapse-label="t('panel.collapseDock')"
         @select="clickGameDockItem"
+        @toggle-collapsed="playUISound"
       />
 
       <div

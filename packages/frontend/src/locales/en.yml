@@ -27,6 +27,7 @@ button.delete: "Delete"
 button.settings: "Settings"
 
 panel.dock: "Panels"
+panel.collapseDock: "Collapse panels"
 
 main.start: "Start"
 main.resume: "Resume"

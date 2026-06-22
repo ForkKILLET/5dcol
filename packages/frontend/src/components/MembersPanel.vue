@@ -83,11 +83,15 @@ function jumpToMember(userId: string) {
           </div>
           <div class="member-meta">
             <span>{{ member.role }}</span>
-            <span>{{ member.online ? onlineLabel : offlineLabel }}</span>
+            <span
+              class="member-status"
+              :class="{ 'member-status--online': member.online }"
+            >{{ member.online ? onlineLabel : offlineLabel }}</span>
           </div>
           <div class="member-position">{{ member.position }}</div>
         </div>
         <GameButton
+          v-if="!member.current"
           size="tiny"
           :disabled="!member.canJump"
           @click="jumpToMember(member.id)"
@@ -148,6 +152,10 @@ function jumpToMember(userId: string) {
   opacity: 0.62;
 }
 
+.member-row--offline .member-status {
+  color: inherit;
+}
+
 .member-row--focused {
   animation: member-row-pulse 900ms ease-out;
 }
@@ -189,6 +197,11 @@ function jumpToMember(userId: string) {
   font-size: 13px;
   line-height: 1.1;
   opacity: 0.75;
+}
+
+.member-status--online {
+  color: rgb(92, 135, 95);
+  opacity: 1;
 }
 
 .member-position {
