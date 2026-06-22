@@ -4,6 +4,7 @@ import { I18nT, useI18n } from 'vue-i18n'
 import { FiveDPGN, Player } from '@5dcol/core'
 import type { Action } from '@5dcol/core'
 import {
+  type ChatMessage,
   type MatchClock,
   type MatchGameState,
   type MatchPresence,
@@ -57,6 +58,7 @@ import { useDialogStack } from '@/composables/dialogStack'
 import { normalizeOnlineServerAddress } from '@/composables/online'
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
+import ChatPanel from './ChatPanel.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameIcon from './GameIcon.vue'
@@ -100,7 +102,9 @@ const recordCurrentActionIndex = ref(0)
 const recordCurrentCursor = ref({ recordLineId: 0, recordActionIndex: 0 })
 const recordFocusedMove = ref<(GameRecordMoveFocusTarget & { pulseId: number }) | null>(null)
 const onlineStudyPresence = ref<StudyPresence[]>([])
+const onlineStudyChatMessages = ref<ChatMessage[]>([])
 let recordFocusedMovePulseId = 0
+const chatPanelOpen = ref(false)
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
@@ -666,6 +670,12 @@ function toggleRecordPanel() {
   recordPanelOpen.value = ! recordPanelOpen.value
 }
 
+function toggleChatPanel() {
+  if (! activeOnlineStudy.value) return
+  playUISound()
+  chatPanelOpen.value = ! chatPanelOpen.value
+}
+
 function focusRecordMoveFromBoard(target: GameRecordMoveFocusTarget) {
   if (! gameStarted.value) return
   const request = game?.getFiveDPGNExport()
@@ -691,8 +701,30 @@ function upsertOnlineStudyPresence(presence: StudyPresence) {
   else onlineStudyPresence.value.push(presence)
 }
 
+function upsertOnlineStudyChatMessage(message: ChatMessage) {
+  const index = onlineStudyChatMessages.value.findIndex(item => item.id === message.id)
+  if (index >= 0) onlineStudyChatMessages.value[index] = message
+  else onlineStudyChatMessages.value.push(message)
+  onlineStudyChatMessages.value.sort((a, b) => a.createdAt - b.createdAt)
+}
+
+function sendOnlineStudyChatMessage(text: string) {
+  if (! activeOnlineStudy.value || ! onlineStudyStateSubscription || onlineConnectionStatus.value !== 'connected') {
+    onlineError.value = t('online.reconnecting')
+    onlineConnectionStatus.value = 'reconnecting'
+    return
+  }
+  onlineError.value = ''
+  onlineStudyStateSubscription.sendChatMessage(text)
+}
+
 function clickRecordMenuButton() {
   toggleRecordPanel()
+  secondaryMenuOpen.value = false
+}
+
+function clickChatMenuButton() {
+  toggleChatPanel()
   secondaryMenuOpen.value = false
 }
 
@@ -1493,7 +1525,9 @@ function startStudyGame(
   stopOnlineStudyStateSubscription()
   onlineError.value = ''
   onlineStudySaveStatus.value = 'saved'
+  onlineStudyChatMessages.value = []
   onlineConnectionStatus.value = source.kind === 'online' ? 'connecting' : 'offline'
+  chatPanelOpen.value = source.kind === 'online'
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1832,6 +1866,7 @@ function startOnlineStudyStateSubscription(
           onlineStudySubmitPending = false
           onlineStudySaveStatus.value = 'saved'
           onlineStudyPresence.value = event.presence
+          onlineStudyChatMessages.value = [...event.chat].sort((a, b) => a.createdAt - b.createdAt)
           activeOnlineStudy.value = {
             ...current,
             version: event.room.version,
@@ -1865,6 +1900,7 @@ function startOnlineStudyStateSubscription(
           upsertOnlineStudyPresence(event.presence)
           break
         case 'chat-message':
+          upsertOnlineStudyChatMessage(event.message)
           break
       }
     },
@@ -1946,6 +1982,7 @@ function stopOnlineStudyStateSubscription() {
   onlineStudySaveStatus.value = 'saved'
   onlineStudyPresenceSignature = ''
   onlineStudyPresence.value = []
+  onlineStudyChatMessages.value = []
   onlineStudyStateSubscription?.unsubscribe()
   onlineStudyStateSubscription = null
 }
@@ -1964,6 +2001,7 @@ async function syncOnlineStudyState(serverAddress: string, roomId: string) {
       title: state.room.document.title,
     }
     onlineStudyPresence.value = state.presence
+    onlineStudyChatMessages.value = [...state.chat].sort((a, b) => a.createdAt - b.createdAt)
     game?.loadStudyDocument(state.room.document, { focus: false })
     onlineConnectionStatus.value = 'connected'
   }
@@ -2612,6 +2650,21 @@ watch([exportFormat, exportMode], () => {
         </div>
       </div>
 
+      <ChatPanel
+        v-if="activeOnlineStudy && chatPanelOpen"
+        :style="menuButtonStyle"
+        :messages="onlineStudyChatMessages"
+        :current-user-id="matchUserId"
+        :get-author-color="getRecordMarkerAuthorColor"
+        :disabled="onlineConnectionStatus !== 'connected'"
+        :title="t('chat.title')"
+        :empty-text="t('chat.empty')"
+        :placeholder="t('chat.placeholder')"
+        :send-label="t('chat.send')"
+        @send="sendOnlineStudyChatMessage"
+        @ui-sound="playUISound"
+      />
+
       <div
         v-if="gameStarted"
         class="game-status-stack"
@@ -2684,6 +2737,15 @@ watch([exportFormat, exportMode], () => {
             @click="toggleClockPanel"
           >
             <span>{{ t('button.clock') }}</span>
+          </GameButton>
+          <GameButton
+            v-if="activeOnlineStudy"
+            size="secondary"
+            :style="menuButtonStyle"
+            :pressed="chatPanelOpen"
+            @click="clickChatMenuButton"
+          >
+            <span>{{ t('button.chat') }}</span>
           </GameButton>
           <GameButton
             size="secondary"
