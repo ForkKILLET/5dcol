@@ -79,6 +79,7 @@ function toggleCollapsed() {
   left: 50%;
   bottom: 0;
   z-index: 4;
+  width: max-content;
   pointer-events: auto;
   transform: translateX(-50%);
   transition: transform 190ms ease;
@@ -92,16 +93,28 @@ function toggleCollapsed() {
 }
 
 .game-dock-body {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  width: max-content;
   padding: calc(var(--button-content-gap) * 0.72)
     calc(var(--button-content-gap) * 1.8)
     calc(var(--button-content-gap) * 1.1);
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+
+.game-dock-body::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   border: var(--button-border) solid var(--button-border-color);
   border-bottom: 0;
   border-radius: 14px 14px 0 0;
   background: var(--button-fill-color);
   box-shadow: var(--button-shadow-offset) 0 0 var(--button-shadow-color);
-  opacity: 1;
-  transition: opacity 120ms ease;
+  content: '';
+  pointer-events: none;
 }
 
 .game-dock-handle {
@@ -144,6 +157,8 @@ function toggleCollapsed() {
 }
 
 .game-dock-items {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: calc(var(--button-content-gap) * 1.25);
