@@ -248,6 +248,9 @@ online.reconnecting: "正在重连"
 online.offline: "已离线"
 online.error: "在线错误 - {message}"
 online.spectators: "{count} 人观战"
+online.studySaved: "在线研讨 - 已保存"
+online.studySaving: "在线研讨 - 保存中..."
+online.studySaveFailed: "在线研讨 - 保存失败"
 
 notification.yourTurn: "你的回合 - {player}执棋"
 

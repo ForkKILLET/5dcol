@@ -158,6 +158,7 @@ const onlineSpectatorCount = ref(0)
 const clockNow = ref(Date.now())
 const onlineConnectionStatus = ref<OnlineConnectionStatus>('offline')
 const onlineError = ref('')
+const onlineStudySaveStatus = ref<OnlineStudySaveStatus>('saved')
 const documentFocused = ref(document.hasFocus())
 const viewPlayer = useStorageRef<Player>(VIEW_PLAYER_STORAGE_KEY, Player.W, {
   parse: raw => raw === 'black' ? Player.B : Player.W,
@@ -203,6 +204,7 @@ const FOCUSABLE_SELECTOR = [
 provide(UiSoundKey, playUISound)
 
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
+type OnlineStudySaveStatus = 'saved' | 'saving' | 'failed'
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
 const recordActionButtonIds = new Set(['export-5dpgn'])
 
@@ -266,6 +268,8 @@ const gameStatusText = computed(() => {
   )
 })
 const onlineStatusText = computed(() => {
+  if (! gameStarted.value) return ''
+  if (activeOnlineStudy.value) return getOnlineStudyStatusText()
   if (! gameStarted.value || ! onlineSession.value || onlinePlayer.value === null) return ''
 
   let status = ''
@@ -300,6 +304,29 @@ const onlineStatusText = computed(() => {
 
   return appendOnlineSpectatorCount(status)
 })
+
+function getOnlineStudyStatusText() {
+  if (onlineError.value) return t('online.error', { message: onlineError.value })
+  switch (onlineConnectionStatus.value) {
+    case 'connecting':
+      return t('online.connecting')
+    case 'reconnecting':
+      return t('online.reconnecting')
+    case 'offline':
+      return t('online.offline')
+    case 'connected':
+      break
+  }
+
+  switch (onlineStudySaveStatus.value) {
+    case 'saving':
+      return t('online.studySaving')
+    case 'failed':
+      return t('online.studySaveFailed')
+    case 'saved':
+      return t('online.studySaved')
+  }
+}
 
 function appendOnlineSpectatorCount(status: string) {
   if (! status || onlineSpectatorCount.value <= 0) return status
@@ -1444,6 +1471,9 @@ function startStudyGame(
   activeOnlineStudy.value = null
   onlineRoomRef.value = null
   stopOnlineStudyStateSubscription()
+  onlineError.value = ''
+  onlineStudySaveStatus.value = 'saved'
+  onlineConnectionStatus.value = source.kind === 'online' ? 'connecting' : 'offline'
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -1780,6 +1810,7 @@ function startOnlineStudyStateSubscription(
       switch (event.type) {
         case 'study-state':
           onlineStudySubmitPending = false
+          onlineStudySaveStatus.value = 'saved'
           onlineStudyPresence.value = event.presence
           activeOnlineStudy.value = {
             ...current,
@@ -1793,10 +1824,12 @@ function startOnlineStudyStateSubscription(
               && isOnlineStudySubmitPatchByUser(event.patch, matchUserId.value)
             if (! game?.applyStudyPatch(event.patch, { followPatch })) {
               onlineStudySubmitPending = false
+              onlineStudySaveStatus.value = 'failed'
               void syncOnlineStudyState(serverAddress, roomId)
               return
             }
             if (followPatch) onlineStudySubmitPending = false
+            if (onlineStudySaveStatus.value === 'saving') onlineStudySaveStatus.value = 'saved'
           }
           activeOnlineStudy.value = {
             ...current,
@@ -1805,6 +1838,7 @@ function startOnlineStudyStateSubscription(
           break
         case 'command-rejected':
           onlineStudySubmitPending = false
+          onlineStudySaveStatus.value = 'failed'
           void syncOnlineStudyState(serverAddress, roomId)
           break
         case 'presence':
@@ -1817,11 +1851,13 @@ function startOnlineStudyStateSubscription(
     {
       onOpen: () => {
         onlineConnectionStatus.value = 'connected'
+        onlineError.value = ''
         onlineStudyPresenceSignature = ''
         syncOnlineStudyPresence(recordCurrentCursor.value)
       },
       onError: () => {
         onlineStudySubmitPending = false
+        if (onlineStudySaveStatus.value === 'saving') onlineStudySaveStatus.value = 'failed'
         onlineConnectionStatus.value = 'reconnecting'
       },
     },
@@ -1859,9 +1895,12 @@ function sendOnlineStudyCommand(
   if (! onlineStudyStateSubscription || onlineConnectionStatus.value !== 'connected') {
     onlineError.value = t('online.reconnecting')
     onlineConnectionStatus.value = 'reconnecting'
+    onlineStudySaveStatus.value = 'failed'
     return false
   }
 
+  onlineError.value = ''
+  onlineStudySaveStatus.value = 'saving'
   onlineStudyStateSubscription.sendCommand(current.version, command)
   return true
 }
@@ -1884,6 +1923,7 @@ function isOnlineStudySubmitPatchByUser(patch: StudyPatch, userId: string | null
 
 function stopOnlineStudyStateSubscription() {
   onlineStudySubmitPending = false
+  onlineStudySaveStatus.value = 'saved'
   onlineStudyPresenceSignature = ''
   onlineStudyPresence.value = []
   onlineStudyStateSubscription?.unsubscribe()
@@ -1897,6 +1937,7 @@ async function syncOnlineStudyState(serverAddress: string, roomId: string) {
     const current = activeOnlineStudy.value
     if (! current || current.serverAddress !== serverAddress || current.roomId !== roomId) return
     onlineStudySubmitPending = false
+    if (onlineStudySaveStatus.value !== 'failed') onlineStudySaveStatus.value = 'saved'
     activeOnlineStudy.value = {
       ...current,
       version: state.room.version,

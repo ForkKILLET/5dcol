@@ -248,6 +248,9 @@ online.reconnecting: "Reconnecting"
 online.offline: "Offline"
 online.error: "Online error - {message}"
 online.spectators: "{count} spectators"
+online.studySaved: "Online study - Saved"
+online.studySaving: "Online study - Saving..."
+online.studySaveFailed: "Online study - Save failed"
 
 notification.yourTurn: "Your turn - {player} pieces"
 
