@@ -81,6 +81,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toolbarButtonClick: [button: GameToolbarButton]
   focusSegment: [segment: GameRecordMoveSegment]
+  focusPresenceMember: [userId: string | null]
   rollbackCursor: [cursor: GameRecordCursor]
   deleteFuture: [cursor: GameRecordCursor]
   replaceActionComments: [payload: {
@@ -447,8 +448,8 @@ function getPresenceCursorGroupTitle(cursor: GameRecordCursor) {
   })
 }
 
-function jumpToPresenceCursor(cursor: GameRecordCursor) {
-  emit('rollbackCursor', cursor)
+function focusPresenceMember(userId: string | null) {
+  emit('focusPresenceMember', userId)
 }
 
 function handleDeleteFutureClick(cursor: GameRecordCursor) {
@@ -1379,7 +1380,7 @@ onBeforeUnmount(() => {
                     :style="getPresenceCursorStyle(cursor)"
                     :title="getPresenceCursorTitle(cursor)"
                     :aria-label="getPresenceCursorTitle(cursor)"
-                    @click.stop="jumpToPresenceCursor(row)"
+                    @click.stop="focusPresenceMember(cursor.userId)"
                   >
                     {{ getPresenceCursorInitial(cursor) }}
                   </button>
@@ -1389,7 +1390,7 @@ onBeforeUnmount(() => {
                     type="button"
                     :title="getPresenceCursorGroupTitle(row)"
                     :aria-label="getPresenceCursorGroupTitle(row)"
-                    @click.stop="jumpToPresenceCursor(row)"
+                    @click.stop="focusPresenceMember(null)"
                   >
                     +{{ getHiddenPresenceCursorCountAtCursor(row) }}
                   </button>

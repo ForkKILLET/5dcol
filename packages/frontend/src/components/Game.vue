@@ -108,6 +108,8 @@ const onlineStudyMembers = ref<StudyMember[]>([])
 const onlineStudyPresence = ref<StudyPresence[]>([])
 const onlineStudyChatMessages = ref<ChatMessage[]>([])
 let recordFocusedMovePulseId = 0
+let focusedOnlineStudyMemberPulseId = 0
+const focusedOnlineStudyMember = ref<{ userId: string; pulseId: number } | null>(null)
 const membersPanelOpen = ref(false)
 const chatPanelOpen = ref(false)
 const secondaryMenuOpen = ref(false)
@@ -856,6 +858,17 @@ function jumpToOnlineStudyMember(userId: string) {
   if (! cursor) return
   recordPanelOpen.value = true
   rollbackToRecordCursor(cursor)
+}
+
+function focusOnlineStudyMember(userId: string | null) {
+  if (! activeOnlineStudy.value) return
+  playUISound()
+  membersPanelOpen.value = true
+  if (! userId) return
+  focusedOnlineStudyMember.value = {
+    userId,
+    pulseId: ++ focusedOnlineStudyMemberPulseId,
+  }
 }
 
 function playMainMenuAnnihilateSound() {
@@ -1652,6 +1665,7 @@ function startStudyGame(
   onlineStudyMembers.value = []
   onlineStudyChatMessages.value = []
   onlineConnectionStatus.value = source.kind === 'online' ? 'connecting' : 'offline'
+  focusedOnlineStudyMember.value = null
   membersPanelOpen.value = source.kind === 'online'
   chatPanelOpen.value = source.kind === 'online'
   game = new Game({
@@ -2111,6 +2125,7 @@ function stopOnlineStudyStateSubscription() {
   onlineStudyMembers.value = []
   onlineStudyPresence.value = []
   onlineStudyChatMessages.value = []
+  focusedOnlineStudyMember.value = null
   onlineStudyStateSubscription?.unsubscribe()
   onlineStudyStateSubscription = null
 }
@@ -2372,6 +2387,7 @@ function returnToMainMenu(
   recordCurrentCursor.value = { recordLineId: 0, recordActionIndex: 0 }
   recordFocusedMove.value = null
   recordPanelOpen.value = false
+  focusedOnlineStudyMember.value = null
   membersPanelOpen.value = false
   chatPanelOpen.value = false
   secondaryMenuOpen.value = false
@@ -2797,6 +2813,8 @@ watch([exportFormat, exportMode], () => {
         <MembersPanel
           v-if="membersPanelOpen"
           :members="onlineStudyMemberRows"
+          :focused-member-id="focusedOnlineStudyMember?.userId ?? null"
+          :focus-pulse-id="focusedOnlineStudyMember?.pulseId ?? 0"
           :title="t('members.title')"
           :empty-text="t('members.empty')"
           :you-label="t('members.you')"
@@ -2853,6 +2871,7 @@ watch([exportFormat, exportMode], () => {
         :custom-glyph-templates="customRecordGlyphTemplates"
         @toolbar-button-click="clickToolbarButton"
         @focus-segment="focusRecordSegment"
+        @focus-presence-member="focusOnlineStudyMember"
         @rollback-cursor="rollbackToRecordCursor"
         @delete-future="deleteRecordFuture"
         @replace-action-comments="replaceRecordActionComments"

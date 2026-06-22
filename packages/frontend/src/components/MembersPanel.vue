@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nextTick, useTemplateRef, watch } from 'vue'
 import GameButton from './GameButton.vue'
 import GamePanel from './GamePanel.vue'
 
@@ -13,8 +14,15 @@ export interface MembersPanelMember {
   role: string
 }
 
-defineProps<{
+const emit = defineEmits<{
+  jump: [userId: string]
+}>()
+
+const memberList = useTemplateRef('memberList')
+const props = defineProps<{
   emptyText: string
+  focusedMemberId?: string | null
+  focusPulseId?: number
   jumpLabel: string
   members: MembersPanelMember[]
   offlineLabel: string
@@ -23,9 +31,15 @@ defineProps<{
   youLabel: string
 }>()
 
-const emit = defineEmits<{
-  jump: [userId: string]
-}>()
+watch(() => props.focusPulseId, () => {
+  if (! props.focusedMemberId) return
+  void nextTick(() => {
+    const row = memberList.value?.querySelector<HTMLElement>(
+      `[data-member-id="${CSS.escape(props.focusedMemberId ?? '')}"]`,
+    )
+    row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
+})
 
 function jumpToMember(userId: string) {
   emit('jump', userId)
@@ -43,16 +57,19 @@ function jumpToMember(userId: string) {
     </div>
     <ul
       v-else
+      ref="memberList"
       class="members-list"
     >
       <li
         v-for="member in members"
-        :key="member.id"
+        :key="`${member.id}:${member.id === focusedMemberId ? focusPulseId ?? 0 : 0}`"
         class="member-row"
         :class="{
           'member-row--offline': !member.online,
           'member-row--current': member.current,
+          'member-row--focused': member.id === focusedMemberId,
         }"
+        :data-member-id="member.id"
         :style="{ '--member-color': member.color }"
       >
         <div class="member-color" aria-hidden="true"></div>
@@ -131,6 +148,10 @@ function jumpToMember(userId: string) {
   opacity: 0.62;
 }
 
+.member-row--focused {
+  animation: member-row-pulse 900ms ease-out;
+}
+
 .member-color {
   width: 12px;
   height: 100%;
@@ -174,5 +195,16 @@ function jumpToMember(userId: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@keyframes member-row-pulse {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+
+  35% {
+    box-shadow: 0 0 0 3px var(--member-color);
+  }
 }
 </style>
