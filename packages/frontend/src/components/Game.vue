@@ -213,7 +213,6 @@ watch(language, value => {
 const {
   canViewMatchRoom,
   clearLastOnlineGame,
-  closeMatchRoomSettingsPanel,
   getMatchRoomSeatLabel,
   getMatchRoomSettingsMeta,
   getMatchRoomStatusSuffix,
@@ -1158,8 +1157,7 @@ function handleWindowKeyDown(e: KeyboardEvent) {
     e.preventDefault()
     if (dialogMode.value !== 'none') backDialog()
     else if (! gameStarted.value && mainMenuMode.value === 'versus') {
-      if (matchPanelMode.value === 'room-settings') closeMatchRoomSettingsPanel()
-      else closeVersusPage()
+      closeVersusPage()
     }
     else if (! gameStarted.value && mainMenuMode.value === 'study') {
       closeStudyPage()
@@ -1767,7 +1765,7 @@ function isOnlineStudySubmitPatchByUser(patch: StudyPatch, userId: string | null
     case 'upsert-annotation':
     case 'delete-annotation':
     case 'update-title':
-    case 'update-visibility':
+    case 'update-private':
       return false
   }
 }

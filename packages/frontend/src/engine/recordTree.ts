@@ -338,7 +338,7 @@ export class RecordDocument {
       case 'delete-annotation':
         return this.deleteAnnotation(patch.annotationId)
       case 'update-title':
-      case 'update-visibility':
+      case 'update-private':
         return true
     }
   }

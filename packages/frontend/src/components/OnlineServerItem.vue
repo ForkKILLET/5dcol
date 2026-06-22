@@ -25,7 +25,6 @@ const props = withDefaults(defineProps<{
   expanded?: boolean
   manual?: boolean
   dynamicMeta?: string[]
-  createLabel?: string
   collapsible?: boolean
   panel?: boolean
 }>(), {
@@ -136,7 +135,7 @@ function formatBuildDate(buildDate: string) {
             size="small"
             @click="emit('createRoom', server)"
           >
-            <span>{{ createLabel ?? t('match.createRoom') }}</span>
+            <span>{{ t('match.create') }}</span>
           </GameButton>
           <GameButton
             v-if="server.status !== 'connected' && server.status !== 'connecting'"

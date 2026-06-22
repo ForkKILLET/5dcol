@@ -425,7 +425,7 @@ export function createBackendServer(options: BackendServerOptions) {
       id: roomId,
       name,
       ownerUserId: user.id,
-      visibility: body.visibility,
+      private: body.private,
       document,
       members: [{
         userId: user.id,
@@ -546,7 +546,7 @@ function createStudyDocument({
 function getListedStudyRooms(rooms: StudyRoom[], userId: string | null | undefined): StudyRoom[] {
   const ownUserId = userId ?? null
   return rooms
-    .filter(room => room.visibility === 'public' || isStudyMember(room, ownUserId))
+    .filter(room => ! room.private || isStudyMember(room, ownUserId))
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
@@ -1188,12 +1188,12 @@ function createStudyPatchFromCommand(
         },
       }
     }
-    case 'update-visibility':
-      if (command.visibility === room.visibility) return { reason: 'conflict' }
+    case 'update-private':
+      if (command.private === room.private) return { reason: 'conflict' }
       return {
         patch: {
-          type: 'update-visibility',
-          visibility: command.visibility,
+          type: 'update-private',
+          private: command.private,
         },
       }
   }
@@ -1321,8 +1321,8 @@ function applyStudyPatch(room: StudyRoom, patch: StudyPatch) {
       room.document.title = patch.title
       room.document.updatedAt = now
       break
-    case 'update-visibility':
-      room.visibility = patch.visibility
+    case 'update-private':
+      room.private = patch.private
       break
   }
   room.version += 1

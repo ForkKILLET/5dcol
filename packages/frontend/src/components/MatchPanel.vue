@@ -2,13 +2,11 @@
 import { useI18n } from 'vue-i18n'
 import type { MatchRoom, MatchRoomSettings } from '@5dcol/shared/protocol'
 import type { MatchServerState } from '@engine/matchClient'
-import GameButton from './GameButton.vue'
-import GameListItem from './GameListItem.vue'
-import GameTextInput from './GameTextInput.vue'
 import MatchRoomSettingsPanel from './MatchRoomSettingsPanel.vue'
 import MatchServerItem from './MatchServerItem.vue'
+import OnlineRoomCreatePanel from './OnlineRoomCreatePanel.vue'
 
-type MatchPanelMode = 'servers' | 'room-settings'
+type MatchPanelMode = 'servers' | 'create-room'
 
 const props = defineProps<{
   mode: MatchPanelMode
@@ -21,8 +19,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  settingsBack: []
-  openRoomSettings: []
+  createBack: []
   createRoom: []
   toggleServer: [server: MatchServerState]
   connectServer: [server: MatchServerState]
@@ -36,18 +33,14 @@ const roomName = defineModel<string>('roomName', { required: true })
 
 const { t } = useI18n({ useScope: 'global' })
 
-function getDisplayAddress(server: MatchServerState) {
-  return server.address.replace(/^https?:\/\//, '')
-}
-
 function isExpanded(server: MatchServerState) {
   return props.expandedServerIds.has(server.id)
 }
 
 function getTitle() {
   switch (props.mode) {
-    case 'room-settings':
-      return t('dialog.matchRoomSettingsTitle')
+    case 'create-room':
+      return t('match.createRoom')
     case 'servers':
       return t('match.title')
   }
@@ -72,70 +65,19 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
     :class="{ 'is-embedded': embedded }"
   >
     <div
-      v-if="showTitle !== false || mode === 'room-settings'"
+      v-if="showTitle !== false"
       class="match-card-header"
     >
       <h2
-        v-if="showTitle !== false"
         class="dialog-title"
       >
         {{ getTitle() }}
       </h2>
-      <div
-        v-if="mode === 'room-settings'"
-        class="match-card-actions"
-      >
-        <GameButton
-          size="small"
-          @click="emit('settingsBack')"
-        >
-          <span>{{ t('button.back') }}</span>
-        </GameButton>
-      </div>
     </div>
     <div
       v-if="mode === 'servers'"
       class="match-server-list"
     >
-      <section
-        v-if="customRoomServer"
-        class="match-custom-room-panel"
-      >
-        <GameListItem>
-          <template #title>
-            <span>
-              {{ t('match.customRoom') }}
-            </span>
-          </template>
-          <template #meta>
-            <span>
-              {{ getDisplayAddress(customRoomServer) }}
-            </span>
-          </template>
-          <template #actions>
-            <div class="match-control-slot match-control-slot--input">
-              <GameTextInput
-                v-model="roomName"
-                :placeholder="t('match.roomNamePlaceholder')"
-                spellcheck="false"
-                @keydown.enter.prevent="emit('createRoom')"
-              />
-            </div>
-            <GameButton
-              size="small"
-              @click="emit('openRoomSettings')"
-            >
-              <span>{{ t('main.settings') }}</span>
-            </GameButton>
-            <GameButton
-              size="small"
-              @click="emit('createRoom')"
-            >
-              <span>{{ t('match.create') }}</span>
-            </GameButton>
-          </template>
-        </GameListItem>
-      </section>
       <MatchServerItem
         v-for="server in servers"
         :key="server.id"
@@ -150,10 +92,22 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
         @view-room="forwardViewRoom"
       />
     </div>
-    <MatchRoomSettingsPanel
-      v-else
-      :settings="roomSettings"
-    />
+    <OnlineRoomCreatePanel
+      v-else-if="mode === 'create-room' && customRoomServer"
+      v-model:name="roomName"
+      :title="t('match.createRoom')"
+      :server-name="customRoomServer.name"
+      :server-address="customRoomServer.address"
+      :name-label="t('match.roomName')"
+      :name-placeholder="t('match.roomNamePlaceholder')"
+      :create-label="t('match.create')"
+      @back="emit('createBack')"
+      @create="emit('createRoom')"
+    >
+      <template #settings>
+        <MatchRoomSettingsPanel :settings="roomSettings" />
+      </template>
+    </OnlineRoomCreatePanel>
   </div>
 </template>
 
@@ -214,32 +168,4 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
   min-width: 0;
 }
 
-.match-control-slot {
-  height: calc(32px + var(--small-button-shadow-offset));
-}
-
-.match-control-slot--input {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: flex-start;
-  min-width: 0;
-}
-
-.match-custom-room-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--button-content-gap);
-  padding: calc(var(--button-content-gap) * 1.4);
-  border: var(--button-border) solid var(--button-border-color);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--button-fill-color) 75%, transparent);
-}
-
-.match-custom-room-panel :deep(.game-list-item__actions) {
-  flex: 0 1 440px;
-  display: flex;
-  align-items: baseline;
-  gap: var(--button-content-gap);
-  min-width: 0;
-}
 </style>

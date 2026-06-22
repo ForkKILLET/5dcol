@@ -71,13 +71,12 @@ const { t } = useI18n({ useScope: 'global' })
 .match-settings-panel {
   flex: 1 1 auto;
   display: flex;
-  justify-content: center;
   min-height: 0;
   overflow: auto;
 }
 
 .match-settings-list {
-  width: min(680px, 100%);
+  width: 100%;
 }
 
 .match-radio-group {

@@ -496,12 +496,10 @@ export const StudyDocumentSchema = z.object({
 export type StudyDocument = z.infer<typeof StudyDocumentSchema>
 
 export const RoomKindSchema = z.enum(['match', 'study'])
-export const StudyRoomVisibilitySchema = z.enum(['public', 'private'])
 export const StudyMemberRoleSchema = z.enum(['owner', 'moderator', 'editor', 'viewer'])
 export const StudyFollowModeSchema = z.enum(['free', 'following', 'broadcast'])
 
 export type RoomKind = z.infer<typeof RoomKindSchema>
-export type StudyRoomVisibility = z.infer<typeof StudyRoomVisibilitySchema>
 export type StudyMemberRole = z.infer<typeof StudyMemberRoleSchema>
 export type StudyFollowMode = z.infer<typeof StudyFollowModeSchema>
 
@@ -530,7 +528,7 @@ export const StudyRoomSchema = z.object({
   id: z.string(),
   name: z.string(),
   ownerUserId: z.string(),
-  visibility: StudyRoomVisibilitySchema,
+  private: z.boolean(),
   document: StudyDocumentSchema,
   members: z.array(StudyMemberSchema),
   version: z.number().int().nonnegative(),
@@ -583,8 +581,8 @@ export const StudyPatchSchema = z.discriminatedUnion('type', [
     title: z.string(),
   }),
   z.object({
-    type: z.literal('update-visibility'),
-    visibility: StudyRoomVisibilitySchema,
+    type: z.literal('update-private'),
+    private: z.boolean(),
   }),
 ])
 
@@ -613,8 +611,8 @@ export const StudyCommandSchema = z.discriminatedUnion('type', [
     title: z.string(),
   }),
   z.object({
-    type: z.literal('update-visibility'),
-    visibility: StudyRoomVisibilitySchema,
+    type: z.literal('update-private'),
+    private: z.boolean(),
   }),
 ])
 
@@ -625,7 +623,7 @@ export const CreateStudyRoomRequestSchema = z.object({
   name: z.string().optional(),
   nickname: z.string().optional(),
   document: StudyDocumentSchema.optional(),
-  visibility: StudyRoomVisibilitySchema.optional().default('private'),
+  private: z.boolean().optional().default(true),
 }).nullish()
 
 export type CreateStudyRoomRequest = NonNullable<z.input<typeof CreateStudyRoomRequestSchema>>

@@ -32,7 +32,7 @@ const emit = defineEmits<{
 const {
   clickConnectMatchServer,
   clickRefreshMatchServers,
-  closeMatchRoomSettingsPanel,
+  closeMatchCreateRoomPanel,
   connectMatchServers,
   createMatchRoom,
   customRoomServer,
@@ -44,7 +44,6 @@ const {
   matchRoomSettings,
   matchServers,
   openCustomRoomForm,
-  openMatchRoomSettingsDialog,
   returnToMatchRoom,
   startMatchServerRefresh,
   stopMatchServerRefresh,
@@ -73,7 +72,6 @@ const openLocalGameActionMenuId = ref<string | null>(null)
 const { t } = useI18n({ useScope: 'global' })
 const pageTitle = computed(() => {
   if (activeTab.value === 'local') return t('versus.localTitle')
-  if (matchPanelMode.value === 'room-settings') return t('dialog.matchRoomSettingsTitle')
   return t('versus.onlineTitle')
 })
 
@@ -115,10 +113,6 @@ function close() {
   cancelRenameLocalGame()
   openLocalGameActionMenuId.value = null
   emit('close')
-}
-
-function closeSettingsPanel() {
-  closeMatchRoomSettingsPanel()
 }
 
 function createAndOpenLocalGame() {
@@ -334,8 +328,7 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
       :servers="matchServers"
       :custom-room-server="customRoomServer"
       :expanded-server-ids="expandedMatchServerIds"
-      @settings-back="closeSettingsPanel"
-      @open-room-settings="openMatchRoomSettingsDialog"
+      @create-back="closeMatchCreateRoomPanel"
       @create-room="createMatchRoom()"
       @toggle-server="toggleMatchServerExpanded"
       @connect-server="clickConnectMatchServer"

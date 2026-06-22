@@ -88,7 +88,7 @@ interface UseMatchOptions {
 }
 
 let activeMatchOptions: UseMatchOptions | null = null
-const matchPanelMode = ref<'servers' | 'room-settings'>('servers')
+const matchPanelMode = ref<'servers' | 'create-room'>('servers')
 const matchRoomName = ref('')
 const { onlineNickname: matchNickname, onlineUserId: matchUserId } = useOnlineIdentity()
 const lastOnlineGame = useStorageRef<StoredOnlineGame | null>(
@@ -217,16 +217,12 @@ export function useMatch(options?: UseMatchOptions) {
     return normalizeOnlineServerAddress(address)
   }
 
-  function openMatchRoomSettingsDialog() {
-    getOptions().playUISound()
-    matchPanelMode.value = 'room-settings'
-  }
-
   function openVersusPage() {
     const options = getOptions()
     options.playUISound()
     options.setMainMenuMode?.('versus')
     matchPanelMode.value = 'servers'
+    customRoomServerId.value = null
     void connectMatchServers()
     startMatchServerRefresh()
   }
@@ -236,12 +232,14 @@ export function useMatch(options?: UseMatchOptions) {
     options.playUISound()
     stopMatchServerRefresh()
     matchPanelMode.value = 'servers'
+    customRoomServerId.value = null
     options.setMainMenuMode?.('home')
   }
 
-  function closeMatchRoomSettingsPanel() {
+  function closeMatchCreateRoomPanel() {
     getOptions().playUISound()
     matchPanelMode.value = 'servers'
+    customRoomServerId.value = null
   }
 
   async function connectMatchServers() {
@@ -357,6 +355,7 @@ export function useMatch(options?: UseMatchOptions) {
     getOptions().playUISound()
     if (server.status !== 'connected') return
     customRoomServerId.value = server.id
+    matchPanelMode.value = 'create-room'
     expandedMatchServerIds.add(server.id)
   }
 
@@ -530,7 +529,7 @@ export function useMatch(options?: UseMatchOptions) {
     clickConnectMatchServer,
     clickRefreshMatchServers,
     closeVersusPage,
-    closeMatchRoomSettingsPanel,
+    closeMatchCreateRoomPanel,
     connectMatchServers,
     customRoomServer,
     expandedMatchServerIds,
@@ -552,7 +551,6 @@ export function useMatch(options?: UseMatchOptions) {
     normalizeMatchServerAddress,
     openCustomRoomForm,
     openVersusPage,
-    openMatchRoomSettingsDialog,
     parseSharedRoomHash,
     returnToMatchRoom,
     sharedRoom,
@@ -593,7 +591,10 @@ function syncMatchServerRegistry() {
   for (const server of matchServers) {
     if (entryAddressSet.has(server.address)) continue
     expandedMatchServerIds.delete(server.id)
-    if (customRoomServerId.value === server.id) customRoomServerId.value = null
+    if (customRoomServerId.value === server.id) {
+      customRoomServerId.value = null
+      matchPanelMode.value = 'servers'
+    }
   }
 
   const nextServers = entries.map(entry => {

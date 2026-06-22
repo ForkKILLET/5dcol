@@ -47,7 +47,7 @@ export const studyRoomsTable = sqliteTable('study_rooms', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   ownerUserId: text('owner_user_id').notNull(),
-  visibility: text('visibility').notNull(),
+  private: integer('private', { mode: 'boolean' }).notNull(),
   documentJson: text('document_json').notNull(),
   membersJson: text('members_json').notNull(),
   version: integer('version').notNull(),

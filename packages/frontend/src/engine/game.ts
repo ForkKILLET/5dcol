@@ -705,7 +705,7 @@ export class Game extends Disposable(Empty) {
       case 'upsert-annotation':
       case 'delete-annotation':
       case 'update-title':
-      case 'update-visibility':
+      case 'update-private':
         return null
     }
   }

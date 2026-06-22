@@ -19,7 +19,9 @@ import GameListItemMenu from './GameListItemMenu.vue'
 import GamePanel from './GamePanel.vue'
 import GameTab from './GameTab.vue'
 import GameTextInput from './GameTextInput.vue'
+import GameToggle from './GameToggle.vue'
 import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
+import OnlineRoomCreatePanel from './OnlineRoomCreatePanel.vue'
 import OnlineServerItem from './OnlineServerItem.vue'
 
 const props = defineProps<{
@@ -72,14 +74,24 @@ const activeTab = ref<'local' | 'online'>('local')
 const editingStudyId = ref<string | null>(null)
 const editingStudyTitle = ref('')
 const openStudyActionMenuId = ref<string | null>(null)
+const onlineStudyPanelMode = ref<'servers' | 'create-room'>('servers')
+const onlineStudyCreateServerId = ref<string | null>(null)
+const onlineStudyName = ref('')
+const onlineStudyPrivate = ref(true)
 const expandedStudyServerIds = reactive(new Set(DEFAULT_ONLINE_SERVER_IDS))
 const studyServers = reactive<StudyServerState[]>(getOnlineServerEntries()
   .map(entry => createStudyServerState(entry)))
 let studyRefreshTimer: number | null = null
 
-const pageTitle = computed(() => (
-  activeTab.value === 'local' ? t('study.localTitle') : t('study.onlineTitle')
+const onlineStudyCreateServer = computed(() => (
+  onlineStudyCreateServerId.value === null
+    ? null
+    : studyServers.find(server => server.id === onlineStudyCreateServerId.value) ?? null
 ))
+const pageTitle = computed(() => {
+  if (activeTab.value === 'local') return t('study.localTitle')
+  return t('study.onlineTitle')
+})
 
 watch([
   () => props.active,
@@ -88,6 +100,7 @@ watch([
   if (! isActive) {
     cancelRenameStudy()
     openStudyActionMenuId.value = null
+    closeOnlineStudyCreatePanel({ sound: false })
     stopStudyServerRefresh()
     return
   }
@@ -97,6 +110,7 @@ watch([
     startStudyServerRefresh()
   }
   else {
+    closeOnlineStudyCreatePanel({ sound: false })
     stopStudyServerRefresh()
   }
 }, { immediate: true })
@@ -114,6 +128,7 @@ function selectTab(tab: 'local' | 'online') {
   emit('uiSound')
   cancelRenameStudy()
   openStudyActionMenuId.value = null
+  closeOnlineStudyCreatePanel({ sound: false })
   activeTab.value = tab
 }
 
@@ -234,16 +249,31 @@ function toggleStudyServerExpanded(server: StudyServerState) {
   }
 }
 
-async function createOnlineStudy(server: StudyServerState) {
+function openOnlineStudyCreatePanel(server: StudyServerState) {
   emit('uiSound')
   if (server.status !== 'connected') return
+  onlineStudyCreateServerId.value = server.id
+  onlineStudyPanelMode.value = 'create-room'
+  expandedStudyServerIds.add(server.id)
+}
+
+function closeOnlineStudyCreatePanel(options: { sound?: boolean } = {}) {
+  if (options.sound !== false) emit('uiSound')
+  onlineStudyPanelMode.value = 'servers'
+  onlineStudyCreateServerId.value = null
+}
+
+async function createOnlineStudy(server: StudyServerState | null = onlineStudyCreateServer.value) {
+  emit('uiSound')
+  if (! server || server.status !== 'connected') return
 
   try {
     const client = new MatchClient(server.address)
     const response = await client.createStudy({
       userId: onlineUserId.value ?? undefined,
       nickname: studyNickname.value,
-      name: t('study.untitled'),
+      name: onlineStudyName.value.trim() || t('study.untitled'),
+      private: onlineStudyPrivate.value,
     })
     onlineUserId.value = response.user.id
     upsertServerStudy(server, response.room)
@@ -318,7 +348,7 @@ function getStudyMemberMeta(study: StudyRoom) {
 }
 
 function getStudyVisibilityMeta(study: StudyRoom) {
-  return study.visibility === 'private'
+  return study.private
     ? t('study.private')
     : t('study.public')
 }
@@ -383,6 +413,7 @@ function clickCancelRenameStudy() {
 function close() {
   emit('uiSound')
   openStudyActionMenuId.value = null
+  closeOnlineStudyCreatePanel({ sound: false })
   stopStudyServerRefresh()
   emit('close')
 }
@@ -417,6 +448,7 @@ function syncStudyServerRegistry() {
   for (const server of studyServers) {
     if (entryAddressSet.has(server.address)) continue
     expandedStudyServerIds.delete(server.id)
+    if (onlineStudyCreateServerId.value === server.id) closeOnlineStudyCreatePanel({ sound: false })
   }
 
   const nextServers = entries.map(entry => {
@@ -474,7 +506,7 @@ function syncStudyServerRegistry() {
       </div>
 
       <OnlinePanelToolbar
-        v-if="activeTab === 'online'"
+        v-if="activeTab === 'online' && onlineStudyPanelMode === 'servers'"
         v-model:nickname="studyNickname"
         class="study-online-toolbar"
         :show-back="false"
@@ -572,7 +604,7 @@ function syncStudyServerRegistry() {
         </GamePanel>
       </div>
       <div
-        v-else
+        v-else-if="onlineStudyPanelMode === 'servers'"
         class="study-list"
       >
         <OnlineServerItem
@@ -582,9 +614,8 @@ function syncStudyServerRegistry() {
           :expanded="isStudyServerExpanded(server)"
           :manual="false"
           :dynamic-meta="getStudyServerDynamicMeta(server)"
-          :create-label="t('study.create')"
           @toggle="toggleStudyServerExpanded"
-          @create-room="createOnlineStudy"
+          @create-room="openOnlineStudyCreatePanel"
           @connect="clickConnectStudyServer"
         >
           <template #rooms>
@@ -623,6 +654,27 @@ function syncStudyServerRegistry() {
           </template>
         </OnlineServerItem>
       </div>
+      <OnlineRoomCreatePanel
+        v-else-if="onlineStudyCreateServer"
+        v-model:name="onlineStudyName"
+        :title="t('study.createOnlineTitle')"
+        :server-name="onlineStudyCreateServer.name"
+        :server-address="onlineStudyCreateServer.address"
+        :name-label="t('study.studyName')"
+        :name-placeholder="t('study.namePlaceholder')"
+        :create-label="t('study.create')"
+        @back="closeOnlineStudyCreatePanel"
+        @create="createOnlineStudy()"
+      >
+        <template #settings>
+          <div class="settings-list study-online-create-settings">
+            <div class="settings-row">
+              <span>{{ t('match.setting.private') }}</span>
+              <GameToggle v-model="onlineStudyPrivate" />
+            </div>
+          </div>
+        </template>
+      </OnlineRoomCreatePanel>
     </div>
   </div>
 </template>
@@ -673,6 +725,10 @@ function syncStudyServerRegistry() {
 
 .study-online-toolbar {
   justify-content: flex-end;
+}
+
+.study-online-create-settings {
+  width: 100%;
 }
 
 .study-list {

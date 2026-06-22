@@ -157,7 +157,7 @@ function initializeDatabase(sqlite: DatabaseSync) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       owner_user_id TEXT NOT NULL,
-      visibility TEXT NOT NULL,
+      private INTEGER NOT NULL,
       document_json TEXT NOT NULL,
       members_json TEXT NOT NULL,
       version INTEGER NOT NULL,
@@ -176,6 +176,7 @@ function initializeDatabase(sqlite: DatabaseSync) {
     );
   `)
   addColumnIfMissing(sqlite, 'sessions', 'user_id', 'TEXT')
+  addColumnIfMissing(sqlite, 'study_rooms', 'private', 'INTEGER NOT NULL DEFAULT 1')
 }
 
 function migrateLegacyJsonIfNeeded(db: RoomDatabase, legacyJsonPath: string) {
@@ -353,7 +354,7 @@ function studyRoomToRow(room: StudyRoom): typeof studyRoomsTable.$inferInsert {
     id: parsed.id,
     name: parsed.name,
     ownerUserId: parsed.ownerUserId,
-    visibility: parsed.visibility,
+    private: parsed.private,
     documentJson: JSON.stringify(parsed.document),
     membersJson: JSON.stringify(parsed.members),
     version: parsed.version,
@@ -406,7 +407,7 @@ function rowToStudyRoom(row: StudyRoomRow): StudyRoom | null {
     id: row.id,
     name: row.name,
     ownerUserId: row.ownerUserId,
-    visibility: row.visibility,
+    private: row.private,
     document: parseJson<StudyRoom['document']>(row.documentJson),
     members: parseJson<StudyRoom['members']>(row.membersJson),
     version: row.version,
