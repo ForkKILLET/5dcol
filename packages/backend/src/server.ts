@@ -282,6 +282,7 @@ export function createBackendServer(options: BackendServerOptions) {
 
         addStudyMember(room, user, request.query.nickname)
         saveAll()
+        broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
         subscribeStudyRoomState({
           socket,
           studySubscribers,
@@ -453,7 +454,7 @@ export function createBackendServer(options: BackendServerOptions) {
       if (! room) return sendError(reply, 404, 'Study not found')
       return {
         room,
-        presence: [],
+        presence: getStudyPresenceList(studyPresence, room.id),
         chat: getStudyChatMessages(chatMessages, room.id),
       }
     },
@@ -469,6 +470,7 @@ export function createBackendServer(options: BackendServerOptions) {
       const user = getOrCreateUser(users, body.userId, body.nickname)
       addStudyMember(room, user, body.nickname)
       saveAll()
+      broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
       return {
         user: toUserView(user),
         room,
