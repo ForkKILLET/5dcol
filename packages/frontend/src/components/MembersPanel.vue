@@ -65,6 +65,7 @@ function jumpToMember(userId: string) {
         :key="`${member.id}:${member.id === focusedMemberId ? focusPulseId ?? 0 : 0}`"
         class="member-row"
         :class="{
+          'member-row--online': member.online,
           'member-row--offline': !member.online,
           'member-row--current': member.current,
           'member-row--focused': member.id === focusedMemberId,
@@ -72,21 +73,14 @@ function jumpToMember(userId: string) {
         :data-member-id="member.id"
         :style="{ '--member-color': member.color }"
       >
-        <div class="member-color" aria-hidden="true"></div>
         <div class="member-main">
           <div class="member-heading">
             <span class="member-name">{{ member.name }}</span>
-            <span
-              v-if="member.current"
-              class="member-you"
-            >{{ youLabel }}</span>
           </div>
           <div class="member-meta">
             <span>{{ member.role }}</span>
-            <span
-              class="member-status"
-              :class="{ 'member-status--online': member.online }"
-            >{{ member.online ? onlineLabel : offlineLabel }}</span>
+            <span v-if="member.current">{{ youLabel }}</span>
+            <span class="member-status">{{ member.online ? onlineLabel : offlineLabel }}</span>
           </div>
           <div class="member-position">{{ member.position }}</div>
         </div>
@@ -136,11 +130,15 @@ function jumpToMember(userId: string) {
 
 .member-row {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--button-content-gap);
   align-items: center;
   min-width: 0;
-  padding: calc(var(--button-content-gap) * 0.75);
+  padding: calc(var(--button-content-gap) * 0.75)
+    calc(var(--button-content-gap) * 0.75)
+    calc(var(--button-content-gap) * 0.75)
+    calc(var(--button-content-gap) * 1.25);
+  border-left: 5px solid var(--member-color);
   border-radius: 6px;
   background: color-mix(in srgb, var(--member-color) 13%, transparent);
 }
@@ -153,21 +151,12 @@ function jumpToMember(userId: string) {
   opacity: 0.62;
 }
 
-.member-row--offline .member-status {
-  color: inherit;
+.member-row--online .member-name {
+  color: rgb(92, 135, 95);
 }
 
 .member-row--focused {
   animation: member-row-pulse 900ms ease-out;
-}
-
-.member-color {
-  width: 12px;
-  height: 100%;
-  min-height: 42px;
-  border-radius: 4px;
-  background: var(--member-color);
-  box-shadow: var(--button-tiny-shadow-offset) var(--button-tiny-shadow-offset) 0 var(--button-shadow-color);
 }
 
 .member-main {
@@ -192,17 +181,11 @@ function jumpToMember(userId: string) {
   white-space: nowrap;
 }
 
-.member-you,
 .member-meta,
 .member-position {
   font-size: 13px;
   line-height: 1.1;
   opacity: 0.75;
-}
-
-.member-status--online {
-  color: rgb(92, 135, 95);
-  opacity: 1;
 }
 
 .member-position {
