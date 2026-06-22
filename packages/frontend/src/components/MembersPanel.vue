@@ -106,6 +106,7 @@ function jumpToMember(userId: string) {
 <style scoped>
 .members-panel {
   max-height: min(320px, calc(var(--app-height) - var(--button-top) * 2));
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
   color: var(--button-text-color);
 }
 

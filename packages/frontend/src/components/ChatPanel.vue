@@ -93,6 +93,7 @@ function getAuthorName(message: ChatMessage) {
 <style scoped>
 .chat-panel {
   max-height: min(360px, calc(var(--app-height) - var(--button-top) * 2));
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
   color: var(--button-text-color);
 }
 
