@@ -54,6 +54,7 @@ import { useLocalVersus, type LocalVersusSummary } from '@/composables/localVers
 import { useGameSettings } from '@/composables/settings'
 import { useLocalStudies, useStudyWorkspaces } from '@/composables/study'
 import { useDialogStack } from '@/composables/dialogStack'
+import { normalizeOnlineServerAddress } from '@/composables/online'
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import GameButton from './GameButton.vue'
@@ -615,8 +616,11 @@ function updateRecord(request: GameExportRequest) {
 
   if (game && activeLocalStudy.value) {
     upsertLocalStudy(game.getStudyDocument(activeLocalStudy.value))
-    upsertStudyWorkspace(activeLocalStudy.value.id, {
-      ...(getStudyWorkspace(activeLocalStudy.value.id) ?? {}),
+  }
+  const studyWorkspaceId = getActiveStudyWorkspaceId()
+  if (studyWorkspaceId) {
+    upsertStudyWorkspace(studyWorkspaceId, {
+      ...(getStudyWorkspace(studyWorkspaceId) ?? {}),
       recordCursor: request.currentCursor,
     })
   }
@@ -626,10 +630,26 @@ function updateRecord(request: GameExportRequest) {
 }
 
 function updateWorkspace(workspace: GameWorkspaceState) {
-  if (activeLocalStudy.value) {
-    upsertStudyWorkspace(activeLocalStudy.value.id, workspace)
-    return
+  const studyWorkspaceId = getActiveStudyWorkspaceId()
+  if (studyWorkspaceId) upsertStudyWorkspace(studyWorkspaceId, workspace)
+}
+
+function getActiveStudyWorkspaceId(): string | null {
+  if (activeLocalStudy.value) return activeLocalStudy.value.id
+  if (activeOnlineStudy.value) {
+    return getOnlineStudyWorkspaceId(activeOnlineStudy.value.serverAddress, activeOnlineStudy.value.roomId)
   }
+  return null
+}
+
+function getStudyWorkspaceId(study: StudyDocument, source: StudyOpenSource): string {
+  return source.kind === 'local'
+    ? study.id
+    : getOnlineStudyWorkspaceId(source.serverAddress, source.roomId)
+}
+
+function getOnlineStudyWorkspaceId(serverAddress: string, roomId: string): string {
+  return `online:${normalizeOnlineServerAddress(serverAddress)}:${roomId}`
 }
 
 function updateGameStatus(status: GameStatusView) {
@@ -1465,7 +1485,7 @@ function startStudyGame(
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
   if (playSound) playUISound()
-  const workspace = getStudyWorkspace(study.id)
+  const workspace = getStudyWorkspace(getStudyWorkspaceId(study, source))
   activeLocalVersus.value = null
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
@@ -1504,7 +1524,7 @@ function startStudyGame(
     getRecordGlyphColor,
     canForfeitGame: () => false,
     canFinishGame: () => false,
-    initialWorkspace: source.kind === 'local' ? workspace : undefined,
+    initialWorkspace: workspace,
     onWorkspaceChange: updateWorkspace,
     onRecordMoveFocusRequest: focusRecordMoveFromBoard,
     onStudyCommandRequest: source.kind === 'online'
@@ -1530,7 +1550,7 @@ function startStudyGame(
     }
     startOnlineStudyStateSubscription(source.serverAddress, source.roomId, matchUserId.value)
   }
-  game.loadStudyDocument(study, { workspace: source.kind === 'local' ? workspace : undefined })
+  game.loadStudyDocument(study, { workspace })
   syncGameViewportInsets()
 }
 
