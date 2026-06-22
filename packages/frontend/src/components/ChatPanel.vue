@@ -126,10 +126,6 @@ function getAuthorName(message: ChatMessage) {
   border-radius: 4px;
 }
 
-.chat-message--own {
-  background: color-mix(in srgb, var(--chat-author-color) 18%, transparent);
-}
-
 .chat-message-author {
   font-size: 14px;
   line-height: 1.1;

@@ -139,16 +139,7 @@ function jumpToMember(userId: string) {
     calc(var(--button-content-gap) * 0.75)
     calc(var(--button-content-gap) * 1.25);
   border-left: 5px solid var(--member-color);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--member-color) 13%, transparent);
-}
-
-.member-row--current {
-  background: color-mix(in srgb, var(--member-color) 22%, transparent);
-}
-
-.member-row--offline {
-  opacity: 0.62;
+  border-radius: 4px;
 }
 
 .member-row--online .member-name {
