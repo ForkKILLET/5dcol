@@ -70,6 +70,9 @@ withDefaults(defineProps<{
 }
 
 .game-tab:disabled {
+  border-color: var(--button-disabled-border-color);
+  background: var(--button-disabled-fill-color);
+  color: var(--button-disabled-text-color);
   box-shadow: none;
   cursor: not-allowed;
   transform: translateY(var(--button-shadow-offset));

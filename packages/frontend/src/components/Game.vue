@@ -461,9 +461,13 @@ const themeButtonPreset = computed(() => (
 const themeHoverButtonPreset = computed(() => (
   themePlayer.value === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
 ))
+const themeDisabledButtonPreset = computed(() => (
+  themePlayer.value === Player.B ? ButtonColors.DisabledBlack : ButtonColors.DisabledWhite
+))
 const menuButtonStyle = computed(() => getPresetButtonStyle(
   themeButtonPreset.value,
   themeHoverButtonPreset.value,
+  themeDisabledButtonPreset.value,
 ))
 const mainMenuVisible = computed(() => ! loading.value && ! gameStarted.value)
 const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
@@ -558,6 +562,7 @@ const uiStyle = computed(() => {
 function getPresetButtonStyle(
   preset: ButtonColorPreset,
   hoverPreset: ButtonColorPreset = ButtonColors.GreenWhite,
+  disabledPreset: ButtonColorPreset = themeDisabledButtonPreset.value,
 ) {
   const colors = {
     border: Color4.toRgbaString(preset.border),
@@ -568,6 +573,11 @@ function getPresetButtonStyle(
     border: Color4.toRgbaString(hoverPreset.border),
     fill: Color4.toRgbaString(hoverPreset.fill),
     text: Color4.toRgbaString(hoverPreset.text),
+  }
+  const disabledColors = {
+    border: Color4.toRgbaString(disabledPreset.border),
+    fill: Color4.toRgbaString(disabledPreset.fill),
+    text: Color4.toRgbaString(disabledPreset.text),
   }
 
   return {
@@ -580,10 +590,18 @@ function getPresetButtonStyle(
     '--button-pulse-border-color': hoverColors.border,
     '--button-pulse-fill-color': hoverColors.fill,
     '--button-pulse-text-color': hoverColors.text,
+    '--button-disabled-border-color': disabledColors.border,
+    '--button-disabled-fill-color': disabledColors.fill,
+    '--button-disabled-text-color': disabledColors.text,
   }
 }
 
 function getButtonStyle(button: GameToolbarButton) {
+  const disabledColors = button.disabled ? button.colors : {
+    border: menuButtonStyle.value['--button-disabled-border-color'],
+    fill: menuButtonStyle.value['--button-disabled-fill-color'],
+    text: menuButtonStyle.value['--button-disabled-text-color'],
+  }
   return {
     '--button-border-color': button.colors.border,
     '--button-fill-color': button.colors.fill,
@@ -594,6 +612,9 @@ function getButtonStyle(button: GameToolbarButton) {
     '--button-pulse-border-color': button.pulseColors.border,
     '--button-pulse-fill-color': button.pulseColors.fill,
     '--button-pulse-text-color': button.pulseColors.text,
+    '--button-disabled-border-color': disabledColors.border,
+    '--button-disabled-fill-color': disabledColors.fill,
+    '--button-disabled-text-color': disabledColors.text,
   }
 }
 

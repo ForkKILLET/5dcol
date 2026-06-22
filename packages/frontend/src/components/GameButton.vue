@@ -232,9 +232,9 @@ const props = withDefaults(defineProps<{
 }
 
 .game-button:disabled {
-  border-color: color-mix(in srgb, var(--button-fill-color) 55%, var(--button-shadow-color));
-  background: color-mix(in srgb, var(--button-fill-color) 78%, var(--button-shadow-color));
-  color: color-mix(in srgb, var(--button-text-color) 50%, var(--button-fill-color));
+  border-color: var(--button-disabled-border-color);
+  background: var(--button-disabled-fill-color);
+  color: var(--button-disabled-text-color);
   box-shadow: none;
   transform: translateY(var(--button-shadow-offset));
   cursor: not-allowed;
