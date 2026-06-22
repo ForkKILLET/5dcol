@@ -6,6 +6,7 @@ import {
   MATCH_ROOM_SETTINGS_STORAGE_VERSION,
   MatchRoomStatusSchema,
   parseStoredMatchRoomSettings,
+  type StudyRoom,
   type MatchGameState,
   type MatchRoom,
   type MatchRoomSettings,
@@ -52,18 +53,35 @@ export interface StoredOnlineRoom {
   roomId: string
   roomName: string
 }
-export interface SharedRoomState {
+
+export interface SharedMatchRoomState {
+  kind: 'match'
   server: MatchServerState
   room: MatchRoom | null
   roomId: string
   loading: boolean
   error: string
 }
+export interface SharedStudyRoomState {
+  kind: 'study'
+  server: MatchServerState
+  room: StudyRoom | null
+  roomId: string
+  loading: boolean
+  error: string
+}
+export type SharedRoomState = SharedMatchRoomState | SharedStudyRoomState
+
 export interface SharedRoomHashPayload {
+  kind: 'match' | 'study'
   server: string
   room: string
 }
 
+const SharedRoomResourcePayloadSchema = z.object({
+  server: z.string(),
+  room: z.string(),
+})
 const StoredOnlineGameSchema = z.object({
   serverAddress: z.string(),
   roomId: z.string(),
@@ -71,11 +89,6 @@ const StoredOnlineGameSchema = z.object({
   userId: z.string(),
   status: MatchRoomStatusSchema.extract(['waiting', 'playing']),
   updatedAt: z.number(),
-})
-
-const SharedRoomHashPayloadSchema = z.object({
-  server: z.string(),
-  room: z.string(),
 })
 
 interface UseMatchOptions {
@@ -433,11 +446,19 @@ export function useMatch(options?: UseMatchOptions) {
   function parseSharedRoomHash(hash: string): SharedRoomHashPayload | null {
     const raw = hash.startsWith('#') ? hash.slice(1) : hash
     const params = new URLSearchParams(raw)
-    const encoded = params.get('match')
-    if (! encoded) return null
+    const match = parseSharedRoomResourceHash(params.get('versus'))
+    if (match) return { kind: 'match', ...match }
 
+    const study = parseSharedRoomResourceHash(params.get('study'))
+    if (study) return { kind: 'study', ...study }
+
+    return null
+  }
+
+  function parseSharedRoomResourceHash(encoded: string | null): Omit<SharedRoomHashPayload, 'kind'> | null {
+    if (! encoded) return null
     try {
-      const result = SharedRoomHashPayloadSchema.safeParse(JSON.parse(encoded) as unknown)
+      const result = SharedRoomResourcePayloadSchema.safeParse(JSON.parse(encoded) as unknown)
       if (! result.success) return null
       const server = normalizeMatchServerAddress(result.data.server)
       if (! server) return null

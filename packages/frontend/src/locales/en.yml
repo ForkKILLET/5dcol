@@ -54,6 +54,7 @@ study.serverStats: "{studies} studies"
 study.members: "{count} members"
 study.private: "Private"
 study.public: "Public"
+study.returnToStudy: "Return"
 
 versus.title: "Versus"
 versus.tabsLabel: "Versus modes"
@@ -266,6 +267,8 @@ export.copyManual: "Failed to copy. Please select the text and copy it manually.
 
 share.copied: "Link copied."
 share.copyManual: "Failed to copy. Please select the link and copy it manually."
+share.sharedVersusRoomTitle: "Shared versus room"
+share.sharedStudyRoomTitle: "Shared study room"
 share.loadingRoom: "Loading room..."
 share.roomNotFound: "Room not found or not viewable."
 

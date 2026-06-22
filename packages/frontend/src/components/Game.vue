@@ -15,6 +15,7 @@ import {
   type StudyPatch,
   type StudyPresence,
   type StudyPosition,
+  type StudyRoom,
 } from '@5dcol/shared/protocol'
 
 import { Color4 } from '@engine/basic'
@@ -24,7 +25,7 @@ import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, type GameWorkspaceState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
 import { getMainMenuLayout } from '@engine/mainMenuLayout'
-import { MatchClient, type MatchRoomStateSubscription, type StudyRoomStateSubscription } from '@engine/matchClient'
+import { MatchClient, type MatchRoomStateSubscription, type MatchServerState, type StudyRoomStateSubscription } from '@engine/matchClient'
 import { formatDuration } from '@engine/record'
 import {
   getRecordGlyphColor4,
@@ -221,6 +222,7 @@ const {
   getViewMatchRoomLabel,
   hasUnfinishedOnlineGame,
   joinMatchRoom,
+  matchNickname,
   matchPanelMode,
   matchUserId,
   parseSharedRoomHash,
@@ -849,23 +851,75 @@ function closeStudyPage() {
 
 async function returnToSharedRoom() {
   const state = sharedRoom.value
-  if (! state?.room) return
+  if (! state?.room || state.kind !== 'match') return
   closeDialog(false)
   await returnToMatchRoom(state.server, state.room)
 }
 
 async function joinSharedRoom() {
   const state = sharedRoom.value
-  if (! state?.room) return
+  if (! state?.room || state.kind !== 'match') return
   closeDialog(false)
   await joinMatchRoom(state.server, state.room.id)
 }
 
 async function viewSharedRoom() {
   const state = sharedRoom.value
-  if (! state?.room) return
+  if (! state?.room || state.kind !== 'match') return
   closeDialog(false)
   await viewMatchRoom(state.server, state.room)
+}
+
+async function openSharedStudy() {
+  const state = sharedRoom.value
+  if (! state?.room || state.kind !== 'study') return
+  closeDialog(false)
+  const client = new MatchClient(state.server.address)
+  const response = await client.joinStudy(state.room.id, {
+    userId: matchUserId.value ?? undefined,
+    nickname: matchNickname.value,
+  })
+  matchUserId.value = response.user.id
+  startStudyGame(response.room.document, {
+    kind: 'online',
+    serverAddress: state.server.address,
+    roomId: response.room.id,
+    version: response.room.version,
+  })
+}
+
+function returnToSharedStudy() {
+  closeDialog(false)
+}
+
+function isCurrentSharedStudyRoom(): boolean {
+  const state = sharedRoom.value
+  return Boolean(
+    state?.kind === 'study'
+    && state.room
+    && activeOnlineStudy.value
+    && activeOnlineStudy.value.serverAddress === state.server.address
+    && activeOnlineStudy.value.roomId === state.room.id,
+  )
+}
+
+function getSharedStudyMeta(study: StudyRoom) {
+  return [
+    t('study.meta', {
+      actions: study.document.actions.length,
+      annotations: study.document.annotations.length,
+      date: new Date(study.updatedAt).toLocaleDateString(),
+    }),
+    t('study.members', {
+      count: String(study.members.length),
+    }),
+  ].join(' - ')
+}
+
+function getSharedStudySettingsMeta(study: StudyRoom) {
+  return study.private
+    ? t('study.private')
+    : t('study.public')
 }
 
 function selectLanguage(nextLanguage: Language) {
@@ -1077,13 +1131,23 @@ async function copyShareLink(playSound = true) {
 
 function getCurrentRoomShareLink(): string {
   const room = onlineRoomRef.value
+  const study = activeOnlineStudy.value
   const url = new URL(window.location.href)
-  url.hash = room
-    ? `match=${encodeURIComponent(JSON.stringify({
+  if (room) {
+    url.hash = `versus=${encodeURIComponent(JSON.stringify({
         server: room.serverAddress,
         room: room.roomId,
       }))}`
-    : ''
+  }
+  else if (study) {
+    url.hash = `study=${encodeURIComponent(JSON.stringify({
+        server: study.serverAddress,
+        room: study.roomId,
+      }))}`
+  }
+  else {
+    url.hash = ''
+  }
   return url.toString()
 }
 
@@ -1091,8 +1155,10 @@ async function openSharedRoomFromHash() {
   const payload = parseSharedRoomHash(window.location.hash)
   if (! payload) return
 
+  clearSharedRoomHash()
   const server = getOrAddMatchServer(payload.server)
   sharedRoom.value = {
+    kind: payload.kind,
     server,
     room: null,
     roomId: payload.room,
@@ -1102,23 +1168,11 @@ async function openSharedRoomFromHash() {
   dialogStack.open('shared-room')
 
   try {
-    const client = new MatchClient(server.address)
-    const [info, state] = await Promise.all([
-      client.getInfo(),
-      client.getRoomState(payload.room, { userId: matchUserId.value ?? undefined }),
-    ])
-    server.name = info.name
-    server.rooms = upsertMatchRoom(server.rooms, state.room)
-    server.status = 'connected'
-    server.error = ''
-    syncLastOnlineGameFromServer(server)
-
-    sharedRoom.value = {
-      server,
-      room: state.room,
-      roomId: payload.room,
-      loading: false,
-      error: '',
+    if (payload.kind === 'match') {
+      await openSharedMatchRoomFromHashPayload(server, payload.room)
+    }
+    else {
+      await openSharedStudyRoomFromHashPayload(server, payload.room)
     }
   }
   catch (err) {
@@ -1126,6 +1180,7 @@ async function openSharedRoomFromHash() {
     server.status = 'failed'
     server.error = err instanceof Error ? err.message : String(err)
     sharedRoom.value = {
+      kind: payload.kind,
       server,
       room: null,
       roomId: payload.room,
@@ -1135,10 +1190,65 @@ async function openSharedRoomFromHash() {
   }
 }
 
+function clearSharedRoomHash() {
+  const url = new URL(window.location.href)
+  url.hash = ''
+  window.history.replaceState(window.history.state, '', url)
+}
+
+async function openSharedMatchRoomFromHashPayload(server: MatchServerState, roomId: string) {
+  const client = new MatchClient(server.address)
+  const [info, state] = await Promise.all([
+    client.getInfo(),
+    client.getRoomState(roomId, { userId: matchUserId.value ?? undefined }),
+  ])
+  server.name = info.name
+  server.rooms = upsertMatchRoom(server.rooms, state.room)
+  server.status = 'connected'
+  server.error = ''
+  syncLastOnlineGameFromServer(server)
+
+  sharedRoom.value = {
+    kind: 'match',
+    server,
+    room: state.room,
+    roomId,
+    loading: false,
+    error: '',
+  }
+}
+
+async function openSharedStudyRoomFromHashPayload(server: MatchServerState, roomId: string) {
+  const client = new MatchClient(server.address)
+  const [info, state] = await Promise.all([
+    client.getInfo(),
+    client.getStudyState(roomId),
+  ])
+  server.name = info.name
+  server.status = 'connected'
+  server.error = ''
+
+  sharedRoom.value = {
+    kind: 'study',
+    server,
+    room: state.room,
+    roomId,
+    loading: false,
+    error: '',
+  }
+}
+
 function upsertMatchRoom(rooms: MatchRoom[], room: MatchRoom): MatchRoom[] {
   const next = rooms.filter(current => current.id !== room.id)
   next.push(room)
   return next
+}
+
+function getSharedRoomDialogTitle() {
+  const state = sharedRoom.value
+  if (state?.kind === 'match') return t('share.sharedVersusRoomTitle')
+  if (state?.kind === 'study') return t('share.sharedStudyRoomTitle')
+  return t('dialog.sharedRoomTitle')
 }
 
 function isShortcutBlocked(e: KeyboardEvent): boolean {
@@ -1332,6 +1442,7 @@ function startStudyGame(
   activeLocalVersus.value = null
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
+  onlineRoomRef.value = null
   stopOnlineStudyStateSubscription()
   game = new Game({
     renderer: gameRenderer,
@@ -2520,7 +2631,7 @@ watch([exportFormat, exportMode], () => {
             <span>{{ t('main.settings') }}</span>
           </GameButton>
           <GameButton
-            v-if="onlineRoomRef"
+            v-if="onlineRoomRef || activeOnlineStudy"
             size="secondary"
             :style="menuButtonStyle"
             @click="openShareRoomDialog"
@@ -2794,7 +2905,7 @@ watch([exportFormat, exportMode], () => {
         v-else-if="dialogMode === 'shared-room'"
         narrow
         :button-style="menuButtonStyle"
-        :title="t('dialog.sharedRoomTitle')"
+        :title="getSharedRoomDialogTitle()"
         @close="closeDialog()"
       >
         <div
@@ -2805,7 +2916,7 @@ watch([exportFormat, exportMode], () => {
           {{ t('share.loadingRoom') }}
         </div>
         <div
-          v-else-if="sharedRoom?.room"
+          v-else-if="sharedRoom?.kind === 'match' && sharedRoom.room"
           class="shared-room-content"
         >
           <div class="shared-room-name">{{ sharedRoom.room.name }}</div>
@@ -2828,6 +2939,21 @@ watch([exportFormat, exportMode], () => {
             {{ getMatchRoomSettingsMeta(sharedRoom.room) }}
           </div>
         </div>
+        <div
+          v-else-if="sharedRoom?.kind === 'study' && sharedRoom.room"
+          class="shared-room-content"
+        >
+          <div class="shared-room-name">{{ sharedRoom.room.name }}</div>
+          <div class="shared-room-meta">
+            {{ getMatchServerDisplayAddress(sharedRoom.server) }}
+          </div>
+          <div class="shared-room-meta">
+            <span>{{ getSharedStudyMeta(sharedRoom.room) }}</span>
+          </div>
+          <div class="shared-room-meta">
+            {{ getSharedStudySettingsMeta(sharedRoom.room) }}
+          </div>
+        </div>
         <p
           v-else
           class="dialog-message dialog-message-error"
@@ -2837,7 +2963,7 @@ watch([exportFormat, exportMode], () => {
         </p>
         <template #actions>
           <GameButton
-            v-if="sharedRoom?.room?.ownSession && sharedRoom.room.status !== 'finished'"
+            v-if="sharedRoom?.kind === 'match' && sharedRoom.room?.ownSession && sharedRoom.room.status !== 'finished'"
             size="small"
             :style="menuButtonStyle"
             badge="!"
@@ -2846,7 +2972,7 @@ watch([exportFormat, exportMode], () => {
             <span>{{ t('match.returnToGame') }}</span>
           </GameButton>
           <GameButton
-            v-else-if="sharedRoom?.room?.status === 'waiting'"
+            v-else-if="sharedRoom?.kind === 'match' && sharedRoom.room?.status === 'waiting'"
             size="small"
             :style="menuButtonStyle"
             @click="joinSharedRoom"
@@ -2854,12 +2980,29 @@ watch([exportFormat, exportMode], () => {
             <span>{{ t('match.join') }}</span>
           </GameButton>
           <GameButton
-            v-else-if="sharedRoom?.room && canViewMatchRoom(sharedRoom.room)"
+            v-else-if="sharedRoom?.kind === 'match' && sharedRoom.room && canViewMatchRoom(sharedRoom.room)"
             size="small"
             :style="menuButtonStyle"
             @click="viewSharedRoom"
           >
             <span>{{ getViewMatchRoomLabel(sharedRoom.room) }}</span>
+          </GameButton>
+          <GameButton
+            v-if="sharedRoom?.kind === 'study' && sharedRoom.room && isCurrentSharedStudyRoom()"
+            size="small"
+            :style="menuButtonStyle"
+            badge="!"
+            @click="returnToSharedStudy"
+          >
+            <span>{{ t('study.returnToStudy') }}</span>
+          </GameButton>
+          <GameButton
+            v-else-if="sharedRoom?.kind === 'study' && sharedRoom.room"
+            size="small"
+            :style="menuButtonStyle"
+            @click="openSharedStudy"
+          >
+            <span>{{ t('button.open') }}</span>
           </GameButton>
           <GameButton
             size="small"

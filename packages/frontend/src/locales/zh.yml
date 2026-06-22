@@ -54,6 +54,7 @@ study.serverStats: "{studies} 个研讨"
 study.members: "{count} 位成员"
 study.private: "私密"
 study.public: "公开"
+study.returnToStudy: "返回"
 
 versus.title: "对局"
 versus.tabsLabel: "对局模式"
@@ -266,6 +267,8 @@ export.copyManual: "复制失败，请选择文本并手动复制。"
 
 share.copied: "链接已复制。"
 share.copyManual: "复制失败，请选择链接并手动复制。"
+share.sharedVersusRoomTitle: "分享的对局房间"
+share.sharedStudyRoomTitle: "分享的研讨室"
 share.loadingRoom: "正在加载房间..."
 share.roomNotFound: "找不到房间，或房间不可查看。"
 
