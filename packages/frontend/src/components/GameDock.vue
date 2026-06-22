@@ -92,7 +92,7 @@ function toggleCollapsed() {
 }
 
 .game-dock-body {
-  padding: calc(var(--button-content-gap) * 1.2)
+  padding: calc(var(--button-content-gap) * 0.72)
     calc(var(--button-content-gap) * 1.8)
     calc(var(--button-content-gap) * 1.1);
   border: var(--button-border) solid var(--button-border-color);
@@ -107,7 +107,7 @@ function toggleCollapsed() {
 .game-dock-handle {
   position: absolute;
   left: 50%;
-  top: calc(var(--dock-handle-rise) * -1);
+  top: calc((var(--dock-handle-rise) + var(--button-small-border)) * -1);
   z-index: 1;
   display: inline-flex;
   align-items: center;
@@ -125,6 +125,17 @@ function toggleCollapsed() {
   transform: translateX(-50%);
 }
 
+.game-dock-handle::after {
+  position: absolute;
+  left: var(--button-small-border);
+  right: var(--button-small-border);
+  bottom: calc(var(--button-small-border) * -1);
+  height: var(--button-small-border);
+  background: var(--button-fill-color);
+  border-bottom: var(--button-small-border) solid var(--button-border-color);
+  content: '';
+}
+
 .game-dock--collapsed .game-dock-body {
   opacity: 0;
   pointer-events: none;
@@ -135,6 +146,12 @@ function toggleCollapsed() {
   border-color: var(--button-hover-border-color);
   background: var(--button-hover-fill-color);
   color: var(--button-hover-text-color);
+}
+
+.game-dock-handle:hover::after,
+.game-dock-handle:focus-visible::after {
+  background: var(--button-hover-fill-color);
+  border-bottom-color: var(--button-hover-border-color);
 }
 
 .game-dock-handle :deep(.game-icon) {
@@ -160,7 +177,7 @@ function toggleCollapsed() {
   box-sizing: border-box;
   width: var(--dock-button-size);
   height: var(--dock-button-size);
-  margin-top: calc(var(--dock-state-size) * 1.85 + var(--button-tiny-shadow-offset));
+  margin-top: calc(var(--dock-state-size) * 2.15 + var(--button-tiny-shadow-offset));
   padding: 0;
   border: var(--button-small-border) solid var(--button-border-color);
   border-radius: 50%;
@@ -200,7 +217,7 @@ function toggleCollapsed() {
 .game-dock-button-state {
   position: absolute;
   left: 50%;
-  top: calc(var(--dock-state-size) * -1.25);
+  top: calc(var(--dock-state-size) * -1.6);
   box-sizing: border-box;
   width: var(--dock-state-size);
   height: var(--dock-state-size);
