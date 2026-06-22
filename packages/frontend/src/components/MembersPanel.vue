@@ -217,7 +217,7 @@ function jumpToMember(userId: string) {
   }
 
   35% {
-    box-shadow: 0 0 0 3px var(--member-color);
+    box-shadow: 0 0 0 3px rgb(92, 135, 95);
   }
 }
 </style>

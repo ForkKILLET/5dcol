@@ -1214,8 +1214,16 @@ function getRecordViewportRightInset() {
   return panelWidth + Sizes.ButtonTop + Sizes.ButtonShadowOffset
 }
 
+function getOnlineStudyViewportLeftInset() {
+  if (! activeOnlineStudy.value || (! membersPanelOpen.value && ! chatPanelOpen.value)) return 0
+
+  const panelWidth = Math.min(360, Math.max(0, viewportWidth.value - Sizes.ButtonTop * 2))
+  return panelWidth + Sizes.ButtonTop + Sizes.ButtonShadowOffset
+}
+
 function syncGameViewportInsets() {
   game?.setViewportInsets({
+    left: getOnlineStudyViewportLeftInset(),
     right: getRecordViewportRightInset(),
   })
 }
@@ -2564,7 +2572,7 @@ onUnmounted(() => {
 })
 
 watch(uiOverlayOpen, syncGameInputState)
-watch(recordPanelOpen, syncGameViewportInsets)
+watch([recordPanelOpen, membersPanelOpen, chatPanelOpen, activeOnlineStudy], syncGameViewportInsets)
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
 watch(() => gameSettings.turnAlertNotification, (enabled) => {
   if (enabled) void requestTurnNotificationPermission()
