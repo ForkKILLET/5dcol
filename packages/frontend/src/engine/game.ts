@@ -748,6 +748,14 @@ export class Game extends Disposable(Empty) {
     })
   }
 
+  public getStudyPositionForRecordCursor(cursor: RecordCursorTarget): StudyPosition | null {
+    return this.recordDocument.toStudyPosition(cursor)
+  }
+
+  public getRecordCursorFromStudyPosition(position: StudyPosition): RecordCursorTarget | null {
+    return this.recordDocument.fromStudyPosition(position)
+  }
+
   private restoreInitialActions(actions: Action[]): boolean {
     this.loadCoreGameState(CoreGameState.create(actions), { focus: false })
     return actions.length > 0

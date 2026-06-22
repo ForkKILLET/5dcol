@@ -13,6 +13,7 @@ import {
   type StudyCommand,
   type StudyDocument,
   type StudyPatch,
+  type StudyPresence,
   type StudyPosition,
 } from '@5dcol/shared/protocol'
 
@@ -96,6 +97,7 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordCurrentCursor = ref({ recordLineId: 0, recordActionIndex: 0 })
 const recordFocusedMove = ref<(GameRecordMoveFocusTarget & { pulseId: number }) | null>(null)
+const onlineStudyPresence = ref<StudyPresence[]>([])
 let recordFocusedMovePulseId = 0
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
@@ -173,6 +175,7 @@ let clockTimer: number | null = null
 let onlineRoomStateSubscription: MatchRoomStateSubscription | null = null
 let onlineStudyStateSubscription: StudyRoomStateSubscription | null = null
 let onlineStudySubmitPending = false
+let onlineStudyPresenceSignature = ''
 let gameResizeObserver: ResizeObserver | null = null
 let resizeFrame: number | null = null
 let onlineRoomStateSubscriptionActive = false
@@ -531,6 +534,24 @@ function getRecordAuthorColor(authorId: string) {
   return getRecordMarkerAuthorColor(authorId)
 }
 
+const recordPresenceCursors = computed(() => (
+  onlineStudyPresence.value
+    .filter(presence => presence.userId !== matchUserId.value)
+    .map((presence) => {
+      const cursor = game?.getRecordCursorFromStudyPosition(presence.cursor)
+      if (! cursor) return null
+      return {
+        id: presence.userId,
+        userId: presence.userId,
+        nickname: presence.nickname,
+        color: getRecordAuthorColor(presence.userId),
+        recordLineId: cursor.recordLineId,
+        recordActionIndex: cursor.recordActionIndex,
+      }
+    })
+    .filter((cursor): cursor is NonNullable<typeof cursor> => cursor !== null)
+))
+
 function getRecordGlyphColor(glyph: string) {
   return getRecordGlyphColor4(glyph, customRecordGlyphTemplates.value)
 }
@@ -562,6 +583,7 @@ function updateRecord(request: GameExportRequest) {
   recordHasPendingMoves.value = request.hasPendingMoves
   recordCurrentActionIndex.value = request.currentActionIndex
   recordCurrentCursor.value = request.currentCursor
+  syncOnlineStudyPresence(request.currentCursor)
 
   if (game && activeLocalStudy.value) {
     upsertLocalStudy(game.getStudyDocument(activeLocalStudy.value))
@@ -602,6 +624,23 @@ function focusRecordMoveFromBoard(target: GameRecordMoveFocusTarget) {
   if (request) updateRecord(request)
   recordFocusedMove.value = { ...target, pulseId: ++ recordFocusedMovePulseId }
   recordPanelOpen.value = true
+}
+
+function syncOnlineStudyPresence(cursor: { recordLineId: number, recordActionIndex: number }) {
+  if (! activeOnlineStudy.value || ! onlineStudyStateSubscription || onlineConnectionStatus.value !== 'connected') return
+  const position = game?.getStudyPositionForRecordCursor(cursor)
+  if (! position) return
+
+  const signature = JSON.stringify(position)
+  if (signature === onlineStudyPresenceSignature) return
+  onlineStudyPresenceSignature = signature
+  onlineStudyStateSubscription.sendPresence(position, 'free')
+}
+
+function upsertOnlineStudyPresence(presence: StudyPresence) {
+  const index = onlineStudyPresence.value.findIndex(item => item.userId === presence.userId)
+  if (index >= 0) onlineStudyPresence.value[index] = presence
+  else onlineStudyPresence.value.push(presence)
 }
 
 function clickRecordMenuButton() {
@@ -1631,6 +1670,7 @@ function startOnlineStudyStateSubscription(
       switch (event.type) {
         case 'study-state':
           onlineStudySubmitPending = false
+          onlineStudyPresence.value = event.presence
           activeOnlineStudy.value = {
             ...current,
             version: event.room.version,
@@ -1658,6 +1698,8 @@ function startOnlineStudyStateSubscription(
           void syncOnlineStudyState(serverAddress, roomId)
           break
         case 'presence':
+          upsertOnlineStudyPresence(event.presence)
+          break
         case 'chat-message':
           break
       }
@@ -1665,6 +1707,8 @@ function startOnlineStudyStateSubscription(
     {
       onOpen: () => {
         onlineConnectionStatus.value = 'connected'
+        onlineStudyPresenceSignature = ''
+        syncOnlineStudyPresence(recordCurrentCursor.value)
       },
       onError: () => {
         onlineStudySubmitPending = false
@@ -1730,6 +1774,8 @@ function isOnlineStudySubmitPatchByUser(patch: StudyPatch, userId: string | null
 
 function stopOnlineStudyStateSubscription() {
   onlineStudySubmitPending = false
+  onlineStudyPresenceSignature = ''
+  onlineStudyPresence.value = []
   onlineStudyStateSubscription?.unsubscribe()
   onlineStudyStateSubscription = null
 }
@@ -1746,6 +1792,7 @@ async function syncOnlineStudyState(serverAddress: string, roomId: string) {
       version: state.room.version,
       title: state.room.document.title,
     }
+    onlineStudyPresence.value = state.presence
     game?.loadStudyDocument(state.room.document, { focus: false })
     onlineConnectionStatus.value = 'connected'
   }
@@ -2423,6 +2470,7 @@ watch([exportFormat, exportMode], () => {
         :online-spectator="isOnlineSpectator"
         :deduction-start-action-index="spectatorDeductionStartActionIndex"
         :focused-move="recordFocusedMove"
+        :presence-cursors="recordPresenceCursors"
         :custom-glyph-templates="customRecordGlyphTemplates"
         @toolbar-button-click="clickToolbarButton"
         @focus-segment="focusRecordSegment"

@@ -38,6 +38,15 @@ export interface RecordFocusedMove {
   pulseId: number
 }
 
+export interface RecordPresenceCursor {
+  id: string
+  userId: string
+  nickname: string | null
+  color: string
+  recordLineId: number
+  recordActionIndex: number
+}
+
 type RecordAnnotationEditor =
   | {
     kind: 'comment'
@@ -65,6 +74,7 @@ const props = defineProps<{
   onlineSpectator: boolean
   deductionStartActionIndex: number | null
   focusedMove: RecordFocusedMove | null
+  presenceCursors: RecordPresenceCursor[]
   customGlyphTemplates: CustomRecordGlyphTemplate[]
 }>()
 
@@ -109,6 +119,7 @@ let resizeFrame: number | null = null
 let pendingResizeWidth: number | null = null
 let clearPendingSubmitTransitionTimer: number | null = null
 let nextPendingBlockKeyId = 1
+const MAX_VISIBLE_PRESENCE_CURSORS = 3
 
 const pendingSubmitTransitionKind = ref<'append' | 'branch' | 'absorb' | 'undo' | null>(null)
 const pendingBlockKey = ref<string | null>(null)
@@ -394,6 +405,50 @@ function canDeleteRecordFutureAtCursor(cursor: GameRecordCursor) {
 
 function isConfirmingDeleteFutureAtCursor(cursor: GameRecordCursor) {
   return confirmingDeleteFutureCursorKey.value === getRecordRowKey(cursor)
+}
+
+function getPresenceCursorsAtCursor(cursor: GameRecordCursor) {
+  return props.presenceCursors
+    .filter(presence => (
+      presence.recordLineId === cursor.recordLineId
+      && presence.recordActionIndex === cursor.recordActionIndex
+    ))
+}
+
+function getVisiblePresenceCursorsAtCursor(cursor: GameRecordCursor) {
+  return getPresenceCursorsAtCursor(cursor).slice(0, MAX_VISIBLE_PRESENCE_CURSORS)
+}
+
+function getHiddenPresenceCursorCountAtCursor(cursor: GameRecordCursor) {
+  return Math.max(0, getPresenceCursorsAtCursor(cursor).length - MAX_VISIBLE_PRESENCE_CURSORS)
+}
+
+function getPresenceCursorStyle(cursor: RecordPresenceCursor) {
+  return {
+    '--record-presence-cursor-color': cursor.color,
+  }
+}
+
+function getPresenceCursorLabel(cursor: RecordPresenceCursor) {
+  return cursor.nickname?.trim() || cursor.userId
+}
+
+function getPresenceCursorInitial(cursor: RecordPresenceCursor) {
+  return Array.from(getPresenceCursorLabel(cursor).trim())[0]?.toUpperCase() ?? '?'
+}
+
+function getPresenceCursorTitle(cursor: RecordPresenceCursor) {
+  return t('record.memberCursor', { name: getPresenceCursorLabel(cursor) })
+}
+
+function getPresenceCursorGroupTitle(cursor: GameRecordCursor) {
+  return t('record.memberCursors', {
+    names: getPresenceCursorsAtCursor(cursor).map(getPresenceCursorLabel).join(', '),
+  })
+}
+
+function jumpToPresenceCursor(cursor: GameRecordCursor) {
+  emit('rollbackCursor', cursor)
 }
 
 function handleDeleteFutureClick(cursor: GameRecordCursor) {
@@ -1311,6 +1366,34 @@ onBeforeUnmount(() => {
               </template>
               <template v-else-if="isRecordCursorRow(row)">
                 <span class="record-cursor-guide" />
+                <span
+                  v-if="getPresenceCursorsAtCursor(row).length > 0"
+                  class="record-presence-cursors"
+                  :aria-label="getPresenceCursorGroupTitle(row)"
+                >
+                  <button
+                    v-for="cursor in getVisiblePresenceCursorsAtCursor(row)"
+                    :key="cursor.id"
+                    class="record-presence-cursor"
+                    type="button"
+                    :style="getPresenceCursorStyle(cursor)"
+                    :title="getPresenceCursorTitle(cursor)"
+                    :aria-label="getPresenceCursorTitle(cursor)"
+                    @click.stop="jumpToPresenceCursor(row)"
+                  >
+                    {{ getPresenceCursorInitial(cursor) }}
+                  </button>
+                  <button
+                    v-if="getHiddenPresenceCursorCountAtCursor(row) > 0"
+                    class="record-presence-cursor record-presence-cursor--overflow"
+                    type="button"
+                    :title="getPresenceCursorGroupTitle(row)"
+                    :aria-label="getPresenceCursorGroupTitle(row)"
+                    @click.stop="jumpToPresenceCursor(row)"
+                  >
+                    +{{ getHiddenPresenceCursorCountAtCursor(row) }}
+                  </button>
+                </span>
                 <span class="record-action-icons">
                   <button
                     v-if="canDeleteRecordFutureAtCursor(row)"
@@ -1875,6 +1958,59 @@ onBeforeUnmount(() => {
   gap: 0;
   align-self: center;
   min-width: 0;
+}
+
+.record-presence-cursors {
+  grid-column: 2;
+  position: absolute;
+  top: 50%;
+  right: calc(var(--record-cursor-size) * 2.15);
+  z-index: 5;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+
+.record-presence-cursor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: calc(var(--button-tiny-height) * 0.9);
+  height: calc(var(--button-tiny-height) * 0.9);
+  margin-left: calc(var(--button-tiny-height) * -0.22);
+  border: var(--button-tiny-border) solid var(--button-border-color);
+  border-radius: 50%;
+  background: var(--record-presence-cursor-color);
+  color: rgb(244, 245, 237);
+  box-shadow: var(--button-tiny-shadow-offset) var(--button-tiny-shadow-offset) 0 var(--button-shadow-color);
+  cursor: pointer;
+  font-size: calc(var(--button-tiny-font-size) * 0.78);
+  font-weight: 700;
+  line-height: 1;
+  outline: none;
+  transition:
+    border-color 120ms ease,
+    filter 120ms ease,
+    transform 120ms ease;
+}
+
+.record-presence-cursor:hover,
+.record-presence-cursor:focus-visible {
+  border-color: var(--button-hover-border-color);
+  filter: brightness(1.12);
+  transform: translateY(calc(var(--button-tiny-shadow-offset) * -0.25));
+}
+
+.record-presence-cursor:active {
+  box-shadow: none;
+  transform: translateY(var(--button-tiny-shadow-offset));
+}
+
+.record-presence-cursor--overflow {
+  background: var(--record-cursor-tag-bg);
 }
 
 .record-row--cursor .record-action-icons {
