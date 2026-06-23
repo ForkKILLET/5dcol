@@ -118,12 +118,19 @@ function jumpToMember(userId: string) {
 }
 
 .members-list {
+  --member-pulse-spread: 8px;
+  --members-list-scroll-padding: calc(var(--button-content-gap) * 0.5);
+
   display: flex;
   flex-direction: column;
   gap: var(--button-content-gap);
   min-height: 0;
-  margin: 0;
-  padding: 0 calc(var(--button-content-gap) * 0.5) 0 0;
+  margin: calc(var(--member-pulse-spread) * -1);
+  padding:
+    var(--member-pulse-spread)
+    calc(var(--member-pulse-spread) + var(--members-list-scroll-padding))
+    var(--member-pulse-spread)
+    var(--member-pulse-spread);
   overflow: auto;
   list-style: none;
 }
@@ -140,6 +147,7 @@ function jumpToMember(userId: string) {
     calc(var(--button-content-gap) * 1.25);
   border-left: 5px solid var(--member-color);
   border-radius: 4px;
+  background: transparent;
 }
 
 .member-row--online .member-name {
@@ -186,13 +194,19 @@ function jumpToMember(userId: string) {
 }
 
 @keyframes member-row-pulse {
-  0%,
-  100% {
-    box-shadow: none;
+  0% {
+    background: color-mix(in srgb, rgb(92 135 95) 58%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, rgb(92 135 95) 80%, transparent);
   }
 
-  35% {
-    box-shadow: 0 0 0 3px rgb(92, 135, 95);
+  42% {
+    background: color-mix(in srgb, rgb(92 135 95) 32%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, rgb(92 135 95) 26%, transparent);
+  }
+
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 8px transparent;
   }
 }
 </style>

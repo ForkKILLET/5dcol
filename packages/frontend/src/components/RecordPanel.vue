@@ -562,10 +562,14 @@ function collectRecordNodeKeys(node: RecordDisplayNode, keys: Set<string>) {
 }
 
 function getRecordMoveKey(row: GameRecordAction, moveIndex: number) {
-  const focusSuffix = isFocusedRecordMove(row, moveIndex)
-    ? `:${props.focusedMove!.segmentIndex}:${props.focusedMove!.pulseId}`
+  return `${row.recordKey ?? row.serial}:${moveIndex}`
+}
+
+function getRecordSegmentKey(row: GameRecordAction, moveIndex: number, segmentIndex: number) {
+  const focusSuffix = isFocusedRecordSegment(row, moveIndex, segmentIndex)
+    ? `:${props.focusedMove!.pulseId}`
     : ''
-  return `${row.recordKey ?? row.serial}:${moveIndex}${focusSuffix}`
+  return `${row.recordKey ?? row.serial}:${moveIndex}:${segmentIndex}${focusSuffix}`
 }
 
 function getRecordRowClasses(row: GameRecordRow) {
@@ -1151,7 +1155,7 @@ onBeforeUnmount(() => {
                     </span>
                     <button
                       v-for="(segment, segmentIndex) in move.segments"
-                      :key="`${row.serial}-${moveIndex}-${segmentIndex}`"
+                      :key="getRecordSegmentKey(row, moveIndex, segmentIndex)"
                       class="record-segment"
                       :class="{ 'record-segment--focused': isFocusedRecordSegment(row, moveIndex, segmentIndex) }"
                       type="button"
