@@ -108,7 +108,11 @@ Common environment variables:
 ### Docker
 
 ```bash
-docker build -f docker/Dockerfile -t 5dcol-backend .
+docker build \
+  --build-arg GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
+  -f docker/Dockerfile \
+  -t 5dcol-backend \
+  .
 docker run -d \
   --name 5dcol-backend \
   -p 5161:5161 \
@@ -121,7 +125,8 @@ docker run -d \
 ### Docker Compose
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d --build
+GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
+  docker compose -f docker/docker-compose.yml up -d --build
 ```
 
 The provided compose file attaches the backend to an external `caddy_network`.

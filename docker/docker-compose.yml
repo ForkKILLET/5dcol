@@ -3,6 +3,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
+        BUILD_DATE: ${BUILD_DATE:-}
     restart: unless-stopped
     environment:
       - PORT=5161

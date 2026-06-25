@@ -10,8 +10,11 @@ RUN corepack enable
 
 COPY . .
 
+ARG GIT_COMMIT=""
+ARG BUILD_DATE=""
+
 RUN pnpm install --frozen-lockfile
-RUN pnpm -r run build
+RUN GIT_COMMIT="$GIT_COMMIT" BUILD_DATE="$BUILD_DATE" pnpm -r run build
 
 ENV HOST=0.0.0.0
 ENV PORT=5161

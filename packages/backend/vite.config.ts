@@ -4,7 +4,8 @@ import { defineConfig } from 'vite'
 import packageJson from './package.json'
 
 const dirname = import.meta.dirname
-const commitHash = getCommitHash()
+const commitHash = process.env.GIT_COMMIT?.trim() || getCommitHash()
+const buildDate = process.env.BUILD_DATE?.trim() || new Date().toISOString()
 
 function getCommitHash() {
   try {
@@ -22,7 +23,7 @@ export default defineConfig({
   define: {
     __5DCOL_VERSION__: JSON.stringify(packageJson.version),
     __5DCOL_COMMIT_HASH__: JSON.stringify(commitHash),
-    __5DCOL_BUILD_DATE__: JSON.stringify(new Date().toISOString()),
+    __5DCOL_BUILD_DATE__: JSON.stringify(buildDate),
   },
   resolve: {
     alias: {
