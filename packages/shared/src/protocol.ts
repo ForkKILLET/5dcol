@@ -379,6 +379,13 @@ export const StudyPositionSchema = z.discriminatedUnion('type', [
 
 export type StudyPosition = z.infer<typeof StudyPositionSchema>
 
+export const StudyBoardFocusSchema = z.object({
+  l: z.number().int(),
+  m: z.number().int(),
+})
+
+export type StudyBoardFocus = z.infer<typeof StudyBoardFocusSchema>
+
 export const RecordAnnotationTargetSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('action'),
@@ -517,6 +524,7 @@ export const StudyPresenceSchema = z.object({
   userId: z.string(),
   nickname: z.string().nullable(),
   cursor: StudyPositionSchema,
+  focusedBoard: StudyBoardFocusSchema.optional(),
   mode: StudyFollowModeSchema,
   followingUserId: z.string().optional(),
   updatedAt: z.number(),
@@ -736,6 +744,7 @@ export const StudyRoomClientEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('presence'),
     cursor: StudyPositionSchema,
+    focusedBoard: StudyBoardFocusSchema.optional(),
     mode: StudyFollowModeSchema,
     followingUserId: z.string().optional(),
   }),

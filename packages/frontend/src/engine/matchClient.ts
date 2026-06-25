@@ -34,6 +34,7 @@ import type {
   MatchRoom,
   MatchServerStats,
   MatchServerInfo,
+  StudyBoardFocus,
   StudyCommand,
   StudyFollowMode,
   StudyPosition,
@@ -73,7 +74,7 @@ export interface MatchRoomStateSubscription {
 }
 export interface StudyRoomStateSubscription {
   sendCommand(baseVersion: number, command: StudyCommand): void
-  sendPresence(cursor: StudyPosition, mode: StudyFollowMode, followingUserId?: string): void
+  sendPresence(cursor: StudyPosition, mode: StudyFollowMode, followingUserId?: string, focusedBoard?: StudyBoardFocus | null): void
   sendChatMessage(text: string): void
   unsubscribe(): void
 }
@@ -276,10 +277,11 @@ export class MatchClient {
       sendCommand(baseVersion, command) {
         sendStudyClientEvent(socket, { type: 'command', baseVersion, command })
       },
-      sendPresence(cursor, mode, followingUserId) {
+      sendPresence(cursor, mode, followingUserId, focusedBoard) {
         sendStudyClientEvent(socket, {
           type: 'presence',
           cursor,
+          ...(focusedBoard ? { focusedBoard } : {}),
           mode,
           ...(followingUserId ? { followingUserId } : {}),
         })

@@ -11,6 +11,7 @@ import {
   type MatchRoom,
   type MatchRoomSettings,
   type MatchRoomStatus,
+  type StudyBoardFocus,
   type StudyCommand,
   type StudyDocument,
   type StudyFollowMode,
@@ -105,6 +106,7 @@ const recordHasPendingMoves = ref(false)
 const recordCurrentActionIndex = ref(0)
 const recordCurrentCursor = ref({ recordLineId: 0, recordActionIndex: 0 })
 const recordFocusedMove = ref<(GameRecordMoveFocusTarget & { pulseId: number }) | null>(null)
+const onlineStudyFocusedBoard = ref<StudyBoardFocus | null>(null)
 const onlineStudyMembers = ref<StudyMember[]>([])
 const onlineStudyPresence = ref<StudyPresence[]>([])
 const onlineStudyChatMessages = ref<ChatMessage[]>([])
@@ -771,6 +773,9 @@ function updateRecord(request: GameExportRequest) {
 }
 
 function updateWorkspace(workspace: GameWorkspaceState) {
+  onlineStudyFocusedBoard.value = workspace.focusedBoard ? { ...workspace.focusedBoard } : null
+  syncOnlineStudyPresence(recordCurrentCursor.value)
+
   const studyWorkspaceId = getActiveStudyWorkspaceId()
   if (studyWorkspaceId) upsertStudyWorkspace(studyWorkspaceId, workspace)
 }
@@ -827,22 +832,39 @@ function focusRecordMoveFromBoard(target: GameRecordMoveFocusTarget) {
   recordPanelOpen.value = true
 }
 
-function syncOnlineStudyPresence(cursor: { recordLineId: number, recordActionIndex: number }) {
+function syncOnlineStudyPresence(
+  cursor: { recordLineId: number, recordActionIndex: number },
+  focusedBoard: StudyBoardFocus | null = onlineStudyFocusedBoard.value,
+) {
   if (! activeOnlineStudy.value || ! onlineStudyStateSubscription || onlineConnectionStatus.value !== 'connected') return
   const position = game?.getStudyPositionForRecordCursor(cursor)
   if (! position) return
 
   const follow = getOnlineStudyPresenceFollowState()
-  const signature = JSON.stringify({ position, ...follow })
+  const signature = JSON.stringify({ position, focusedBoard, ...follow })
   if (signature === onlineStudyPresenceSignature) return
   onlineStudyPresenceSignature = signature
-  onlineStudyStateSubscription.sendPresence(position, follow.mode, follow.followingUserId)
+  onlineStudyStateSubscription.sendPresence(position, follow.mode, follow.followingUserId, focusedBoard)
 }
 
 function getOnlineStudyPresenceFollowState(): { mode: StudyFollowMode, followingUserId?: string } {
   const followingUserId = onlineStudyFollowUserId.value
   if (! followingUserId) return { mode: 'free' }
   return { mode: 'following', followingUserId }
+}
+
+function isCurrentOnlineStudyUserFollowed() {
+  const currentUserId = matchUserId.value
+  if (! currentUserId) return false
+  return onlineStudyPresence.value.some(presence => (
+    presence.userId !== currentUserId
+    && presence.mode === 'following'
+    && presence.followingUserId === currentUserId
+  ))
+}
+
+function shouldPreserveOnlineStudyFollowOnManualCursorMove() {
+  return Boolean(activeOnlineStudy.value && isCurrentOnlineStudyUserFollowed())
 }
 
 function upsertOnlineStudyPresence(presence: StudyPresence) {
@@ -861,6 +883,7 @@ function followOnlineStudyPresenceCursor(presence: StudyPresence) {
     preserveOnlineStudyFollow: true,
     sound: false,
   })
+  if (presence.focusedBoard) game?.focusBoard(presence.focusedBoard.l, presence.focusedBoard.m)
 }
 
 function followOnlineStudyCurrentPresence() {
@@ -966,7 +989,11 @@ function rollbackToRecordCursor(
 ) {
   if (! gameStarted.value) return
   if (onlineSession.value) return
-  if (activeOnlineStudy.value && ! preserveOnlineStudyFollow) setOnlineStudyFollowUser(null)
+  if (
+    activeOnlineStudy.value
+    && ! preserveOnlineStudyFollow
+    && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()
+  ) setOnlineStudyFollowUser(null)
   if (sound) playUISound()
   game?.rollbackToRecordCursor(cursor)
 }
@@ -991,7 +1018,9 @@ function jumpRecordCursor(direction: -1 | 1) {
   if (! target) return
 
   if (game?.rollbackToRecordCursor(target)) {
-    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    if (activeOnlineStudy.value && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()) {
+      setOnlineStudyFollowUser(null)
+    }
     playUISound()
   }
 }
@@ -1018,7 +1047,9 @@ function jumpRecordBlockBoundary(boundary: 'start' | 'end') {
   ) return
 
   if (game?.rollbackToRecordCursor(target)) {
-    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    if (activeOnlineStudy.value && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()) {
+      setOnlineStudyFollowUser(null)
+    }
     playUISound()
   }
 }
@@ -1027,7 +1058,9 @@ function cycleRecordCursorVariation() {
   if (! gameStarted.value) return
   if (onlineSession.value) return
   if (game?.cycleRecordCursorVariation()) {
-    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    if (activeOnlineStudy.value && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()) {
+      setOnlineStudyFollowUser(null)
+    }
     playUISound()
   }
 }
@@ -1036,7 +1069,9 @@ function deleteRecordFuture(cursor: GameRecordCursor) {
   if (! gameStarted.value) return
   if (onlineSession.value) return
   if (game?.deleteRecordFutureAtCursor(cursor)) {
-    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    if (activeOnlineStudy.value && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()) {
+      setOnlineStudyFollowUser(null)
+    }
     playUISound()
   }
 }
@@ -2231,6 +2266,7 @@ function stopOnlineStudyStateSubscription() {
   onlineStudyPresence.value = []
   onlineStudyChatMessages.value = []
   onlineStudyFollowUserId.value = null
+  onlineStudyFocusedBoard.value = null
   focusedOnlineStudyMember.value = null
   onlineStudyStateSubscription?.unsubscribe()
   onlineStudyStateSubscription = null

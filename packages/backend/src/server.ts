@@ -1087,21 +1087,24 @@ function handleStudyClientEvent({
       break
     }
     case 'presence': {
+      const presenceByUser = studyPresence.get(room.id) ?? new Map<string, StudyPresence>()
       const presence: StudyPresence = {
         userId: user.id,
         nickname: user.nickname,
         cursor: event.cursor,
+        focusedBoard: event.focusedBoard,
         mode: event.mode,
         followingUserId: event.followingUserId,
         updatedAt: Date.now(),
       }
-      const presenceByUser = studyPresence.get(room.id) ?? new Map<string, StudyPresence>()
-      presenceByUser.set(user.id, presence)
+      const updatedPresence = updateStudyPresenceWithFollowPropagation(presenceByUser, presence)
       studyPresence.set(room.id, presenceByUser)
-      broadcastStudyEvent(studySubscribers, room.id, {
-        type: 'presence',
-        presence,
-      })
+      for (const presence of updatedPresence) {
+        broadcastStudyEvent(studySubscribers, room.id, {
+          type: 'presence',
+          presence,
+        })
+      }
       break
     }
     case 'chat-message': {
@@ -1591,6 +1594,44 @@ function getStudyPresenceList(
 ): StudyPresence[] {
   return [...(studyPresence.get(roomId)?.values() ?? [])]
     .sort((a, b) => a.updatedAt - b.updatedAt)
+}
+
+function updateStudyPresenceWithFollowPropagation(
+  presenceByUser: Map<string, StudyPresence>,
+  presence: StudyPresence,
+): StudyPresence[] {
+  const updated = new Map<string, StudyPresence>()
+  const visited = new Set<string>([presence.userId])
+  const queue = [presence.userId]
+
+  presenceByUser.set(presence.userId, presence)
+  updated.set(presence.userId, presence)
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const targetUserId = queue[index]!
+    for (const follower of presenceByUser.values()) {
+      if (
+        follower.mode !== 'following'
+        || follower.followingUserId !== targetUserId
+        || visited.has(follower.userId)
+      ) {
+        continue
+      }
+
+      const nextPresence: StudyPresence = {
+        ...follower,
+        cursor: presence.cursor,
+        focusedBoard: presence.focusedBoard,
+        updatedAt: presence.updatedAt,
+      }
+      presenceByUser.set(nextPresence.userId, nextPresence)
+      updated.set(nextPresence.userId, nextPresence)
+      visited.add(nextPresence.userId)
+      queue.push(nextPresence.userId)
+    }
+  }
+
+  return [...updated.values()]
 }
 
 function broadcastStudyEvent(
