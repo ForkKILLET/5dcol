@@ -147,7 +147,6 @@ const props = withDefaults(defineProps<{
 
 .game-button.has-pressed-indicator {
   padding-left: calc(var(--button-pressed-indicator-left) + var(--button-pressed-indicator-size) + var(--button-content-gap));
-  padding-right: calc(var(--button-pressed-indicator-left) + var(--button-pressed-indicator-size) + var(--button-content-gap));
 }
 
 .game-button > :deep(*) {
