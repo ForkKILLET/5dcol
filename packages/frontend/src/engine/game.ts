@@ -56,6 +56,7 @@ export interface GameContext {
   getFiveDPGNGlyphTemplates?: () => FiveDPGN.StudyGlyphTemplate[]
   getUISoundVolume?: () => number
   getBellSoundVolume?: () => number
+  getPointerDragThreshold?: () => number
   getRecordAuthorId?: () => string
   getRecordAuthorColor?: (authorId: string) => string
   getRecordGlyphColor?: (glyph: string) => Color4
@@ -228,7 +229,7 @@ interface ViewFlipTransition {
   startedAt: number
   applied: boolean
 }
-const POINTER_CLICK_THRESHOLD = 3
+const DEFAULT_POINTER_DRAG_THRESHOLD = 8
 const PIECE_GHOST_ALPHA = 0.45
 export class Game extends Disposable(Empty) {
   constructor(public readonly ctx: GameContext) {
@@ -1060,8 +1061,10 @@ export class Game extends Disposable(Empty) {
     }
 
     if (this.pointer.activePointerId !== null && this.pointer.activePointerId !== e.pointerId) return
-    this.updatePointerDragExceeded(screen)
-    if (this.pointer.clickButton === 0 && ! this.pointer.clickRecordFocus) this.panByPointerDrag(screen)
+    const dragExceeded = this.updatePointerDragExceeded(screen)
+    if (this.pointer.clickButton === 0 && ! this.pointer.clickRecordFocus && dragExceeded) {
+      this.panByPointerDrag(screen)
+    }
   }
 
   private handlePointerUp(e: PointerEvent) {
@@ -1179,12 +1182,24 @@ export class Game extends Disposable(Empty) {
     })
   }
 
-  private updatePointerDragExceeded(screen: Vec2) {
+  private updatePointerDragExceeded(screen: Vec2): boolean {
+    if (this.pointer.dragExceeded) return true
+
     const start = this.pointer.dragStartScreen
-    if (! start) return
-    if (Vec2.length(Vec2.sub(screen, start)) > POINTER_CLICK_THRESHOLD) {
+    if (! start) return false
+    if (Vec2.length(Vec2.sub(screen, start)) > this.getPointerDragThreshold()) {
       this.pointer.dragExceeded = true
+      this.pointer.dragLastScreen = screen
     }
+    return this.pointer.dragExceeded
+  }
+
+  private getPointerDragThreshold() {
+    return Scalar.clamp(
+      this.ctx.getPointerDragThreshold?.() ?? DEFAULT_POINTER_DRAG_THRESHOLD,
+      0,
+      64,
+    )
   }
 
   private clearPointerDrag() {

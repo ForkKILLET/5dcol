@@ -15,6 +15,12 @@ const VolumeSchema = (fallback: number) => z
   .catch(fallback)
   .transform(value => Math.min(1, Math.max(0, value)))
 
+const NumberRangeSchema = (fallback: number, min: number, max: number) => z
+  .number()
+  .refine(Number.isFinite)
+  .catch(fallback)
+  .transform(value => Math.min(max, Math.max(min, value)))
+
 export const FiveDPGNSettingsSchema = z.preprocess(
   value => value && typeof value === 'object' ? value : {},
   z.object({
@@ -55,6 +61,7 @@ export const GameSettingsSchema = z.preprocess(
     autoSwitchViewPlayer: BooleanWithDefault(true),
     showClock: BooleanWithDefault(true),
     showMoveTravelAnimation: BooleanWithDefault(true),
+    pointerDragThreshold: NumberRangeSchema(8, 0, 24),
     turnAlertSound: BooleanWithDefault(true),
     turnAlertTitle: BooleanWithDefault(true),
     turnAlertNotification: BooleanWithDefault(false),

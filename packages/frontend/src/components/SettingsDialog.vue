@@ -212,6 +212,20 @@ function setActiveTab(tab: SettingsTab) {
               :style="buttonStyle"
             />
           </div>
+          <label class="settings-row">
+            <span>{{ t('settings.pointerDragThreshold') }}</span>
+            <div class="settings-slider-control">
+              <GameSlider
+                v-model="settings.pointerDragThreshold"
+                :aria-label="t('settings.pointerDragThreshold')"
+                :style="buttonStyle"
+                :min="0"
+                :max="24"
+                :step="1"
+              />
+              <span class="settings-value">{{ t('settings.pointerDragThresholdValue', { value: settings.pointerDragThreshold }) }}</span>
+            </div>
+          </label>
           <div class="settings-row settings-row--stacked">
             <span>{{ t('settings.turnAlerts') }}</span>
             <div class="settings-alert-group">
@@ -313,6 +327,12 @@ function setActiveTab(tab: SettingsTab) {
   min-width: 0;
 }
 
+.settings-slider-control {
+  display: flex;
+  gap: var(--button-content-gap);
+  align-items: center;
+}
+
 .settings-status {
   color: var(--button-text-color);
   font-size: 16px;
@@ -320,6 +340,15 @@ function setActiveTab(tab: SettingsTab) {
   text-align: right;
   transform: translateY(var(--ui-text-y));
   white-space: normal;
+}
+
+.settings-value {
+  min-width: 44px;
+  color: var(--button-text-color);
+  font-size: 18px;
+  line-height: 1;
+  text-align: right;
+  transform: translateY(var(--ui-text-y));
 }
 
 @media (max-width: 760px) {
