@@ -13,6 +13,7 @@ import {
   type MatchRoomStatus,
   type StudyCommand,
   type StudyDocument,
+  type StudyFollowMode,
   type StudyMember,
   type StudyPatch,
   type StudyPresence,
@@ -107,6 +108,7 @@ const recordFocusedMove = ref<(GameRecordMoveFocusTarget & { pulseId: number }) 
 const onlineStudyMembers = ref<StudyMember[]>([])
 const onlineStudyPresence = ref<StudyPresence[]>([])
 const onlineStudyChatMessages = ref<ChatMessage[]>([])
+const onlineStudyFollowUserId = ref<string | null>(null)
 let recordFocusedMovePulseId = 0
 let focusedOnlineStudyMemberPulseId = 0
 const focusedOnlineStudyMember = ref<{ userId: string; pulseId: number } | null>(null)
@@ -700,6 +702,7 @@ const onlineStudyMemberRows = computed(() => {
     const presence = presenceByUser.get(userId)
     const cursor = resolveRecordCursorTarget(presence ? game?.getRecordCursorFromStudyPosition(presence.cursor) : null)
     const current = userId === matchUserId.value
+    const following = onlineStudyFollowUserId.value === userId
     return {
       id: userId,
       name: getStudyMemberDisplayName(member, presence),
@@ -708,7 +711,9 @@ const onlineStudyMemberRows = computed(() => {
       online: Boolean(presence),
       current,
       position: getStudyMemberPositionText(presence, cursor),
+      following,
       canJump: Boolean(cursor) && ! current,
+      canFollow: ! current && (Boolean(cursor) || following),
     }
   })
 })
@@ -823,16 +828,42 @@ function syncOnlineStudyPresence(cursor: { recordLineId: number, recordActionInd
   const position = game?.getStudyPositionForRecordCursor(cursor)
   if (! position) return
 
-  const signature = JSON.stringify(position)
+  const follow = getOnlineStudyPresenceFollowState()
+  const signature = JSON.stringify({ position, ...follow })
   if (signature === onlineStudyPresenceSignature) return
   onlineStudyPresenceSignature = signature
-  onlineStudyStateSubscription.sendPresence(position, 'free')
+  onlineStudyStateSubscription.sendPresence(position, follow.mode, follow.followingUserId)
+}
+
+function getOnlineStudyPresenceFollowState(): { mode: StudyFollowMode, followingUserId?: string } {
+  const followingUserId = onlineStudyFollowUserId.value
+  if (! followingUserId) return { mode: 'free' }
+  return { mode: 'following', followingUserId }
 }
 
 function upsertOnlineStudyPresence(presence: StudyPresence) {
   const index = onlineStudyPresence.value.findIndex(item => item.userId === presence.userId)
   if (index >= 0) onlineStudyPresence.value[index] = presence
   else onlineStudyPresence.value.push(presence)
+  followOnlineStudyPresenceCursor(presence)
+}
+
+function followOnlineStudyPresenceCursor(presence: StudyPresence) {
+  if (presence.userId !== onlineStudyFollowUserId.value) return
+  const cursor = resolveRecordCursorTarget(game?.getRecordCursorFromStudyPosition(presence.cursor))
+  if (! cursor) return
+  recordPanelOpen.value = true
+  rollbackToRecordCursor(cursor, {
+    preserveOnlineStudyFollow: true,
+    sound: false,
+  })
+}
+
+function followOnlineStudyCurrentPresence() {
+  const followingUserId = onlineStudyFollowUserId.value
+  if (! followingUserId) return
+  const presence = onlineStudyPresence.value.find(item => item.userId === followingUserId)
+  if (presence) followOnlineStudyPresenceCursor(presence)
 }
 
 function upsertOnlineStudyChatMessage(message: ChatMessage) {
@@ -881,7 +912,24 @@ function jumpToOnlineStudyMember(userId: string) {
   const cursor = resolveRecordCursorTarget(game?.getRecordCursorFromStudyPosition(presence.cursor))
   if (! cursor) return
   recordPanelOpen.value = true
+  setOnlineStudyFollowUser(null)
   rollbackToRecordCursor(cursor)
+}
+
+function followOnlineStudyMember(userId: string) {
+  const nextUserId = onlineStudyFollowUserId.value === userId ? null : userId
+  setOnlineStudyFollowUser(nextUserId)
+  playUISound()
+  if (! nextUserId) return
+
+  const presence = onlineStudyPresence.value.find(item => item.userId === nextUserId)
+  if (presence) followOnlineStudyPresenceCursor(presence)
+}
+
+function setOnlineStudyFollowUser(userId: string | null) {
+  onlineStudyFollowUserId.value = userId
+  onlineStudyPresenceSignature = ''
+  syncOnlineStudyPresence(recordCurrentCursor.value)
 }
 
 function focusOnlineStudyMember(userId: string | null) {
@@ -905,10 +953,17 @@ function focusRecordSegment(segment: GameRecordMoveSegment) {
   game?.focusRecordMoveSegment(segment)
 }
 
-function rollbackToRecordCursor(cursor: GameRecordCursor) {
+function rollbackToRecordCursor(
+  cursor: GameRecordCursor,
+  {
+    preserveOnlineStudyFollow = false,
+    sound = true,
+  }: { preserveOnlineStudyFollow?: boolean, sound?: boolean } = {},
+) {
   if (! gameStarted.value) return
   if (onlineSession.value) return
-  playUISound()
+  if (activeOnlineStudy.value && ! preserveOnlineStudyFollow) setOnlineStudyFollowUser(null)
+  if (sound) playUISound()
   game?.rollbackToRecordCursor(cursor)
 }
 
@@ -931,7 +986,10 @@ function jumpRecordCursor(direction: -1 | 1) {
   ))
   if (! target) return
 
-  if (game?.rollbackToRecordCursor(target)) playUISound()
+  if (game?.rollbackToRecordCursor(target)) {
+    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    playUISound()
+  }
 }
 
 function jumpRecordBlockBoundary(boundary: 'start' | 'end') {
@@ -955,19 +1013,28 @@ function jumpRecordBlockBoundary(boundary: 'start' | 'end') {
     && target.recordActionIndex === current.recordActionIndex
   ) return
 
-  if (game?.rollbackToRecordCursor(target)) playUISound()
+  if (game?.rollbackToRecordCursor(target)) {
+    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    playUISound()
+  }
 }
 
 function cycleRecordCursorVariation() {
   if (! gameStarted.value) return
   if (onlineSession.value) return
-  if (game?.cycleRecordCursorVariation()) playUISound()
+  if (game?.cycleRecordCursorVariation()) {
+    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    playUISound()
+  }
 }
 
 function deleteRecordFuture(cursor: GameRecordCursor) {
   if (! gameStarted.value) return
   if (onlineSession.value) return
-  if (game?.deleteRecordFutureAtCursor(cursor)) playUISound()
+  if (game?.deleteRecordFutureAtCursor(cursor)) {
+    if (activeOnlineStudy.value) setOnlineStudyFollowUser(null)
+    playUISound()
+  }
 }
 
 function replaceRecordActionComments(payload: {
@@ -1696,6 +1763,7 @@ function startStudyGame(
   onlineStudySaveStatus.value = 'saved'
   onlineStudyMembers.value = []
   onlineStudyChatMessages.value = []
+  onlineStudyFollowUserId.value = null
   onlineConnectionStatus.value = source.kind === 'online' ? 'connecting' : 'offline'
   focusedOnlineStudyMember.value = null
   membersPanelOpen.value = source.kind === 'online'
@@ -2040,6 +2108,7 @@ function startOnlineStudyStateSubscription(
           onlineStudyMembers.value = event.room.members
           onlineStudyPresence.value = event.presence
           onlineStudyChatMessages.value = [...event.chat].sort((a, b) => a.createdAt - b.createdAt)
+          followOnlineStudyCurrentPresence()
           activeOnlineStudy.value = {
             ...current,
             version: event.room.version,
@@ -2157,6 +2226,7 @@ function stopOnlineStudyStateSubscription() {
   onlineStudyMembers.value = []
   onlineStudyPresence.value = []
   onlineStudyChatMessages.value = []
+  onlineStudyFollowUserId.value = null
   focusedOnlineStudyMember.value = null
   onlineStudyStateSubscription?.unsubscribe()
   onlineStudyStateSubscription = null
@@ -2179,6 +2249,7 @@ async function syncOnlineStudyState(serverAddress: string, roomId: string) {
     onlineStudyPresence.value = state.presence
     onlineStudyChatMessages.value = [...state.chat].sort((a, b) => a.createdAt - b.createdAt)
     game?.loadStudyDocument(state.room.document, { focus: false })
+    followOnlineStudyCurrentPresence()
     onlineConnectionStatus.value = 'connected'
   }
   catch (err) {
@@ -2386,6 +2457,7 @@ function returnToMainMenu(
   stopMatchServerRefresh()
   stopOnlinePolling()
   stopOnlineRoomStateSubscription()
+  stopOnlineStudyStateSubscription()
   onlineRoomStatus.value = null
   onlineRoomSettings.value = null
   onlineRoomSeats.value = null
@@ -2855,6 +2927,8 @@ watch([exportFormat, exportMode], () => {
           :online-label="t('members.online')"
           :offline-label="t('members.offline')"
           :jump-label="t('members.jump')"
+          :follow-label="t('members.follow')"
+          @follow="followOnlineStudyMember"
           @jump="jumpToOnlineStudyMember"
         />
         <ChatPanel

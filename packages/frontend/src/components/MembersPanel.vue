@@ -4,9 +4,11 @@ import GameButton from './GameButton.vue'
 import GamePanel from './GamePanel.vue'
 
 export interface MembersPanelMember {
+  canFollow: boolean
   canJump: boolean
   color: string
   current: boolean
+  following: boolean
   id: string
   name: string
   online: boolean
@@ -15,6 +17,7 @@ export interface MembersPanelMember {
 }
 
 const emit = defineEmits<{
+  follow: [userId: string]
   jump: [userId: string]
 }>()
 
@@ -23,6 +26,7 @@ const props = defineProps<{
   emptyText: string
   focusedMemberId?: string | null
   focusPulseId?: number
+  followLabel: string
   jumpLabel: string
   members: MembersPanelMember[]
   offlineLabel: string
@@ -43,6 +47,10 @@ watch(() => props.focusPulseId, () => {
 
 function jumpToMember(userId: string) {
   emit('jump', userId)
+}
+
+function followMember(userId: string) {
+  emit('follow', userId)
 }
 </script>
 
@@ -84,14 +92,26 @@ function jumpToMember(userId: string) {
           </div>
           <div class="member-position">{{ member.position }}</div>
         </div>
-        <GameButton
+        <div
           v-if="!member.current"
-          size="tiny"
-          :disabled="!member.canJump"
-          @click="jumpToMember(member.id)"
+          class="member-actions"
         >
-          <span>{{ jumpLabel }}</span>
-        </GameButton>
+          <GameButton
+            size="tiny"
+            :disabled="!member.canJump"
+            @click="jumpToMember(member.id)"
+          >
+            <span>{{ jumpLabel }}</span>
+          </GameButton>
+          <GameButton
+            size="tiny"
+            :pressed="member.following"
+            :disabled="!member.canFollow"
+            @click="followMember(member.id)"
+          >
+            <span>{{ followLabel }}</span>
+          </GameButton>
+        </div>
       </li>
     </ul>
   </GamePanel>
@@ -162,6 +182,13 @@ function jumpToMember(userId: string) {
   display: grid;
   gap: calc(var(--button-content-gap) * 0.35);
   min-width: 0;
+}
+
+.member-actions {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--button-content-gap) * 0.5);
+  align-items: flex-end;
 }
 
 .member-heading,
