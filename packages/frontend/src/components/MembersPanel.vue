@@ -8,12 +8,19 @@ export interface MembersPanelMember {
   canJump: boolean
   color: string
   current: boolean
+  followedBy: MembersPanelMemberBadge[]
   following: boolean
+  followingMembers: MembersPanelMemberBadge[]
   id: string
   name: string
   online: boolean
-  position: string
   role: string
+}
+
+export interface MembersPanelMemberBadge {
+  color: string
+  id: string
+  name: string
 }
 
 const emit = defineEmits<{
@@ -26,12 +33,15 @@ const props = defineProps<{
   emptyText: string
   focusedMemberId?: string | null
   focusPulseId?: number
+  followedByLabel: string
   followLabel: string
+  followingLabel: string
   jumpLabel: string
   members: MembersPanelMember[]
   offlineLabel: string
   onlineLabel: string
   title: string
+  unfollowLabel: string
   youLabel: string
 }>()
 
@@ -51,6 +61,10 @@ function jumpToMember(userId: string) {
 
 function followMember(userId: string) {
   emit('follow', userId)
+}
+
+function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
+  return Array.from(member.name.trim())[0]?.toUpperCase() ?? '?'
 }
 </script>
 
@@ -90,7 +104,40 @@ function followMember(userId: string) {
             <span v-if="member.current">{{ youLabel }}</span>
             <span class="member-status">{{ member.online ? onlineLabel : offlineLabel }}</span>
           </div>
-          <div class="member-position">{{ member.position }}</div>
+          <div
+            v-if="member.followingMembers.length > 0"
+            class="member-follow-line"
+          >
+            <span>{{ followingLabel }}</span>
+            <span class="member-badge-cluster">
+              <span
+                v-for="followed in member.followingMembers"
+                :key="followed.id"
+                class="member-badge"
+                :style="{ '--member-badge-color': followed.color }"
+                :title="followed.name"
+              >
+                {{ getMemberBadgeInitial(followed) }}
+              </span>
+            </span>
+          </div>
+          <div
+            v-if="member.current && member.followedBy.length > 0"
+            class="member-follow-line"
+          >
+            <span>{{ followedByLabel }}</span>
+            <span class="member-badge-cluster">
+              <span
+                v-for="follower in member.followedBy"
+                :key="follower.id"
+                class="member-badge"
+                :style="{ '--member-badge-color': follower.color }"
+                :title="follower.name"
+              >
+                {{ getMemberBadgeInitial(follower) }}
+              </span>
+            </span>
+          </div>
         </div>
         <div
           v-if="!member.current"
@@ -105,11 +152,10 @@ function followMember(userId: string) {
           </GameButton>
           <GameButton
             size="tiny"
-            :pressed="member.following"
             :disabled="!member.canFollow"
             @click="followMember(member.id)"
           >
-            <span>{{ followLabel }}</span>
+            <span>{{ member.following ? unfollowLabel : followLabel }}</span>
           </GameButton>
         </div>
       </li>
@@ -208,16 +254,43 @@ function followMember(userId: string) {
 }
 
 .member-meta,
-.member-position {
+.member-follow-line {
   font-size: 13px;
   line-height: 1.1;
   opacity: 0.75;
 }
 
-.member-position {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.member-follow-line {
+  display: flex;
+  gap: calc(var(--button-content-gap) * 0.55);
+  align-items: center;
+  min-width: 0;
+}
+
+.member-badge-cluster {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  min-width: 0;
+  padding-right: calc(var(--button-tiny-height) * 0.2);
+}
+
+.member-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: calc(var(--button-tiny-height) * 0.72);
+  height: calc(var(--button-tiny-height) * 0.72);
+  margin-right: calc(var(--button-tiny-height) * -0.2);
+  border: var(--button-tiny-border) solid var(--button-border-color);
+  border-radius: 50%;
+  background: var(--member-badge-color);
+  color: rgb(244, 245, 237);
+  box-shadow: var(--button-tiny-shadow-offset) var(--button-tiny-shadow-offset) 0 var(--button-shadow-color);
+  font-size: calc(var(--button-tiny-font-size) * 0.66);
+  font-weight: 700;
+  line-height: 1;
 }
 
 @keyframes member-row-pulse {

@@ -646,18 +646,6 @@ function getStudyMemberDisplayName(member: StudyMember | undefined, presence: St
     || t('members.anonymous')
 }
 
-function getStudyMemberPositionText(
-  presence: StudyPresence | undefined,
-  cursor: GameRecordCursor | null | undefined,
-): string {
-  if (! presence) return t('members.positionOffline')
-  if (! cursor) return t('members.positionUnknown')
-  return t('members.positionCursor', {
-    action: String(cursor.recordActionIndex),
-    line: String(cursor.recordLineId + 1),
-  })
-}
-
 function resolveRecordCursorTarget(
   target: { recordLineId: number, recordActionIndex: number } | null | undefined,
 ): GameRecordCursor | null {
@@ -696,6 +684,15 @@ const onlineStudyMemberRows = computed(() => {
       .map(presence => presence.userId)
       .filter(userId => ! memberByUser.has(userId)),
   ]
+  const toBadge = (userId: string) => {
+    const member = memberByUser.get(userId)
+    const presence = presenceByUser.get(userId)
+    return {
+      id: userId,
+      name: getStudyMemberDisplayName(member, presence),
+      color: member?.color ?? getRecordAuthorColor(userId),
+    }
+  }
 
   return userIds.map((userId) => {
     const member = memberByUser.get(userId)
@@ -710,8 +707,15 @@ const onlineStudyMemberRows = computed(() => {
       color: member?.color ?? getRecordAuthorColor(userId),
       online: Boolean(presence),
       current,
-      position: getStudyMemberPositionText(presence, cursor),
       following,
+      followingMembers: presence?.mode === 'following' && presence.followingUserId
+        ? [toBadge(presence.followingUserId)]
+        : [],
+      followedBy: current
+        ? onlineStudyPresence.value
+          .filter(item => item.userId !== userId && item.mode === 'following' && item.followingUserId === userId)
+          .map(item => toBadge(item.userId))
+        : [],
       canJump: Boolean(cursor) && ! current,
       canFollow: ! current && (Boolean(cursor) || following),
     }
@@ -2928,6 +2932,9 @@ watch([exportFormat, exportMode], () => {
           :offline-label="t('members.offline')"
           :jump-label="t('members.jump')"
           :follow-label="t('members.follow')"
+          :unfollow-label="t('members.unfollow')"
+          :following-label="t('members.following')"
+          :followed-by-label="t('members.followedBy')"
           @follow="followOnlineStudyMember"
           @jump="jumpToOnlineStudyMember"
         />
