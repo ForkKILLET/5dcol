@@ -1,0 +1,14 @@
+{
+  "autorun": true,
+  "terminals": [
+    {
+      "name": "frontend/dev",
+      "focus": true,
+      "command": "pnpm -F @5dcol/frontend dev"
+    },
+    {
+      "name": "backend/dev",
+      "command": "pnpm -F @5dcol/backend dev"
+    }
+  ]
+}
