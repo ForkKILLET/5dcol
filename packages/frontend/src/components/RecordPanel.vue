@@ -1705,8 +1705,11 @@ onBeforeUnmount(() => {
   display: grid;
   grid-column: 2 / -1;
   row-gap: calc(var(--button-content-gap) * 0.5);
+  inline-size: 100%;
   min-width: 0;
+  max-inline-size: 100%;
   margin-block: calc(var(--button-content-gap) * 0.35);
+  contain: inline-size;
   font-size: 0.86em;
   font-style: italic;
   opacity: 0.82;
@@ -1722,6 +1725,7 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: var(--button-tiny-content-gap);
   min-width: 0;
+  max-inline-size: 100%;
   min-height: var(--record-comment-line-height);
   padding: var(--record-comment-block-padding-y) var(--record-comment-block-padding-x);
   border-left: var(--record-comment-border-width) solid var(--record-comment-author-color, var(--main-arrow-fill-color));
@@ -1737,6 +1741,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  max-inline-size: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1764,6 +1769,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  max-inline-size: 100%;
   min-height: var(--record-comment-line-height);
   padding: 0;
   border: 0;
