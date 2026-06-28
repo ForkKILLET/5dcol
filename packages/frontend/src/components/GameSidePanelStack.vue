@@ -87,6 +87,7 @@ onBeforeUnmount(() => {
       { 'game-side-panel-stack--resizing': resizing },
     ]"
     :style="panelStyle"
+    @wheel.stop
   >
     <div
       class="game-side-panel-resize-handle"
