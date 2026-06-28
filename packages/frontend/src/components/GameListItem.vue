@@ -29,6 +29,8 @@ defineProps<{
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--button-content-gap) * 2);
+  padding-right: var(--button-shadow-offset);
+  padding-bottom: var(--button-shadow-offset);
 }
 
 .game-list-item.has-border {

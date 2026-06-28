@@ -246,76 +246,80 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
         </GameButton>
       </div>
 
-    <GamePanel
+    <div
       v-if="activeTab === 'local'"
-      tag="section"
-      class="versus-local-panel"
+      class="versus-local-list"
     >
-      <div
+      <GamePanel
         v-if="sortedLocalGames.length === 0"
+        tag="section"
         class="versus-empty"
       >
         {{ t('versus.empty') }}
-      </div>
-      <div class="versus-local-list">
-        <GameListItem
+      </GamePanel>
+      <template v-else>
+        <GamePanel
           v-for="localGame in sortedLocalGames"
           :key="localGame.id"
+          tag="section"
+          class="versus-item-panel"
         >
-          <template #title>
-            <span v-if="editingLocalGameId !== localGame.id">{{ localGame.title }}</span>
-            <GameTextInput
-              v-else
-              v-model="editingLocalGameTitle"
-              :placeholder="t('versus.namePlaceholder')"
-              spellcheck="false"
-              @keydown.enter.prevent="saveRenameLocalGame"
-              @keydown.esc.prevent="cancelRenameLocalGame"
-            />
-          </template>
-          <template #meta>
-            <span>
-              {{ t('versus.meta', {
-                actions: localGame.actionCount,
-                annotations: localGame.annotationCount,
-                date: new Date(localGame.updatedAt).toLocaleDateString(),
-              }) }}
-            </span>
-          </template>
-          <template #actions>
-            <template v-if="editingLocalGameId === localGame.id">
-              <GameButton
-                size="small"
-                @click="saveRenameLocalGame"
-              >
-                <span>{{ t('button.save') }}</span>
-              </GameButton>
-              <GameButton
-                size="small"
-                @click="clickCancelRenameLocalGame"
-              >
-                <span>{{ t('button.cancel') }}</span>
-              </GameButton>
-            </template>
-            <template v-else>
-              <GameListItemMenu
-                :open="isLocalGameActionMenuOpen(localGame.id)"
-                @update:open="setLocalGameActionMenuOpen(localGame.id, $event)"
-                @ui-sound="emit('uiSound')"
-                @rename="beginRenameLocalGame(localGame.id, localGame.title)"
-                @delete="removeLocalGame(localGame.id)"
+          <GameListItem>
+            <template #title>
+              <span v-if="editingLocalGameId !== localGame.id">{{ localGame.title }}</span>
+              <GameTextInput
+                v-else
+                v-model="editingLocalGameTitle"
+                :placeholder="t('versus.namePlaceholder')"
+                spellcheck="false"
+                @keydown.enter.prevent="saveRenameLocalGame"
+                @keydown.esc.prevent="cancelRenameLocalGame"
               />
-              <GameButton
-                size="small"
-                @click="openLocalGame(localGame.id)"
-              >
-                <span>{{ t('button.open') }}</span>
-              </GameButton>
             </template>
-          </template>
-        </GameListItem>
-      </div>
-    </GamePanel>
+            <template #meta>
+              <span>
+                {{ t('versus.meta', {
+                  actions: localGame.actionCount,
+                  annotations: localGame.annotationCount,
+                  date: new Date(localGame.updatedAt).toLocaleDateString(),
+                }) }}
+              </span>
+            </template>
+            <template #actions>
+              <template v-if="editingLocalGameId === localGame.id">
+                <GameButton
+                  size="small"
+                  @click="saveRenameLocalGame"
+                >
+                  <span>{{ t('button.save') }}</span>
+                </GameButton>
+                <GameButton
+                  size="small"
+                  @click="clickCancelRenameLocalGame"
+                >
+                  <span>{{ t('button.cancel') }}</span>
+                </GameButton>
+              </template>
+              <template v-else>
+                <GameListItemMenu
+                  :open="isLocalGameActionMenuOpen(localGame.id)"
+                  @update:open="setLocalGameActionMenuOpen(localGame.id, $event)"
+                  @ui-sound="emit('uiSound')"
+                  @rename="beginRenameLocalGame(localGame.id, localGame.title)"
+                  @delete="removeLocalGame(localGame.id)"
+                />
+                <GameButton
+                  size="small"
+                  @click="openLocalGame(localGame.id)"
+                >
+                  <span>{{ t('button.open') }}</span>
+                </GameButton>
+              </template>
+            </template>
+          </GameListItem>
+        </GamePanel>
+      </template>
+    </div>
 
     <MatchPanel
       v-else
@@ -394,12 +398,6 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
   align-items: baseline;
 }
 
-.versus-local-panel {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .versus-online-panel {
   flex: 1 1 auto;
   min-height: 0;
@@ -428,10 +426,12 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
 }
 
 .versus-local-list {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: var(--button-content-gap);
   min-height: 0;
+  padding-right: calc(var(--button-content-gap) * 0.5);
   overflow: auto;
 }
 
