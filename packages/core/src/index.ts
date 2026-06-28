@@ -1147,7 +1147,7 @@ export namespace Multiverse {
     directions: Coord4Delta[],
   ): void => {
     for (const direction of directions) {
-      for (let n = 1; n < 8; n ++) {
+      for (let n = 1; ; n ++) {
         const canContinue = addStepTarget(targets, multiverse, from, player, {
           x: 0,
           y: 0,
