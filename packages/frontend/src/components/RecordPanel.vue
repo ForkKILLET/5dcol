@@ -1385,6 +1385,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   max-width: 100%;
   min-height: 0;
+  background: var(--button-fill-color);
   pointer-events: auto;
 }
 
