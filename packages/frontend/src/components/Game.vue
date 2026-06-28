@@ -59,6 +59,7 @@ import { useGameSettings } from '@/composables/settings'
 import { useLocalStudies, useStudyWorkspaces } from '@/composables/study'
 import { useDialogStack } from '@/composables/dialogStack'
 import { normalizeOnlineServerAddress } from '@/composables/online'
+import { usePanelLayout, type GamePanelId } from '@/composables/panelLayout'
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import ChatPanel from './ChatPanel.vue'
@@ -66,6 +67,7 @@ import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameDock from './GameDock.vue'
 import GameIcon from './GameIcon.vue'
+import GameSidePanelStack from './GameSidePanelStack.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
 import MembersPanel from './MembersPanel.vue'
@@ -98,8 +100,6 @@ const language = useStorageRef<Language>(LANGUAGE_STORAGE_KEY, getDefaultLanguag
   parse: raw => isLanguage(raw) ? raw : getDefaultLanguage(),
   serialize: value => value,
 })
-const recordPanelOpen = ref(false)
-const recordPanelWidth = ref(Sizes.RecordPanelWidth)
 const recordText = ref('')
 const recordActions = ref<GameRecordRow[]>([])
 const recordHasPendingMoves = ref(false)
@@ -114,8 +114,6 @@ const onlineStudyFollowUserId = ref<string | null>(null)
 let recordFocusedMovePulseId = 0
 let focusedOnlineStudyMemberPulseId = 0
 const focusedOnlineStudyMember = ref<{ userId: string; pulseId: number } | null>(null)
-const membersPanelOpen = ref(false)
-const chatPanelOpen = ref(false)
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
@@ -181,6 +179,30 @@ const viewPlayer = useStorageRef<Player>(VIEW_PLAYER_STORAGE_KEY, Player.W, {
   serialize: player => player === Player.W ? 'white' : 'black',
 })
 const gameSettings = useGameSettings()
+const clockPanelOpen = computed({
+  get: () => gameSettings.showClock,
+  set: (open: boolean) => {
+    gameSettings.showClock = open
+  },
+})
+const panelLayout = usePanelLayout({
+  clockOpen: clockPanelOpen,
+  onlineStudyActive: computed(() => activeOnlineStudy.value !== null),
+  viewportWidth,
+})
+const recordPanelOpen = computed({
+  get: () => panelLayout.isPanelOpen('record'),
+  set: (open: boolean) => panelLayout.setPanelOpen('record', open),
+})
+const recordPanelWidth = computed(() => panelLayout.getPanelSize('record'))
+const membersPanelOpen = computed({
+  get: () => panelLayout.isPanelOpen('members'),
+  set: (open: boolean) => panelLayout.setPanelOpen('members', open),
+})
+const chatPanelOpen = computed({
+  get: () => panelLayout.isPanelOpen('chat'),
+  set: (open: boolean) => panelLayout.setPanelOpen('chat', open),
+})
 const logger = new Logger(messages)
 let game: Game | null = null
 let gameRenderer: Renderer | null = null
@@ -397,11 +419,10 @@ const recordActionButtons = computed(() => (
 const menuButtons = computed(() => (
   secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
-type GameDockItemId = 'record' | 'clock' | 'members' | 'chat'
 const gameDockItems = computed(() => {
   const items: Array<{
     icon: 'chat' | 'clock' | 'members' | 'record'
-    id: GameDockItemId
+    id: GamePanelId
     label: string
     pressed: boolean
   }> = [
@@ -473,6 +494,10 @@ const menuButtonStyle = computed(() => getPresetButtonStyle(
   themeHoverButtonPreset.value,
   themeDisabledButtonPreset.value,
 ))
+const leftPanelWidth = computed(() => Math.max(
+  panelLayout.getPanelSize('members'),
+  panelLayout.getPanelSize('chat'),
+))
 const mainMenuVisible = computed(() => ! loading.value && ! gameStarted.value)
 const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
 const exportTextareaLineCount = computed(() => {
@@ -495,7 +520,6 @@ const uiStyle = computed(() => {
     ...menuButtonStyle.value,
     '--button-width': `${scaled(Sizes.ButtonWidth)}px`,
     '--secondary-button-width': `${scaled(Sizes.SecondaryButtonWidth)}px`,
-    '--record-panel-width': `${recordPanelWidth.value}px`,
     '--button-circle-size': `${scaled(Sizes.ButtonHeight)}px`,
     '--button-height': `${scaled(Sizes.ButtonHeight)}px`,
     '--button-top': `${scaled(Sizes.ButtonTop)}px`,
@@ -913,11 +937,11 @@ function sendOnlineStudyChatMessage(text: string) {
 function toggleClockPanel() {
   if (! gameStarted.value) return
   playUISound()
-  gameSettings.showClock = ! gameSettings.showClock
+  panelLayout.togglePanel('clock')
 }
 
 function clickGameDockItem(id: string) {
-  switch (id as GameDockItemId) {
+  switch (id as GamePanelId) {
     case 'record':
       toggleRecordPanel()
       break
@@ -1337,30 +1361,21 @@ function syncGameInputState() {
   game?.setGameInputDisabled(uiOverlayOpen.value)
 }
 
-function getRecordViewportRightInset() {
-  if (! recordPanelOpen.value) return 0
-
-  const panelWidth = Math.min(recordPanelWidth.value, Math.max(0, viewportWidth.value - Sizes.ButtonTop * 2))
-  return panelWidth + Sizes.ButtonTop + Sizes.ButtonShadowOffset
-}
-
-function getOnlineStudyViewportLeftInset() {
-  if (! activeOnlineStudy.value || (! membersPanelOpen.value && ! chatPanelOpen.value)) return 0
-
-  const panelWidth = Math.min(360, Math.max(0, viewportWidth.value - Sizes.ButtonTop * 2))
-  return panelWidth + Sizes.ButtonTop + Sizes.ButtonShadowOffset
-}
-
 function syncGameViewportInsets() {
+  const insets = panelLayout.viewportInsets.value
   game?.setViewportInsets({
-    left: getOnlineStudyViewportLeftInset(),
-    right: getRecordViewportRightInset(),
+    left: insets.left,
+    right: insets.right,
   })
 }
 
 function updateRecordPanelWidth(width: number) {
-  const maxWidth = Math.max(Sizes.RecordPanelMinWidth, viewportWidth.value - Sizes.ButtonTop * 2)
-  recordPanelWidth.value = Math.min(Math.max(width, Sizes.RecordPanelMinWidth), maxWidth)
+  panelLayout.setPanelSize('record', width)
+  syncGameViewportInsets()
+}
+
+function updateLeftPanelWidth(width: number) {
+  panelLayout.setSideSize('left', width)
   syncGameViewportInsets()
 }
 
@@ -1806,8 +1821,8 @@ function startStudyGame(
   onlineStudyFollowUserId.value = null
   onlineConnectionStatus.value = source.kind === 'online' ? 'connecting' : 'offline'
   focusedOnlineStudyMember.value = null
-  membersPanelOpen.value = source.kind === 'online'
-  chatPanelOpen.value = source.kind === 'online'
+  if (source.kind === 'online') panelLayout.setOnlineStudyDefaultPanels()
+  else panelLayout.closeStudyPanels()
   game = new Game({
     renderer: gameRenderer,
     soundManager,
@@ -2533,10 +2548,8 @@ function returnToMainMenu(
   recordCurrentActionIndex.value = 0
   recordCurrentCursor.value = { recordLineId: 0, recordActionIndex: 0 }
   recordFocusedMove.value = null
-  recordPanelOpen.value = false
+  panelLayout.closeAll()
   focusedOnlineStudyMember.value = null
-  membersPanelOpen.value = false
-  chatPanelOpen.value = false
   secondaryMenuOpen.value = false
   closeDialog(false)
   gameStarted.value = false
@@ -2711,7 +2724,7 @@ onUnmounted(() => {
 })
 
 watch(uiOverlayOpen, syncGameInputState)
-watch([recordPanelOpen, membersPanelOpen, chatPanelOpen, activeOnlineStudy], syncGameViewportInsets)
+watch(panelLayout.viewportInsets, syncGameViewportInsets)
 watch(shouldMarkTitleForTurn, syncDocumentTitle, { immediate: true })
 watch(() => gameSettings.turnAlertNotification, (enabled) => {
   if (enabled) void requestTurnNotificationPermission()
@@ -2954,10 +2967,12 @@ watch([exportFormat, exportMode], () => {
         </div>
       </div>
 
-      <div
+      <GameSidePanelStack
         v-if="activeOnlineStudy && (membersPanelOpen || chatPanelOpen)"
-        class="game-left-panel-stack"
         :style="menuButtonStyle"
+        :size="leftPanelWidth"
+        :max-size="Math.max(260, viewportWidth - Sizes.ButtonTop * 2)"
+        @resize-panel="updateLeftPanelWidth"
       >
         <MembersPanel
           v-if="membersPanelOpen"
@@ -2990,7 +3005,7 @@ watch([exportFormat, exportMode], () => {
           @send="sendOnlineStudyChatMessage"
           @ui-sound="playUISound"
         />
-      </div>
+      </GameSidePanelStack>
 
       <div
         v-if="gameStarted"
@@ -3010,30 +3025,41 @@ watch([exportFormat, exportMode], () => {
         </div>
       </div>
 
-      <RecordPanel
+      <GameSidePanelStack
         v-if="gameStarted && recordPanelOpen"
+        side="right"
         :style="menuButtonStyle"
-        :record-text="recordText"
-        :rows="recordActions"
-        :action-buttons="recordActionButtons"
-        :has-pending-moves="recordHasPendingMoves"
-        :online="onlineSession !== null"
-        :online-spectator="isOnlineSpectator"
-        :deduction-start-action-index="spectatorDeductionStartActionIndex"
-        :focused-move="recordFocusedMove"
-        :presence-cursors="recordPresenceCursors"
-        :custom-glyph-templates="customRecordGlyphTemplates"
-        @toolbar-button-click="clickToolbarButton"
-        @focus-segment="focusRecordSegment"
-        @focus-presence-member="focusOnlineStudyMember"
-        @rollback-cursor="rollbackToRecordCursor"
-        @delete-future="deleteRecordFuture"
-        @replace-action-comments="replaceRecordActionComments"
-        @replace-move-glyphs="replaceRecordMoveGlyphs"
-        @update-custom-glyph-templates="customRecordGlyphTemplates = $event"
+        :size="recordPanelWidth"
+        :min-size="Sizes.RecordPanelMinWidth"
+        :max-size="Math.max(Sizes.RecordPanelMinWidth, viewportWidth - Sizes.ButtonTop * 2)"
+        top="var(--button-top)"
+        bottom="calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2)"
+        max-stack-height="none"
         @resize-panel="updateRecordPanelWidth"
-        @ui-sound="playUISound"
-      />
+      >
+        <RecordPanel
+          :style="menuButtonStyle"
+          :record-text="recordText"
+          :rows="recordActions"
+          :action-buttons="recordActionButtons"
+          :has-pending-moves="recordHasPendingMoves"
+          :online="onlineSession !== null"
+          :online-spectator="isOnlineSpectator"
+          :deduction-start-action-index="spectatorDeductionStartActionIndex"
+          :focused-move="recordFocusedMove"
+          :presence-cursors="recordPresenceCursors"
+          :custom-glyph-templates="customRecordGlyphTemplates"
+          @toolbar-button-click="clickToolbarButton"
+          @focus-segment="focusRecordSegment"
+          @focus-presence-member="focusOnlineStudyMember"
+          @rollback-cursor="rollbackToRecordCursor"
+          @delete-future="deleteRecordFuture"
+          @replace-action-comments="replaceRecordActionComments"
+          @replace-move-glyphs="replaceRecordMoveGlyphs"
+          @update-custom-glyph-templates="customRecordGlyphTemplates = $event"
+          @ui-sound="playUISound"
+        />
+      </GameSidePanelStack>
 
       <div
         v-if="gameStarted && secondaryMenuOpen"
@@ -3681,19 +3707,6 @@ canvas {
   font-size: 20px;
   line-height: 1;
   pointer-events: none;
-}
-
-.game-left-panel-stack {
-  position: absolute;
-  left: var(--button-top);
-  top: calc(var(--button-top) + 120px);
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--button-content-gap) * 1.5);
-  width: min(360px, calc(100vw - var(--button-top) * 2));
-  max-height: calc(var(--app-height) - var(--button-top) * 2 - 120px);
-  pointer-events: auto;
 }
 
 .clock-row {

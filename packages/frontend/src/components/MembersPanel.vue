@@ -69,7 +69,10 @@ function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
 </script>
 
 <template>
-  <GamePanel class="members-panel">
+  <GamePanel
+    class="members-panel"
+    shadow
+  >
     <h2 class="members-panel-title">{{ title }}</h2>
     <div
       v-if="members.length === 0"
@@ -166,8 +169,6 @@ function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
 <style scoped>
 .members-panel {
   max-height: min(320px, calc(var(--app-height) - var(--button-top) * 2));
-  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
-  color: var(--button-text-color);
 }
 
 .members-panel-title {

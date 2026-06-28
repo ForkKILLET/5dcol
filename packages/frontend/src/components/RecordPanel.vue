@@ -26,6 +26,7 @@ import { DEFAULT_RECORD_MARKER_AUTHOR_ID, getRecordMarkerAuthorColor } from '@en
 import GameButton from './GameButton.vue'
 import GameColorInput from './GameColorInput.vue'
 import GameIcon from './GameIcon.vue'
+import GamePanel from './GamePanel.vue'
 import RecordNodeList from './RecordNodeList.vue'
 import GameTextInput from './GameTextInput.vue'
 import GameToggle from './GameToggle.vue'
@@ -96,7 +97,6 @@ const emit = defineEmits<{
     moveIndex: number
     glyphs: string[]
   }]
-  resizePanel: [width: number]
   updateCustomGlyphTemplates: [templates: CustomRecordGlyphTemplate[]]
   uiSound: []
 }>()
@@ -115,9 +115,6 @@ const customGlyphTemplates = computed({
   get: () => props.customGlyphTemplates,
   set: value => emit('updateCustomGlyphTemplates', uniqueRecordGlyphTemplates(value)),
 })
-let stopPanelResizeListeners: (() => void) | null = null
-let resizeFrame: number | null = null
-let pendingResizeWidth: number | null = null
 let clearPendingSubmitTransitionTimer: number | null = null
 let nextPendingBlockKeyId = 1
 const MAX_VISIBLE_PRESENCE_CURSORS = 3
@@ -273,64 +270,6 @@ function getButtonText(button: GameToolbarButton): string {
 
 function getCursorPresenceKey(recordLineId: number, recordActionIndex: number): string {
   return `${recordLineId}:${recordActionIndex}`
-}
-
-function startPanelResize(event: PointerEvent) {
-  if (event.button !== 0) return
-
-  event.preventDefault()
-  const handle = event.currentTarget as HTMLElement
-  const pointerId = event.pointerId
-  const panel = handle.closest('.record-panel')
-  const startClientX = event.clientX
-  const startWidth = panel
-    ? Number.parseFloat(window.getComputedStyle(panel).width)
-    : 0
-
-  const flush = () => {
-    resizeFrame = null
-    if (pendingResizeWidth === null) return
-    emit('resizePanel', pendingResizeWidth)
-  }
-  const move = (moveEvent: PointerEvent) => {
-    if (moveEvent.pointerId !== pointerId) return
-    pendingResizeWidth = startWidth + startClientX - moveEvent.clientX
-    if (resizeFrame === null) {
-      resizeFrame = window.requestAnimationFrame(flush)
-    }
-  }
-  const stop = (stopEvent?: PointerEvent | Event) => {
-    if (stopEvent instanceof PointerEvent && stopEvent.pointerId !== pointerId) return
-    handle.removeEventListener('pointermove', move)
-    handle.removeEventListener('pointerup', stop)
-    handle.removeEventListener('pointercancel', stop)
-    handle.removeEventListener('lostpointercapture', stop)
-    window.removeEventListener('blur', stop)
-    if (resizeFrame !== null) {
-      window.cancelAnimationFrame(resizeFrame)
-      resizeFrame = null
-    }
-    if (pendingResizeWidth !== null) {
-      emit('resizePanel', pendingResizeWidth)
-      pendingResizeWidth = null
-    }
-    if (handle.hasPointerCapture(pointerId)) {
-      handle.releasePointerCapture(pointerId)
-    }
-    document.documentElement.classList.remove('record-panel-resizing')
-    stopPanelResizeListeners = null
-  }
-
-  stopPanelResizeListeners?.()
-  stopPanelResizeListeners = stop
-  document.documentElement.classList.add('record-panel-resizing')
-  handle.setPointerCapture(pointerId)
-  handle.addEventListener('pointermove', move)
-  handle.addEventListener('pointerup', stop)
-  handle.addEventListener('pointercancel', stop)
-  handle.addEventListener('lostpointercapture', stop)
-  window.addEventListener('blur', stop)
-  move(event)
 }
 
 function isRecordActionRow(row: GameRecordRow): row is GameRecordAction {
@@ -1026,8 +965,6 @@ function scrollElementIntoRecordView(element: HTMLElement | null) {
 }
 
 onBeforeUnmount(() => {
-  stopPanelResizeListeners?.()
-  if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame)
   if (clearPendingSubmitTransitionTimer !== null) {
     window.clearTimeout(clearPendingSubmitTransitionTimer)
   }
@@ -1035,14 +972,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside
+  <GamePanel
+    tag="aside"
+    shadow
     class="record-panel"
     @wheel.stop
   >
-    <div
-      class="record-resize-handle"
-      @pointerdown="startPanelResize"
-    ></div>
     <div class="record-header-bar">
       <h2 class="record-title">{{ t('record.title') }}</h2>
     </div>
@@ -1440,63 +1375,17 @@ onBeforeUnmount(() => {
         {{ t('record.empty') }}
       </div>
     </div>
-  </aside>
+  </GamePanel>
 </template>
 
 <style scoped>
 .record-panel {
-  position: absolute;
-  top: var(--button-top);
-  right: var(--button-top);
-  bottom: calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2);
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--button-content-gap) * 2);
-  width: max-content;
-  min-width: min(var(--record-panel-width), calc(100vw - var(--button-top) * 2));
-  max-width: calc(100vw - var(--button-top) * 2);
-  padding: calc(var(--button-content-gap) * 3);
-  border: var(--button-border) solid var(--button-border-color);
-  border-radius: 8px;
-  background: var(--button-fill-color);
-  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
-  color: var(--button-text-color);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
   pointer-events: auto;
-}
-
-.record-resize-handle {
-  position: absolute;
-  z-index: 5;
-  top: 0;
-  bottom: 0;
-  left: -7px;
-  width: 14px;
-  cursor: ew-resize;
-  touch-action: none;
-}
-
-.record-resize-handle::before {
-  position: absolute;
-  top: calc(var(--button-content-gap) * 2);
-  bottom: calc(var(--button-content-gap) * 2);
-  left: 50%;
-  width: 2px;
-  background: currentColor;
-  content: "";
-  opacity: 0;
-  transform: translateX(-50%);
-  transition: opacity 160ms ease;
-}
-
-.record-resize-handle:hover::before,
-.record-resize-handle:active::before {
-  opacity: 0.42;
-}
-
-:global(.record-panel-resizing),
-:global(.record-panel-resizing *) {
-  cursor: ew-resize !important;
-  user-select: none !important;
 }
 
 .record-header-bar {

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 withDefaults(defineProps<{
-  tag?: 'div' | 'section'
+  shadow?: boolean
+  tag?: 'aside' | 'div' | 'section'
 }>(), {
+  shadow: false,
   tag: 'div',
 })
 </script>
@@ -10,6 +12,7 @@ withDefaults(defineProps<{
   <component
     :is="tag"
     class="game-panel"
+    :class="{ 'game-panel--shadow': shadow }"
   >
     <slot />
   </component>
@@ -25,5 +28,10 @@ withDefaults(defineProps<{
   border: 2px solid var(--button-border-color);
   border-radius: 8px;
   background: var(--button-fill-color);
+  color: var(--button-text-color);
+}
+
+.game-panel--shadow {
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
 }
 </style>
