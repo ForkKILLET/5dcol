@@ -1529,12 +1529,12 @@ onBeforeUnmount(() => {
   overflow: visible;
   color: var(--button-text-color);
   pointer-events: none;
-  z-index: 2;
+  z-index: var(--z-content-panel);
 }
 
 .record-row--cursor-interactive:hover,
 .record-row--cursor-interactive:focus-within {
-  z-index: 4;
+  z-index: var(--z-content-floating);
 }
 
 .record-serial {
@@ -1545,7 +1545,7 @@ onBeforeUnmount(() => {
 
 .record-action {
   position: relative;
-  z-index: 2;
+  z-index: var(--z-content-panel);
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns:
@@ -1810,7 +1810,7 @@ onBeforeUnmount(() => {
 
 .record-cursor-guide {
   position: absolute;
-  z-index: 2;
+  z-index: var(--z-content-panel);
   top: 50%;
   right: calc(
     var(--record-cursor-tag-offset)
@@ -1866,7 +1866,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 50%;
   right: calc(var(--record-cursor-size) * 2.15);
-  z-index: 5;
+  z-index: var(--z-content-hover);
   display: flex;
   flex-direction: row-reverse;
   align-items: center;
@@ -1917,7 +1917,7 @@ onBeforeUnmount(() => {
 .record-row--cursor .record-action-icons {
   grid-column: 2;
   position: relative;
-  z-index: 2;
+  z-index: var(--z-content-panel);
   isolation: isolate;
   min-height: var(--record-cursor-size);
   padding: var(--record-cursor-tag-padding-y)
@@ -1932,7 +1932,7 @@ onBeforeUnmount(() => {
 .record-row--cursor .record-action-icons::before,
 .record-row--cursor .record-action-icons::after {
   position: absolute;
-  z-index: -1;
+  z-index: var(--z-content-underlay);
   inset: 0;
   clip-path: polygon(
     0 50%,

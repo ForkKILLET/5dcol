@@ -142,7 +142,7 @@ function trapTab(e: KeyboardEvent) {
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 10;
+  z-index: var(--z-dialog-mask);
   display: grid;
   place-items: center;
   box-sizing: border-box;

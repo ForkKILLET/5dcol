@@ -3558,7 +3558,23 @@ canvas {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 1;
+  z-index: var(--z-ui-layer);
+  --z-content-underlay: -1;
+  --z-content-base: 0;
+  --z-content-raised: 1;
+  --z-content-panel: 2;
+  --z-content-floating: 3;
+  --z-content-hover: 10;
+  --z-content-front: 11;
+  --z-ui-layer: 1000;
+  --z-ui-page: 1001;
+  --z-ui-panel: 1002;
+  --z-ui-floating: 1003;
+  --z-ui-dock: 1004;
+  --z-ui-handle: 1005;
+  --z-overlay-mask: 2001;
+  --z-dialog-mask: 3001;
+  --z-dialog-floating: 3011;
   --latin-serif-font: "Latin Serif", Georgia, 'Times New Roman', serif;
   --cjk-serif-font: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", "Source Han Serif SC", "Source Han Serif CN", "Noto Serif SC", "PMingLiU", serif;
   --ui-text-y: 0;
@@ -3589,7 +3605,7 @@ canvas {
   position: absolute;
   left: var(--main-menu-title-left);
   top: var(--main-menu-title-top);
-  z-index: 1;
+  z-index: var(--z-content-raised);
   display: grid;
   gap: clamp(8px, 1.5vh, 18px);
   margin: 0;
@@ -3632,7 +3648,7 @@ canvas {
   position: absolute;
   left: var(--main-menu-center-x);
   top: var(--main-menu-buttons-top);
-  z-index: 2;
+  z-index: var(--z-content-panel);
   display: flex;
   flex-direction: column;
   gap: var(--main-menu-button-gap);
@@ -3643,7 +3659,7 @@ canvas {
   position: absolute;
   left: var(--main-menu-disclaimer-left);
   top: var(--main-menu-disclaimer-top);
-  z-index: 1;
+  z-index: var(--z-content-raised);
   width: var(--main-menu-disclaimer-width);
   margin: 0;
   color: var(--main-title-color);
@@ -3693,7 +3709,7 @@ canvas {
   position: absolute;
   left: var(--button-top);
   top: var(--button-top);
-  z-index: 2;
+  z-index: var(--z-ui-panel);
   display: flex;
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 0.75);
@@ -3773,7 +3789,7 @@ canvas {
 .menu-backdrop {
   position: absolute;
   inset: 0;
-  z-index: 10;
+  z-index: var(--z-overlay-mask);
   background: var(--overlay-mask-color);
   pointer-events: auto;
 }
@@ -3910,7 +3926,7 @@ canvas {
 }
 
 .language-button {
-  z-index: 11;
+  z-index: var(--z-dialog-floating);
 }
 
 .language-list {

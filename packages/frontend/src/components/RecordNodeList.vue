@@ -93,7 +93,7 @@ function getNodeClasses(node: RecordDisplayNode) {
 }
 
 .record-node--cursor {
-  z-index: 2;
+  z-index: var(--z-content-panel);
   width: var(--record-cursor-fixed-width);
   min-width: var(--record-cursor-fixed-width);
   height: 0;
@@ -102,7 +102,7 @@ function getNodeClasses(node: RecordDisplayNode) {
 
 .record-node--cursor:hover,
 .record-node--cursor:focus-within {
-  z-index: 10;
+  z-index: var(--z-content-hover);
 }
 
 .record-node--cursor :deep(.record-row--cursor) {
@@ -126,7 +126,7 @@ function getNodeClasses(node: RecordDisplayNode) {
 
 .record-node::before {
   position: absolute;
-  z-index: 11;
+  z-index: var(--z-content-front);
   top: 0;
   bottom: 0;
   left: 0;
@@ -163,7 +163,7 @@ function getNodeClasses(node: RecordDisplayNode) {
 
 .record-table--pending-undo .record-node--block-pending.record-node-transition-leave-active {
   position: absolute;
-  z-index: 0;
+  z-index: var(--z-content-base);
   width: max-content;
   opacity: 0;
   pointer-events: none;

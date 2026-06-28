@@ -78,7 +78,7 @@ function toggleCollapsed() {
   position: absolute;
   left: 50%;
   bottom: 0;
-  z-index: 4;
+  z-index: var(--z-ui-dock);
   width: max-content;
   pointer-events: auto;
   transform: translateX(-50%);
@@ -107,7 +107,7 @@ function toggleCollapsed() {
 .game-dock-body::before {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: var(--z-content-raised);
   border: var(--button-border) solid var(--button-border-color);
   border-bottom: 0;
   border-radius: 14px 14px 0 0;
@@ -121,7 +121,7 @@ function toggleCollapsed() {
   position: absolute;
   left: 50%;
   top: calc(var(--dock-handle-rise) * -1);
-  z-index: 0;
+  z-index: var(--z-content-base);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -151,14 +151,14 @@ function toggleCollapsed() {
 
 .game-dock-handle :deep(.game-icon) {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-content-raised);
   width: calc(var(--button-small-icon-size) * 0.8);
   height: calc(var(--button-small-icon-size) * 0.8);
 }
 
 .game-dock-items {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-content-raised);
   display: flex;
   align-items: center;
   gap: calc(var(--button-content-gap) * 1.25);

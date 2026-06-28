@@ -102,7 +102,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: var(--game-side-panel-top);
   bottom: var(--game-side-panel-bottom);
-  z-index: 2;
+  z-index: var(--z-ui-panel);
   display: flex;
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 1.5);
@@ -162,7 +162,7 @@ onBeforeUnmount(() => {
 
 .game-side-panel-resize-handle {
   position: absolute;
-  z-index: 5;
+  z-index: var(--z-ui-handle);
   top: 0;
   bottom: 0;
   width: 14px;

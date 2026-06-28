@@ -350,7 +350,7 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
   position: absolute;
   left: 50%;
   top: 50%;
-  z-index: 1;
+  z-index: var(--z-ui-page);
   display: flex;
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 3);

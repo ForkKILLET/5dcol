@@ -1075,7 +1075,7 @@ onUnmounted(() => {
 .main-menu-canvas {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: var(--z-content-base);
   display: block;
   width: 100%;
   height: 100%;
@@ -1086,7 +1086,7 @@ onUnmounted(() => {
   position: absolute;
   top: calc(var(--button-content-gap) * 2);
   right: calc(var(--button-content-gap) * 2);
-  z-index: 3;
+  z-index: var(--z-content-floating);
   display: block;
   text-align: center;
   min-width: 128px;
