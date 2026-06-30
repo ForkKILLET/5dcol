@@ -56,5 +56,19 @@ const { t } = useI18n({ useScope: 'global' })
         :style="buttonStyle"
       />
     </div>
+    <div class="settings-row">
+      <span>{{ t('settings.fiveDPGNOmitSourceSquares') }}</span>
+      <GameToggle
+        v-model="settings.omitUnnecessarySourceSquares"
+        :style="buttonStyle"
+      />
+    </div>
+    <div class="settings-row">
+      <span>{{ t('settings.fiveDPGNOmitSingleMoveSourceBoards') }}</span>
+      <GameToggle
+        v-model="settings.omitSingleMoveSourceBoards"
+        :style="buttonStyle"
+      />
+    </div>
   </div>
 </template>

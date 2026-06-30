@@ -30,6 +30,8 @@ export const FiveDPGNSettingsSchema = z.preprocess(
     includeCheckMarkers: BooleanWithDefault(false),
     includePromotionMarkers: BooleanWithDefault(false),
     includeBuiltInGlyphNAGs: BooleanWithDefault(false),
+    omitUnnecessarySourceSquares: BooleanWithDefault(false),
+    omitSingleMoveSourceBoards: BooleanWithDefault(false),
   }),
 )
 

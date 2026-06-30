@@ -48,6 +48,8 @@ export interface ExportOptions {
   includeCheckMarkers?: boolean
   includePromotionMarkers?: boolean
   includeBuiltInGlyphNAGs?: boolean
+  omitUnnecessarySourceSquares?: boolean
+  omitSingleMoveSourceBoards?: boolean
   initialMultiverse?: Multiverse
   headers?: ExportHeaders
   result?: ExportResult
@@ -185,6 +187,16 @@ interface MoveFormatContext {
   branching: boolean
   promotion: boolean
   suffix: string
+  sourceBoardText: string
+  sourceHint: string
+}
+
+interface SourceHintContext {
+  piece: Piece
+  capture: boolean
+  branching: boolean
+  promotion: boolean
+  sourceBoardText: string
 }
 
 interface ActionFormatResult {
@@ -260,6 +272,8 @@ const DEFAULT_EXPORT_OPTIONS: ResolvedExportOptions = {
   includeCheckMarkers: false,
   includePromotionMarkers: false,
   includeBuiltInGlyphNAGs: false,
+  omitUnnecessarySourceSquares: false,
+  omitSingleMoveSourceBoards: false,
   result: '*',
   studyAnnotations: [],
   studyGlyphTemplates: [],
@@ -644,11 +658,26 @@ const formatActionInContext = (
   for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex ++) {
     const move = action.moves[moveIndex]!
     const piece = getMovePiece(nextMultiverse, move, player)
-    const context: MoveFormatContext = {
+    const sourceBoardText = options.omitSingleMoveSourceBoards && action.moves.length === 1
+      ? ''
+      : formatBoard(move.from)
+    const baseContext = {
       piece,
       capture: isCaptureMove(nextMultiverse, move, player, piece),
       branching: isBranchingMove(nextMultiverse, move, player),
       promotion: isPromotionMove(piece, move.to),
+      sourceBoardText,
+    }
+    const context: MoveFormatContext = {
+      ...baseContext,
+      sourceHint: getSourceHint(
+        nextMultiverse,
+        move,
+        player,
+        actionIndex * GameState.MOVE_ORDER_STRIDE + moveIndex,
+        baseContext,
+        options,
+      ),
       suffix: '',
     }
     const checksBefore = options.includeCheckMarkers
@@ -2180,9 +2209,7 @@ const formatMove = (
   context: MoveFormatContext,
   options: ResolvedExportOptions,
 ): FormattedMove => {
-  const fromBoard = formatBoard(from)
-  const fromSquare = formatSquare(from)
-  const fromText = `${fromBoard}${formatPieceSymbol(context.piece, options)}${fromSquare}`
+  const fromText = `${context.sourceBoardText}${formatPieceSymbol(context.piece, options)}${context.sourceHint}`
   const promotion = options.includePromotionMarkers && context.promotion ? '=Q' : ''
   const suffix = options.includeCheckMarkers ? context.suffix : ''
   const capture = options.includeCaptureMarkers && context.capture ? 'x' : ''
@@ -2217,6 +2244,78 @@ const formatMove = (
     ],
   }
 }
+
+const getSourceHint = (
+  multiverse: Multiverse,
+  move: Move,
+  player: Player,
+  order: number,
+  context: SourceHintContext,
+  options: ResolvedExportOptions,
+): string => {
+  const fullSource = formatSquare(move.from)
+  if (! options.omitUnnecessarySourceSquares) return fullSource
+
+  for (const hint of getSourceHintCandidates(move.from)) {
+    if (doesMoveTokenResolveToMove(
+      formatMoveTokenForSourceHint(move, context, options, hint),
+      move,
+      multiverse,
+      player,
+      order,
+    )) {
+      return hint
+    }
+  }
+  return fullSource
+}
+
+const getSourceHintCandidates = (from: CoordSpacelike): string[] => {
+  const file = FILES[from.x]!
+  const rank = `${8 - from.y}`
+  return ['', file, rank, `${file}${rank}`]
+}
+
+const formatMoveTokenForSourceHint = (
+  move: Move,
+  context: SourceHintContext,
+  options: ResolvedExportOptions,
+  sourceHint: string,
+): string => {
+  const sourceText = `${context.sourceBoardText}${formatPieceSymbol(context.piece, options)}${sourceHint}`
+  const promotion = options.includePromotionMarkers && context.promotion ? '=Q' : ''
+  const capture = options.includeCaptureMarkers && context.capture ? 'x' : ''
+  const toSquare = formatSquare(move.to)
+  if (Coord.isSameBoard(move.from, move.to)) return `${sourceText}${capture}${toSquare}${promotion}`
+
+  const travel = options.includeTravelMarkers
+    ? context.branching ? '>>' : '>'
+    : ''
+  return `${sourceText}${travel}${capture}${formatBoard(move.to)}${toSquare}${promotion}`
+}
+
+const doesMoveTokenResolveToMove = (
+  token: string,
+  move: Move,
+  multiverse: Multiverse,
+  player: Player,
+  order: number,
+): boolean => {
+  try {
+    const pattern = parseMovePattern(token, player)
+    const matches = getLegalMoveCandidates(multiverse, player, order).filter(candidate => (
+      matchesMovePattern(candidate, pattern, multiverse, player)
+    ))
+    return matches.length === 1 && isSameMove(matches[0]!.move, move)
+  }
+  catch {
+    return false
+  }
+}
+
+const isSameMove = (p: Move, q: Move): boolean => (
+  Coord.isSame(p.from, q.from) && Coord.isSame(p.to, q.to)
+)
 
 const formatBoard = ({ l, t }: CoordTimelike): string => `(${l}T${t})`
 
