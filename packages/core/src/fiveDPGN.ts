@@ -2306,6 +2306,10 @@ const doesMoveTokenResolveToMove = (
     const matches = getLegalMoveCandidates(multiverse, player, order).filter(candidate => (
       matchesMovePattern(candidate, pattern, multiverse, player)
     ))
+    if (pattern.piece === undefined) {
+      const pawnMatches = matches.filter(candidate => isPawnPiece(candidate.piece))
+      if (pawnMatches.length === 1) return isSameMove(pawnMatches[0]!.move, move)
+    }
     return matches.length === 1 && isSameMove(matches[0]!.move, move)
   }
   catch {
