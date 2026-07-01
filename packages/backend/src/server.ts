@@ -280,7 +280,7 @@ export function createBackendServer(options: BackendServerOptions) {
           return
         }
 
-        addStudyMember(room, user, request.query.nickname)
+        updateUserNickname(user, request.query.nickname)
         saveAll()
         broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
         subscribeStudyRoomState({
@@ -468,9 +468,7 @@ export function createBackendServer(options: BackendServerOptions) {
       if (! room) return sendError(reply, 404, 'Study not found')
 
       const user = getOrCreateUser(users, body.userId, body.nickname)
-      addStudyMember(room, user, body.nickname)
       saveAll()
-      broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
       return {
         user: toUserView(user),
         room,
@@ -556,25 +554,45 @@ function isStudyMember(room: StudyRoom, userId: string | null): boolean {
   return userId !== null && room.members.some(member => member.userId === userId)
 }
 
-function addStudyMember(room: StudyRoom, user: UserState, nickname: string | null | undefined) {
+function updateUserNickname(user: UserState, nickname: string | null | undefined) {
   const normalizedNickname = normalizeNickname(nickname) ?? user.nickname
   const now = Date.now()
-  const existing = room.members.find(member => member.userId === user.id)
   user.nickname = normalizedNickname
   user.updatedAt = now
+}
+
+function ensureStudyEditorMember(room: StudyRoom, user: UserState): boolean {
+  const now = Date.now()
+  const existing = room.members.find(member => member.userId === user.id)
   if (existing) {
-    existing.nickname = normalizedNickname
-    room.updatedAt = now
-    return
+    const changed = existing.nickname !== user.nickname || existing.role === 'viewer'
+    existing.nickname = user.nickname
+    if (existing.role === 'viewer') existing.role = 'editor'
+    if (changed) room.updatedAt = now
+    return changed
   }
 
   room.members.push({
     userId: user.id,
-    nickname: normalizedNickname,
+    nickname: user.nickname,
     role: room.ownerUserId === user.id ? 'owner' : 'editor',
     joinedAt: now,
   })
   room.updatedAt = now
+  return true
+}
+
+function removeTransientStudyMember(room: StudyRoom, userId: string): boolean {
+  const nextMembers = room.members.filter(member => (
+    member.userId !== userId
+    || member.role === 'owner'
+    || member.role === 'moderator'
+    || member.role === 'editor'
+  ))
+  if (nextMembers.length === room.members.length) return false
+  room.members = nextMembers
+  room.updatedAt = Date.now()
+  return true
 }
 
 function getStudyChatMessages(messages: ChatMessage[], roomId: string): ChatMessage[] {
@@ -1040,6 +1058,7 @@ function subscribeStudyRoomState({
     const presenceByUser = studyPresence.get(room.id)
     presenceByUser?.delete(user.id)
     if (presenceByUser?.size === 0) studyPresence.delete(room.id)
+    if (removeTransientStudyMember(room, user.id)) saveAll()
     broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
   })
 }
@@ -1068,7 +1087,7 @@ function handleStudyClientEvent({
 
   switch (event.type) {
     case 'command': {
-      if (! canEditStudyRoom(room, user.id)) {
+      if (requiresExistingStudyEditPermission(event.command) && ! canEditStudyRoom(room, user.id)) {
         sendStudyCommandRejected(socket, 'permission-denied', room)
         return
       }
@@ -1085,12 +1104,14 @@ function handleStudyClientEvent({
 
       const { patch } = result
       applyStudyPatch(room, patch)
+      const memberChanged = isStudyDocumentPatch(patch) && ensureStudyEditorMember(room, user)
       saveAll()
       broadcastStudyEvent(studySubscribers, room.id, {
         type: 'study-patch',
         version: room.version,
         patch,
       })
+      if (memberChanged) broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
       break
     }
     case 'presence': {
@@ -1160,6 +1181,14 @@ function canEditStudyRoom(room: StudyRoom, userId: string): boolean {
     || member?.role === 'editor'
 }
 
+function requiresExistingStudyEditPermission(command: StudyCommand): boolean {
+  return command.type === 'update-private'
+}
+
+function isStudyDocumentPatch(patch: StudyPatch): boolean {
+  return patch.type !== 'update-private'
+}
+
 type StudyCommandRejectedReason = 'permission-denied' | 'target-not-found' | 'conflict' | 'unsupported'
 
 type StudyCommandPatchResult =
@@ -1184,6 +1213,9 @@ function createStudyPatchFromCommand(
         },
       }
     case 'delete-annotation':
+      if (! room.document.annotations.some(annotation => annotation.id === command.annotationId)) {
+        return { reason: 'conflict' }
+      }
       return {
         patch: {
           type: 'delete-annotation',
