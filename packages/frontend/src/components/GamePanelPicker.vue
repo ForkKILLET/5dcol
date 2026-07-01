@@ -80,7 +80,7 @@ const emit = defineEmits<{
 .game-panel-picker {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--button-top) + var(--button-small-height) + var(--button-shadow-offset) * 2);
+  top: calc(var(--button-top) + var(--button-height) + var(--button-content-gap) * 1.5);
   z-index: var(--z-ui-floating);
   width: min(620px, calc(100vw - var(--button-top) * 2));
   max-height: min(520px, calc(var(--app-height) - var(--button-top) * 4));

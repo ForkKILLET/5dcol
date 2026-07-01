@@ -929,6 +929,15 @@ function openPanelPicker(groupId: string | null = null) {
   panelPickerOpen.value = true
 }
 
+function togglePanelPicker(groupId: string | null = null) {
+  if (panelPickerOpen.value && panelPickerGroupId.value === groupId) {
+    playUISound()
+    closePanelPicker()
+    return
+  }
+  openPanelPicker(groupId)
+}
+
 function closePanelPicker() {
   panelPickerOpen.value = false
   panelPickerGroupId.value = null
@@ -1714,6 +1723,10 @@ function handleWindowKeyDown(e: KeyboardEvent) {
     case 'r':
       e.preventDefault()
       toggleRecordPanel()
+      break
+    case 'p':
+      e.preventDefault()
+      togglePanelPicker()
       break
     case 'c':
       e.preventDefault()
@@ -2961,7 +2974,7 @@ watch([exportFormat, exportMode], () => {
           :style="menuButtonStyle"
           :aria-label="t('panel.pickerTitle')"
           :aria-expanded="panelPickerOpen"
-          @click="openPanelPicker()"
+          @click="togglePanelPicker()"
         >
           <GameIcon name="panels" />
         </GameButton>
