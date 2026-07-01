@@ -4,7 +4,6 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 const props = withDefaults(defineProps<{
   bottom?: string
   maxSize?: number
-  maxStackHeight?: string
   minSize?: number
   side?: 'left' | 'right'
   size: number
@@ -12,7 +11,6 @@ const props = withDefaults(defineProps<{
 }>(), {
   bottom: 'auto',
   maxSize: Number.POSITIVE_INFINITY,
-  maxStackHeight: 'calc(var(--app-height) - var(--button-top) * 2 - 120px)',
   minSize: 260,
   side: 'left',
   top: 'calc(var(--button-top) + 120px)',
@@ -26,7 +24,6 @@ const resizing = ref(false)
 
 const panelStyle = computed(() => ({
   '--game-side-panel-bottom': props.bottom,
-  '--game-side-panel-max-height': props.maxStackHeight,
   '--game-side-panel-top': props.top,
   '--game-side-panel-width': `${props.size}px`,
 }))
@@ -105,9 +102,8 @@ onBeforeUnmount(() => {
   z-index: var(--z-ui-panel);
   display: flex;
   flex-direction: column;
-  gap: calc(var(--button-content-gap) * 1.5);
   width: min(var(--game-side-panel-width), calc(100vw - var(--button-top) * 2));
-  max-height: var(--game-side-panel-max-height);
+  min-height: 0;
   pointer-events: auto;
 }
 
@@ -123,6 +119,7 @@ onBeforeUnmount(() => {
 .game-side-panel-stack :deep(.record-panel) {
   position: relative;
   min-width: 0;
+  height: 100%;
 }
 
 .game-side-panel-stack :deep(.record-panel) {

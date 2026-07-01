@@ -64,6 +64,7 @@ import { usePanelLayout, type GamePanelGroup, type GamePanelId, type GamePanelSi
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import ChatPanel from './ChatPanel.vue'
+import ClockPanel from './ClockPanel.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameIcon from './GameIcon.vue'
@@ -181,14 +182,9 @@ const viewPlayer = useStorageRef<Player>(VIEW_PLAYER_STORAGE_KEY, Player.W, {
   serialize: player => player === Player.W ? 'white' : 'black',
 })
 const gameSettings = useGameSettings()
-const clockPanelOpen = computed({
-  get: () => gameSettings.showClock,
-  set: (open: boolean) => {
-    gameSettings.showClock = open
-  },
-})
+const clockAvailable = computed(() => gameStarted.value && onlineSession.value !== null && onlineClock.value !== null)
 const panelLayout = usePanelLayout({
-  clockOpen: clockPanelOpen,
+  clockAvailable,
   onlineStudyActive: computed(() => activeOnlineStudy.value !== null),
   viewportWidth,
 })
@@ -382,7 +378,7 @@ function appendOnlineSpectatorCount(status: string) {
 }
 
 const clockRows = computed(() => {
-  if (! gameStarted.value || ! onlineSession.value || ! gameSettings.showClock || ! onlineClock.value) return []
+  if (! clockAvailable.value || ! onlineClock.value) return []
 
   return [Player.W, Player.B].map((player) => {
     const stepMs = getClockStepMs(onlineClock.value!, player, clockNow.value)
@@ -896,9 +892,9 @@ function sendOnlineStudyChatMessage(text: string) {
 }
 
 function toggleClockPanel() {
-  if (! gameStarted.value) return
+  if (! gameStarted.value || ! clockAvailable.value) return
   playUISound()
-  panelLayout.togglePanel('clock')
+  gameSettings.showClock = panelLayout.togglePanel('clock')
 }
 
 function getPanelLabel(id: GamePanelId): string {
@@ -921,8 +917,9 @@ function getPanelIcon(id: GamePanelId): GamePanelPickerItem['icon'] {
     case 'chat':
       return 'chat'
     case 'record':
-    case 'clock':
       return 'record'
+    case 'clock':
+      return 'clock'
   }
 }
 
@@ -958,6 +955,7 @@ function closePanelPicker() {
 function addPanelToSide(panelId: GamePanelId, side: GamePanelSide) {
   playUISound()
   if (panelId === 'record') prepareRecordPanelOpen()
+  if (panelId === 'clock') gameSettings.showClock = true
   panelLayout.addPanelToSide(panelId, side)
   closePanelPicker()
   syncGameViewportInsets()
@@ -966,6 +964,7 @@ function addPanelToSide(panelId: GamePanelId, side: GamePanelSide) {
 function addPanelToGroup(panelId: GamePanelId, groupId: string) {
   playUISound()
   if (panelId === 'record') prepareRecordPanelOpen()
+  if (panelId === 'clock') gameSettings.showClock = true
   panelLayout.addPanelToGroup(panelId, groupId)
   closePanelPicker()
   syncGameViewportInsets()
@@ -979,6 +978,7 @@ function selectPanelTab(groupId: string, panelId: GamePanelId) {
 
 function closePanel(panelId: GamePanelId) {
   playUISound()
+  if (panelId === 'clock') gameSettings.showClock = false
   panelLayout.setPanelOpen(panelId, false)
   syncGameViewportInsets()
 }
@@ -988,22 +988,12 @@ function prepareRecordPanelOpen() {
   if (request) updateRecord(request)
 }
 
-function getPanelStackTop(side: GamePanelSide): string {
-  return side === 'right'
-    ? 'var(--button-top)'
-    : 'calc(var(--button-top) + 120px)'
+function getPanelStackTop(_side: GamePanelSide): string {
+  return 'var(--button-top)'
 }
 
-function getPanelStackBottom(side: GamePanelSide): string {
-  return side === 'right'
-    ? 'calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2)'
-    : 'auto'
-}
-
-function getPanelStackMaxHeight(side: GamePanelSide): string {
-  return side === 'right'
-    ? 'none'
-    : 'calc(var(--app-height) - var(--button-top) * 2 - 120px)'
+function getPanelStackBottom(_side: GamePanelSide): string {
+  return 'calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2)'
 }
 
 function getPanelStackMinSize(side: GamePanelSide): number {
@@ -1013,6 +1003,53 @@ function getPanelStackMinSize(side: GamePanelSide): number {
 function updateSidePanelWidth(side: GamePanelSide, width: number) {
   panelLayout.setSideSize(side, width)
   syncGameViewportInsets()
+}
+
+function ensureClockPanelOpenIfNeeded() {
+  if (! clockAvailable.value || ! gameSettings.showClock) return
+  panelLayout.setPanelOpen('clock', true)
+}
+
+function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: PointerEvent) {
+  if (event.button !== 0) return
+  const handle = event.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : event.target instanceof HTMLElement
+      ? event.target
+      : null
+  if (! handle) return
+
+  const stack = handle.closest<HTMLElement>('.game-side-panel-stack')
+  const totalHeight = stack?.getBoundingClientRect().height ?? 0
+  const snapshot = panelLayout.getGroupResizeSnapshot(side, groupId)
+  if (! snapshot || totalHeight <= 0) return
+
+  const pointerId = event.pointerId
+  const startClientY = event.clientY
+  handle.setPointerCapture(pointerId)
+  document.documentElement.classList.add('game-side-panel-vertical-resizing')
+
+  const move = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId !== pointerId) return
+    panelLayout.resizeGroupPair(side, snapshot, moveEvent.clientY - startClientY, totalHeight)
+  }
+
+  const stop = (stopEvent: PointerEvent | Event) => {
+    if ('pointerId' in stopEvent && stopEvent.pointerId !== pointerId) return
+    handle.removeEventListener('pointermove', move)
+    handle.removeEventListener('pointerup', stop)
+    handle.removeEventListener('pointercancel', stop)
+    handle.removeEventListener('lostpointercapture', stop)
+    window.removeEventListener('blur', stop)
+    if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
+    document.documentElement.classList.remove('game-side-panel-vertical-resizing')
+  }
+
+  handle.addEventListener('pointermove', move)
+  handle.addEventListener('pointerup', stop)
+  handle.addEventListener('pointercancel', stop)
+  handle.addEventListener('lostpointercapture', stop)
+  window.addEventListener('blur', stop)
 }
 
 function jumpToOnlineStudyMember(userId: string) {
@@ -1956,7 +1993,6 @@ function startStudyGame(
   onlineConnectionStatus.value = source.kind === 'online' ? 'connecting' : 'offline'
   focusedOnlineStudyMember.value = null
   if (source.kind === 'online') panelLayout.setOnlineStudyDefaultPanels()
-  else panelLayout.closeStudyPanels()
   game = new Game({
     renderer: gameRenderer,
     inputElement: canvas.value!,
@@ -2114,6 +2150,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     },
   })
   gameStarted.value = true
+  ensureClockPanelOpenIfNeeded()
   pendingLocalActionsSignature = ''
   mainMenuMode.value = 'home'
   stopMatchServerRefresh()
@@ -2146,6 +2183,7 @@ function applyOnlineGameState(
   onlinePresence.value = state.presence
   onlineError.value = ''
   if (state.session) storeOnlineSession(serverAddress, state)
+  ensureClockPanelOpenIfNeeded()
   const actionsSignature = JSON.stringify(state.actions)
   if (force || actionsSignature !== onlineActionsSignature) {
     const previousLiveActionCount = onlineLiveActions.length
@@ -2695,7 +2733,6 @@ function returnToMainMenu(
   recordCurrentActionIndex.value = 0
   recordCurrentCursor.value = { recordLineId: 0, recordActionIndex: 0 }
   recordFocusedMove.value = null
-  panelLayout.closeAll()
   focusedOnlineStudyMember.value = null
   secondaryMenuOpen.value = false
   closeDialog(false)
@@ -3118,24 +3155,6 @@ watch([exportFormat, exportMode], () => {
       </div>
 
       <div
-        v-if="clockRows.length > 0"
-        class="clock-card"
-        :style="menuButtonStyle"
-      >
-        <div
-          v-for="row in clockRows"
-          :key="row.player"
-          class="clock-row"
-          :class="{ 'clock-row--active': row.active }"
-        >
-          <span class="clock-player">{{ row.label }}</span>
-          <span class="clock-time">{{ row.step }}</span>
-          <span class="clock-separator">/</span>
-          <span class="clock-time">{{ row.total }}</span>
-        </div>
-      </div>
-
-      <div
         v-if="gameStarted"
         class="game-status-stack"
       >
@@ -3166,18 +3185,21 @@ watch([exportFormat, exportMode], () => {
           :max-size="Math.max(getPanelStackMinSize(side), viewportWidth - Sizes.ButtonTop * 2)"
           :top="getPanelStackTop(side)"
           :bottom="getPanelStackBottom(side)"
-          :max-stack-height="getPanelStackMaxHeight(side)"
           @resize-panel="updateSidePanelWidth(side, $event)"
         >
           <GameSidePanelGroup
             v-for="group in panelLayout.getSideGroups(side)"
             :key="group.id"
+            :side="side"
             :group="group"
+            :height="panelLayout.getGroupHeight(group)"
             :tabs="getPanelTabs(group)"
+            :can-resize-after="panelLayout.canResizeGroupAfter(side, group.id)"
             :add-label="t('panel.addPanel')"
             :close-label="t('panel.closePanel')"
             @add-panel="openPanelPicker"
             @close-panel="closePanel"
+            @resize-after="startSidePanelGroupResize"
             @select-panel="selectPanelTab"
           >
             <MembersPanel
@@ -3208,6 +3230,10 @@ watch([exportFormat, exportMode], () => {
               :send-label="t('chat.send')"
               @send="sendOnlineStudyChatMessage"
               @ui-sound="playUISound"
+            />
+            <ClockPanel
+              v-else-if="group.activePanelId === 'clock'"
+              :rows="clockRows"
             />
             <RecordPanel
               v-else-if="group.activePanelId === 'record'"
@@ -3885,52 +3911,6 @@ canvas {
   inset: 0;
   z-index: var(--z-ui-floating);
   pointer-events: auto;
-}
-
-.clock-card {
-  position: absolute;
-  left: var(--button-top);
-  top: var(--button-top);
-  z-index: var(--z-ui-panel);
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--button-content-gap) * 0.75);
-  min-width: 260px;
-  padding: calc(var(--button-content-gap) * 1.25) calc(var(--button-content-gap) * 1.75);
-  border: var(--button-border) solid var(--button-border-color);
-  border-radius: 8px;
-  background: var(--button-fill-color);
-  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
-  color: var(--button-text-color);
-  font-size: 20px;
-  line-height: 1;
-  pointer-events: none;
-}
-
-.clock-row {
-  display: grid;
-  grid-template-columns: minmax(64px, 1fr) 64px auto 64px;
-  gap: calc(var(--button-content-gap) * 0.75);
-  align-items: baseline;
-  opacity: 0.72;
-  white-space: nowrap;
-}
-
-.clock-row--active {
-  opacity: 1;
-}
-
-.clock-player {
-  transform: translateY(var(--ui-text-y));
-}
-
-.clock-time {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.clock-separator {
-  opacity: 0.65;
 }
 
 .game-status-stack {

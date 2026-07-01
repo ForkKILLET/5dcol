@@ -165,10 +165,6 @@ function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
 </template>
 
 <style scoped>
-.members-panel {
-  max-height: min(320px, calc(var(--app-height) - var(--button-top) * 2));
-}
-
 .members-empty {
   font-size: 16px;
   line-height: 1.25;

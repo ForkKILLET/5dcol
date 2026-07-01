@@ -92,10 +92,6 @@ function getAuthorName(message: ChatMessage) {
 </template>
 
 <style scoped>
-.chat-panel {
-  max-height: min(360px, calc(var(--app-height) - var(--button-top) * 2));
-}
-
 .chat-message-list {
   display: flex;
   flex: 1 1 auto;
