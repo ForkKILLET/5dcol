@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { RendererPreferenceSchema, type RendererPreference } from '@engine/rendererFactory'
+import { SQUARE_MARKER_DISPLAY_MODES, type SquareMarkerDisplayMode } from '@engine/recordMarker'
 import { useStorageReactive } from './storage'
 
 export const SETTINGS_STORAGE_KEY = '5dcol.settings'
@@ -8,6 +9,8 @@ const BooleanWithDefault = (fallback: boolean) => z.boolean().catch(fallback)
 
 export const ThemeColorSchema = z.enum(['white', 'black', 'view', 'system'])
 export type ThemeColor = z.infer<typeof ThemeColorSchema>
+
+export const SquareMarkerDisplayModeSchema = z.enum(SQUARE_MARKER_DISPLAY_MODES)
 
 const VolumeSchema = (fallback: number) => z
   .number()
@@ -65,6 +68,7 @@ export const GameSettingsSchema = z.preprocess(
     showClock: BooleanWithDefault(true),
     showMoveTravelAnimation: BooleanWithDefault(true),
     pointerDragThreshold: NumberRangeSchema(8, 0, 24),
+    squareMarkerDisplayMode: SquareMarkerDisplayModeSchema.catch('highlight' satisfies SquareMarkerDisplayMode),
     turnAlertSound: BooleanWithDefault(true),
     turnAlertTitle: BooleanWithDefault(true),
     turnAlertNotification: BooleanWithDefault(false),

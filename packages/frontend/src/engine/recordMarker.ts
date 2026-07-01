@@ -16,6 +16,8 @@ const RECORD_MARKER_AUTHOR_COLORS = [
 
 export const DEFAULT_RECORD_MARKER_AUTHOR_ID = 'local'
 export const DEFAULT_RECORD_MARKER_COLOR = RECORD_MARKER_AUTHOR_COLORS[0]!
+export const SQUARE_MARKER_DISPLAY_MODES = ['highlight', 'circle'] as const
+export type SquareMarkerDisplayMode = typeof SQUARE_MARKER_DISPLAY_MODES[number]
 
 export const getSpacelikeKey = ({ x, y }: CoordSpacelike): string => `${x}:${y}`
 

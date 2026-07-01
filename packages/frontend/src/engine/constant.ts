@@ -60,6 +60,8 @@ export namespace Sizes {
   export const SpacelikeLabelFontSize = 4
   export const SpacelikeLabelInset = 0.5
   export const SquareMarkerLabelFontSize = 9
+  export const SquareMarkerCircleRadius = PieceWidth * 0.4
+  export const SquareMarkerCircleStrokeWidth = 2
   export const SquareGlyphBadgeRadius = 4
   export const SquareGlyphBadgeOverlap = 2
   export const SquareGlyphBadgeOffset = -1

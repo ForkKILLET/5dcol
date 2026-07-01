@@ -121,7 +121,7 @@ const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
 type GameImportTarget = 'active-game' | 'local-versus' | 'local-study'
-type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'online' | 'fiveDPGN'
+type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'study' | 'online' | 'fiveDPGN'
 type StudyOpenSource =
   | { kind: 'local' }
   | { kind: 'online', serverAddress: string, roomId: string, version: number }
@@ -1968,6 +1968,7 @@ function startLocalGame(
     autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
+    squareMarkerDisplayMode: gameSettings.squareMarkerDisplayMode,
     getPointerDragThreshold: () => gameSettings.pointerDragThreshold,
     getFiveDPGNExportMetadata,
     getFiveDPGNGlyphTemplates,
@@ -2028,6 +2029,7 @@ function startStudyGame(
     autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
+    squareMarkerDisplayMode: gameSettings.squareMarkerDisplayMode,
     getPointerDragThreshold: () => gameSettings.pointerDragThreshold,
     toolbarMode: 'study',
     getFiveDPGNExportMetadata,
@@ -2134,6 +2136,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     autoSwitchViewPlayer: false,
     showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
+    squareMarkerDisplayMode: gameSettings.squareMarkerDisplayMode,
     getPointerDragThreshold: () => gameSettings.pointerDragThreshold,
     getFiveDPGNExportMetadata,
     getFiveDPGNGlyphTemplates,
@@ -2608,6 +2611,7 @@ function syncGameSettings() {
   game?.setAutoSwitchViewPlayer(onlineRoomStatus.value !== null ? false : gameSettings.autoSwitchViewPlayer)
   game?.setShowMoveTravelAnimation(gameSettings.showMoveTravelAnimation)
   game?.setFiveDPGNOptions(gameSettings.fiveDPGN)
+  game?.setSquareMarkerDisplayMode(gameSettings.squareMarkerDisplayMode)
 }
 
 function getFiveDPGNExportMetadata(): Pick<FiveDPGN.ExportOptions, 'headers' | 'result'> {

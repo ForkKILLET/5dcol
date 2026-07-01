@@ -19,6 +19,7 @@ import {
   getRecordMarkerAuthorColor,
   getSpacelikeKey,
   parseRecordMarkerColor,
+  type SquareMarkerDisplayMode,
 } from '@engine/recordMarker'
 import { isActionPrefix, RecordDocument, type RecordAnnotation, type RecordArrowMarkerAnnotation, type RecordCursorTarget, type RecordSquareMarkerAnnotation } from '@engine/recordTree'
 import { type Renderer, RenderItemType } from '@engine/renderer'
@@ -51,6 +52,7 @@ export interface GameContext {
   autoSwitchViewPlayer?: boolean
   showMoveTravelAnimation?: boolean
   fiveDPGNOptions?: FiveDPGN.ExportOptions
+  squareMarkerDisplayMode?: SquareMarkerDisplayMode
   initialWorkspace?: GameWorkspaceState | null
   toolbarMode?: 'game' | 'study'
   getFiveDPGNExportMetadata?: () => Pick<FiveDPGN.ExportOptions, 'headers' | 'result'>
@@ -246,6 +248,7 @@ export class Game extends Disposable(Empty) {
     this.autoSwitchViewPlayer = ctx.autoSwitchViewPlayer ?? true
     this.showMoveTravelAnimation = ctx.showMoveTravelAnimation ?? true
     this.fiveDPGNOptions = ctx.fiveDPGNOptions ?? {}
+    this.squareMarkerDisplayMode = ctx.squareMarkerDisplayMode ?? 'highlight'
     this.layout.setViewPlayer(this.viewPlayer)
   }
 
@@ -315,6 +318,7 @@ export class Game extends Disposable(Empty) {
   private autoSwitchViewPlayer = true
   private showMoveTravelAnimation = true
   private fiveDPGNOptions: FiveDPGN.ExportOptions = {}
+  private squareMarkerDisplayMode: SquareMarkerDisplayMode = 'highlight'
   private focusedBoard: GameBoardFocus | null = null
   private restoredWorkspace: GameWorkspaceState | null = null
 
@@ -424,6 +428,10 @@ export class Game extends Disposable(Empty) {
     this.fiveDPGNOptions = { ...options }
     this.recordSignature = ''
     this.syncRecord()
+  }
+
+  public setSquareMarkerDisplayMode(mode: SquareMarkerDisplayMode) {
+    this.squareMarkerDisplayMode = mode
   }
 
   public deleteRecordFutureAtCursor(cursor: GameRecordCursor): boolean {
@@ -3798,7 +3806,14 @@ export class Game extends Disposable(Empty) {
         mat: Mat3.transform(pos, Sizes.PieceSize),
         color,
       })
-      this.renderSquareMarkers(squareMarkers.get(getSpacelikeKey(coord)) ?? [], pos, layers.board, alpha, isWhiteSquare)
+      this.renderSquareMarkers(
+        squareMarkers.get(getSpacelikeKey(coord)) ?? [],
+        pos,
+        layers.board,
+        layers.piece,
+        alpha,
+        isWhiteSquare,
+      )
 
       const piece = board.pieces[x][y]
       if (piece !== Piece.E) this.renderPiece(piece, pos, layers.piece, alpha)
@@ -3916,27 +3931,47 @@ export class Game extends Disposable(Empty) {
   private renderSquareMarkers(
     markers: RecordSquareMarkerAnnotation[],
     pos: Vec2,
-    layer: RenderLayer,
+    boardLayer: RenderLayer,
+    pieceLayer: RenderLayer,
     alpha: number,
     isWhiteSquare: boolean,
   ) {
     if (markers.length === 0) return
 
     const marker = markers[markers.length - 1]!
-    const color = this.getSquareMarkerColor(marker, isWhiteSquare)
+    if (this.squareMarkerDisplayMode === 'circle') {
+      const color = this.getSquareMarkerBaseColor(marker)
+      this.renderer.submit({
+        type: RenderItemType.Circle,
+        layer: pieceLayer,
+        order: 1,
+        center: Vec2.add(pos, Vec2.splat(Sizes.PieceWidth / 2)),
+        radius: Sizes.SquareMarkerCircleRadius,
+        fill: null,
+        stroke: Color4.withAlpha(color, alpha),
+        strokeWidth: Sizes.SquareMarkerCircleStrokeWidth,
+      })
+      return
+    }
+
+    const color = this.getSquareMarkerHighlightColor(marker, isWhiteSquare)
     this.renderer.submit({
       type: RenderItemType.Quad,
-      layer,
+      layer: boardLayer,
       order: 0.5,
       mat: Mat3.transform(pos, Sizes.PieceSize),
       color: Color4.withAlpha(color, alpha),
     })
   }
 
-  private getSquareMarkerColor(marker: RecordSquareMarkerAnnotation, isWhiteSquare: boolean): Color4 {
-    const markerColor = parseRecordMarkerColor(this.getRecordMarkerColor(marker.authorId, marker.color))
+  private getSquareMarkerHighlightColor(marker: RecordSquareMarkerAnnotation, isWhiteSquare: boolean): Color4 {
+    const markerColor = this.getSquareMarkerBaseColor(marker)
     const baseColor = isWhiteSquare ? Colors.BoardWhite : Colors.BoardBlack
     return Color4.mix(baseColor, markerColor, 0.48)
+  }
+
+  private getSquareMarkerBaseColor(marker: RecordSquareMarkerAnnotation): Color4 {
+    return parseRecordMarkerColor(this.getRecordMarkerColor(marker.authorId, marker.color))
   }
 
   private renderRecordArrowMarkers() {

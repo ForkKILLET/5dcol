@@ -13,7 +13,7 @@ import GameToggle from './GameToggle.vue'
 import OnlineServerSettingsPanel from './OnlineServerSettingsPanel.vue'
 import { UiSoundKey } from '@/composables/uiSound.ts'
 
-type SettingsTab = 'volume' | 'appearance' | 'game' | 'online' | 'fiveDPGN'
+type SettingsTab = 'volume' | 'appearance' | 'game' | 'study' | 'online' | 'fiveDPGN'
 
 const props = defineProps<{
   buttonStyle: StyleValue
@@ -31,7 +31,7 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'global' })
 const initialRenderer = ref(props.settings.renderer)
 const activeTab = ref<SettingsTab>(props.initialTab ?? 'volume')
-const settingsTabs: SettingsTab[] = ['volume', 'appearance', 'game', 'online', 'fiveDPGN']
+const settingsTabs: SettingsTab[] = ['volume', 'appearance', 'game', 'study', 'online', 'fiveDPGN']
 const rendererChanged = computed(() => props.settings.renderer !== initialRenderer.value)
 
 const playUISound = inject(UiSoundKey)
@@ -253,6 +253,33 @@ function setActiveTab(tab: SettingsTab) {
                 :style="buttonStyle"
               >
                 <span>{{ t('settings.turnAlertNotification') }}</span>
+              </GameToggle>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-else-if="activeTab === 'study'"
+          class="settings-list"
+        >
+          <div class="settings-row settings-row--stacked">
+            <span>{{ t('settings.squareMarkerDisplay') }}</span>
+            <div class="settings-radio-group">
+              <GameToggle
+                v-model="settings.squareMarkerDisplayMode"
+                type="radio"
+                value="highlight"
+                :style="buttonStyle"
+              >
+                <span>{{ t('settings.squareMarkerDisplayHighlight') }}</span>
+              </GameToggle>
+              <GameToggle
+                v-model="settings.squareMarkerDisplayMode"
+                type="radio"
+                value="circle"
+                :style="buttonStyle"
+              >
+                <span>{{ t('settings.squareMarkerDisplayCircle') }}</span>
               </GameToggle>
             </div>
           </div>
