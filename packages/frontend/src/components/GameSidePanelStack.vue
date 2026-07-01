@@ -96,6 +96,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .game-side-panel-stack {
+  --game-side-panel-resize-hit-size: 14px;
+  --game-side-panel-resize-line-end-inset: 8px;
+  --game-side-panel-resize-line-inset: 3px;
+  --game-side-panel-resize-line-size: 2px;
+
   position: absolute;
   top: var(--game-side-panel-top);
   bottom: var(--game-side-panel-bottom);
@@ -130,9 +135,9 @@ onBeforeUnmount(() => {
 .game-side-panel-stack :deep(.game-panel)::after,
 .game-side-panel-stack :deep(.record-panel)::after {
   position: absolute;
-  top: calc(var(--button-content-gap) * 1.5);
-  bottom: calc(var(--button-content-gap) * 1.5);
-  width: 2px;
+  top: var(--game-side-panel-resize-line-end-inset);
+  bottom: var(--game-side-panel-resize-line-end-inset);
+  width: var(--game-side-panel-resize-line-size);
   background: currentColor;
   content: "";
   opacity: 0;
@@ -142,12 +147,12 @@ onBeforeUnmount(() => {
 
 .game-side-panel-stack--left :deep(.game-panel)::after,
 .game-side-panel-stack--left :deep(.record-panel)::after {
-  right: 3px;
+  right: var(--game-side-panel-resize-line-inset);
 }
 
 .game-side-panel-stack--right :deep(.game-panel)::after,
 .game-side-panel-stack--right :deep(.record-panel)::after {
-  left: 3px;
+  left: var(--game-side-panel-resize-line-inset);
 }
 
 .game-side-panel-stack:has(.game-side-panel-resize-handle:hover) :deep(.game-panel)::after,
@@ -162,7 +167,7 @@ onBeforeUnmount(() => {
   z-index: var(--z-ui-handle);
   top: 0;
   bottom: 0;
-  width: 14px;
+  width: var(--game-side-panel-resize-hit-size);
   cursor: ew-resize;
   touch-action: none;
 }

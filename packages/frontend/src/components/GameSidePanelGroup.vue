@@ -85,6 +85,11 @@ const groupStyle = computed(() => ({
 
 <style scoped>
 .game-side-panel-group {
+  --game-side-panel-resize-hit-size: 14px;
+  --game-side-panel-resize-line-end-inset: 8px;
+  --game-side-panel-resize-line-inset: 3px;
+  --game-side-panel-resize-line-size: 2px;
+
   position: relative;
   display: flex;
   flex: var(--game-side-panel-group-grow) 1 0;
@@ -145,20 +150,21 @@ const groupStyle = computed(() => ({
 .game-side-panel-group-resize-handle {
   position: absolute;
   z-index: var(--z-ui-handle);
-  right: 8px;
-  bottom: -5px;
-  left: 8px;
-  height: 10px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--game-side-panel-resize-hit-size);
   cursor: ns-resize;
   touch-action: none;
 }
 
-.game-side-panel-group-resize-handle::after {
+.game-side-panel-group-content :deep(.game-panel)::before,
+.game-side-panel-group-content :deep(.record-panel)::before {
   position: absolute;
-  right: 10px;
-  bottom: 4px;
-  left: 10px;
-  height: 2px;
+  right: var(--game-side-panel-resize-line-end-inset);
+  bottom: var(--game-side-panel-resize-line-inset);
+  left: var(--game-side-panel-resize-line-end-inset);
+  height: var(--game-side-panel-resize-line-size);
   border-radius: 999px;
   background: currentColor;
   content: "";
@@ -166,8 +172,10 @@ const groupStyle = computed(() => ({
   transition: opacity 160ms ease;
 }
 
-.game-side-panel-group-resize-handle:hover::after,
-.game-side-panel-group--resizing .game-side-panel-group-resize-handle::after {
+.game-side-panel-group:has(.game-side-panel-group-resize-handle:hover) .game-side-panel-group-content :deep(.game-panel)::before,
+.game-side-panel-group:has(.game-side-panel-group-resize-handle:hover) .game-side-panel-group-content :deep(.record-panel)::before,
+.game-side-panel-group--resizing .game-side-panel-group-content :deep(.game-panel)::before,
+.game-side-panel-group--resizing .game-side-panel-group-content :deep(.record-panel)::before {
   opacity: 0.42;
 }
 </style>
