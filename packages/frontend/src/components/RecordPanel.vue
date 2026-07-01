@@ -978,9 +978,6 @@ onBeforeUnmount(() => {
     class="record-panel"
     @wheel.stop
   >
-    <div class="record-header-bar">
-      <h2 class="record-title">{{ t('record.title') }}</h2>
-    </div>
     <div class="record-toolbar-row">
       <div class="record-header-actions">
         <GameButton
@@ -1387,24 +1384,6 @@ onBeforeUnmount(() => {
   min-height: 0;
   background: var(--button-fill-color);
   pointer-events: auto;
-}
-
-.record-header-bar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: calc(var(--button-content-gap) * 1.5);
-}
-
-.record-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  color: var(--button-text-color);
-  font-size: var(--button-font-size);
-  font-weight: 400;
-  line-height: 1;
 }
 
 .record-toolbar-row {

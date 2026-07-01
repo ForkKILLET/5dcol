@@ -2,6 +2,7 @@
 import type { GamePanelGroup, GamePanelId } from '@/composables/panelLayout'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
+import GameTab from './GameTab.vue'
 
 export type GameSidePanelTab = {
   icon: 'chat' | 'members' | 'record'
@@ -26,18 +27,16 @@ const emit = defineEmits<{
 <template>
   <section class="game-side-panel-group">
     <div class="game-side-panel-tabs">
-      <button
+      <GameTab
         v-for="tab in tabs"
         :key="tab.id"
         class="game-side-panel-tab"
-        :class="{ 'is-active': group.activePanelId === tab.id }"
-        type="button"
-        :aria-pressed="group.activePanelId === tab.id"
+        :pressed="group.activePanelId === tab.id"
         @click="emit('selectPanel', group.id, tab.id)"
       >
         <GameIcon :name="tab.icon" />
         <span>{{ tab.label }}</span>
-      </button>
+      </GameTab>
       <div class="game-side-panel-tab-actions">
         <GameButton
           size="tiny"
@@ -76,49 +75,19 @@ const emit = defineEmits<{
 
 .game-side-panel-tabs {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: calc(var(--button-content-gap) * 0.75);
   min-width: 0;
-  padding: 0 calc(var(--button-content-gap) * 0.5);
+  padding: 0 0 calc(var(--button-content-gap) * 0.6);
 }
 
 .game-side-panel-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: calc(var(--button-content-gap) * 0.5);
   min-width: 0;
-  height: var(--button-tiny-height);
-  padding: 0 calc(var(--button-content-gap) * 0.9);
-  border: var(--button-tiny-border) solid var(--button-border-color);
-  border-bottom: 0;
-  border-radius: 8px 8px 0 0;
-  background: var(--button-fill-color);
-  color: var(--button-text-color);
-  box-shadow: var(--button-tiny-shadow-offset) 0 0 var(--button-shadow-color);
-  font: inherit;
-  font-size: var(--button-tiny-font-size);
-  line-height: 1;
-  cursor: pointer;
-  outline: none;
-}
-
-.game-side-panel-tab:not(.is-active):hover,
-.game-side-panel-tab:not(.is-active):focus-visible {
-  border-color: var(--button-hover-border-color);
-  background: var(--button-hover-fill-color);
-  color: var(--button-hover-text-color);
-}
-
-.game-side-panel-tab.is-active {
-  position: relative;
-  z-index: var(--z-content-raised);
-  transform: translateY(var(--button-tiny-border));
 }
 
 .game-side-panel-tab :deep(.game-icon) {
-  width: var(--button-tiny-icon-size);
-  height: var(--button-tiny-icon-size);
+  width: var(--button-small-icon-size);
+  height: var(--button-small-icon-size);
 }
 
 .game-side-panel-tab span {

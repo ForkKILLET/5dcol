@@ -40,7 +40,6 @@ const props = defineProps<{
   members: MembersPanelMember[]
   offlineLabel: string
   onlineLabel: string
-  title: string
   unfollowLabel: string
   youLabel: string
 }>()
@@ -73,7 +72,6 @@ function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
     class="members-panel"
     shadow
   >
-    <h2 class="members-panel-title">{{ title }}</h2>
     <div
       v-if="members.length === 0"
       class="members-empty"
@@ -169,13 +167,6 @@ function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
 <style scoped>
 .members-panel {
   max-height: min(320px, calc(var(--app-height) - var(--button-top) * 2));
-}
-
-.members-panel-title {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 400;
-  line-height: 1;
 }
 
 .members-empty {

@@ -13,7 +13,6 @@ const props = defineProps<{
   messages: ChatMessage[]
   placeholder: string
   sendLabel: string
-  title: string
 }>()
 
 const emit = defineEmits<{
@@ -50,7 +49,6 @@ function getAuthorName(message: ChatMessage) {
     class="chat-panel"
     shadow
   >
-    <h2 class="chat-panel-title">{{ title }}</h2>
     <div
       ref="messageList"
       class="chat-message-list"
@@ -96,13 +94,6 @@ function getAuthorName(message: ChatMessage) {
 <style scoped>
 .chat-panel {
   max-height: min(360px, calc(var(--app-height) - var(--button-top) * 2));
-}
-
-.chat-panel-title {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 400;
-  line-height: 1;
 }
 
 .chat-message-list {
