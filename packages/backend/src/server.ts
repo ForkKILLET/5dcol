@@ -628,6 +628,7 @@ function createSession(
 
 function getOrCreateUser(users: UserState[], userId: string | null | undefined, nickname: string | null | undefined): UserState {
   const normalizedNickname = normalizeNickname(nickname)
+  const normalizedUserId = normalizeUserId(userId)
   const existing = findUser(users, userId)
   if (existing) {
     if (normalizedNickname) existing.nickname = normalizedNickname
@@ -637,7 +638,7 @@ function getOrCreateUser(users: UserState[], userId: string | null | undefined, 
 
   const now = Date.now()
   const user: UserState = {
-    id: randomUUID(),
+    id: normalizedUserId ?? randomUUID(),
     nickname: normalizedNickname,
     createdAt: now,
     updatedAt: now,
@@ -647,8 +648,9 @@ function getOrCreateUser(users: UserState[], userId: string | null | undefined, 
 }
 
 function findUser(users: UserState[], userId: string | null | undefined): UserState | null {
-  if (! userId) return null
-  return users.find(user => user.id === userId) ?? null
+  const normalizedUserId = normalizeUserId(userId)
+  if (! normalizedUserId) return null
+  return users.find(user => user.id === normalizedUserId) ?? null
 }
 
 function toUserView(user: UserState): MatchUser {
@@ -686,6 +688,11 @@ function applyClockToAction(room: RoomState, action: Action, player: Player, now
 function normalizeNickname(nickname: string | null | undefined): string | null {
   const trimmed = nickname?.trim()
   return trimmed ? trimmed.slice(0, 32) : null
+}
+
+function normalizeUserId(userId: string | null | undefined): string | null {
+  const trimmed = userId?.trim()
+  return trimmed && trimmed.length <= 128 ? trimmed : null
 }
 
 function canViewRoom(room: RoomState): boolean {
