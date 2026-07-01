@@ -1012,6 +1012,8 @@ function ensureClockPanelOpenIfNeeded() {
 
 function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: PointerEvent) {
   if (event.button !== 0) return
+  event.preventDefault()
+  event.stopPropagation()
   const handle = event.currentTarget instanceof HTMLElement
     ? event.currentTarget
     : event.target instanceof HTMLElement
@@ -1026,11 +1028,22 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: 
 
   const pointerId = event.pointerId
   const startClientY = event.clientY
+  const preventSelection = (selectionEvent: Event) => {
+    selectionEvent.preventDefault()
+  }
+  const clearSelection = () => {
+    window.getSelection()?.removeAllRanges()
+  }
+  clearSelection()
   handle.setPointerCapture(pointerId)
   document.documentElement.classList.add('game-side-panel-vertical-resizing')
+  document.addEventListener('selectstart', preventSelection, true)
+  document.addEventListener('dragstart', preventSelection, true)
 
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return
+    moveEvent.preventDefault()
+    clearSelection()
     panelLayout.resizeGroupPair(side, snapshot, moveEvent.clientY - startClientY, totalHeight)
   }
 
@@ -1041,7 +1054,10 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: 
     handle.removeEventListener('pointercancel', stop)
     handle.removeEventListener('lostpointercapture', stop)
     window.removeEventListener('blur', stop)
+    document.removeEventListener('selectstart', preventSelection, true)
+    document.removeEventListener('dragstart', preventSelection, true)
     if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
+    clearSelection()
     document.documentElement.classList.remove('game-side-panel-vertical-resizing')
   }
 

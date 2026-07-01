@@ -172,6 +172,11 @@ const groupStyle = computed(() => ({
 :global(.game-side-panel-vertical-resizing),
 :global(.game-side-panel-vertical-resizing *) {
   cursor: ns-resize !important;
+  -webkit-user-select: none !important;
   user-select: none !important;
+}
+
+:global(.game-side-panel-vertical-resizing *::selection) {
+  background: transparent;
 }
 </style>
