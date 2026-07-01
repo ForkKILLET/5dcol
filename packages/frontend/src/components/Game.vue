@@ -55,6 +55,7 @@ import {
   type StoredOnlineSession,
 } from '@/composables/match'
 import { useLocalVersus, type LocalVersusSummary } from '@/composables/localVersus'
+import { useLastRoom, type LastRoom } from '@/composables/lastRoom'
 import { useGameSettings } from '@/composables/settings'
 import { useLocalStudies, useStudyWorkspaces } from '@/composables/study'
 import { useDialogStack } from '@/composables/dialogStack'
@@ -220,6 +221,7 @@ let onlineRoomStateSubscriptionActive = false
 let onlineActionsSignature = ''
 let onlineLiveActions: Action[] = []
 let pendingLocalActionsSignature = ''
+let autoEnterLastRoomAttempted = false
 const onlineLiveActionCount = ref(0)
 const hasNewLiveActions = ref(false)
 const spectatorDeductionStartActionIndex = ref<number | null>(null)
@@ -241,6 +243,9 @@ provide(UiSoundKey, playUISound)
 
 type OnlineConnectionStatus = 'offline' | 'connecting' | 'connected' | 'reconnecting'
 type OnlineStudySaveStatus = 'saved' | 'saving' | 'failed'
+type LastRoomInput = LastRoom extends infer Room
+  ? Room extends LastRoom ? Omit<Room, 'updatedAt'> : never
+  : never
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
 const recordActionButtonIds = new Set(['export-5dpgn'])
 
@@ -275,16 +280,23 @@ const {
   createGame: createLocalVersusGame,
   createGameFromText: createLocalVersusGameFromText,
   deleteGame: deleteLocalVersusGame,
+  getGame: getLocalVersusGame,
   touchGame: touchLocalVersusGame,
 } = useLocalVersus()
 const {
   createStudyFromText: createLocalStudyFromText,
+  getStudy: getLocalStudy,
   upsertStudy: upsertLocalStudy,
 } = useLocalStudies()
 const {
   getStudyWorkspace,
   upsertStudyWorkspace,
 } = useStudyWorkspaces()
+const {
+  clearLastRoom,
+  lastRoom,
+  setLastRoom,
+} = useLastRoom()
 
 const gameStatusText = computed(() => {
   if (gameStatus.value.kind === 'stalemate') return t('status.stalemate')
@@ -1793,13 +1805,93 @@ async function enterAfterLoading() {
   loading.value = false
   handleWindowResize()
   startAmbience()
+  void tryAutoEnterLastRoom()
 }
 
-function startLocalGame(localGame: LocalVersusSummary | null = null) {
+async function tryAutoEnterLastRoom() {
+  if (autoEnterLastRoomAttempted) return
+  autoEnterLastRoomAttempted = true
+  if (! gameSettings.autoEnterLastRoom) return
+  if (loading.value || gameStarted.value || dialogMode.value !== 'none' || sharedRoom.value !== null) return
+  if (! gameRenderer || ! soundManager || ! lastRoom.value) return
+
+  const room = lastRoom.value
+  try {
+    switch (room.kind) {
+      case 'local-versus':
+        autoEnterLocalVersusRoom(room)
+        return
+      case 'local-study':
+        autoEnterLocalStudyRoom(room)
+        return
+      case 'online-versus':
+        await autoEnterOnlineVersusRoom(room)
+        return
+      case 'online-study':
+        await autoEnterOnlineStudyRoom(room)
+        return
+    }
+  }
+  catch (err) {
+    logger.warn(`Failed to auto-enter last room: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+function autoEnterLocalVersusRoom(room: Extract<LastRoom, { kind: 'local-versus' }>) {
+  const localGame = getLocalVersusGame(room.id)
+  if (! localGame) {
+    clearLastRoom(room)
+    return
+  }
+  startLocalGame(localGame, { playSound: false })
+}
+
+function autoEnterLocalStudyRoom(room: Extract<LastRoom, { kind: 'local-study' }>) {
+  const study = getLocalStudy(room.id)
+  if (! study) {
+    clearLastRoom(room)
+    return
+  }
+  startStudyGame(study, { kind: 'local' }, { playSound: false })
+}
+
+async function autoEnterOnlineVersusRoom(room: Extract<LastRoom, { kind: 'online-versus' }>) {
+  const client = new MatchClient(room.serverAddress)
+  const state = await client.getRoomState(room.roomId, { userId: matchUserId.value ?? undefined })
+  startOnlineGame(room.serverAddress, state)
+}
+
+async function autoEnterOnlineStudyRoom(room: Extract<LastRoom, { kind: 'online-study' }>) {
+  const client = new MatchClient(room.serverAddress)
+  const response = await client.joinStudy(room.roomId, {
+    userId: matchUserId.value ?? undefined,
+    nickname: matchNickname.value,
+  })
+  matchUserId.value = response.user.id
+  startStudyGame(response.room.document, {
+    kind: 'online',
+    serverAddress: room.serverAddress,
+    roomId: response.room.id,
+    version: response.room.version,
+  }, { playSound: false })
+}
+
+function rememberLastRoom(room: LastRoomInput) {
+  setLastRoom({
+    ...room,
+    updatedAt: Date.now(),
+  })
+}
+
+function startLocalGame(
+  localGame: LocalVersusSummary | null = null,
+  { playSound = true }: { playSound?: boolean } = {},
+) {
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
-  playUISound()
+  if (playSound) playUISound()
   const localVersus = localGame ?? createLocalVersusGame(t('versus.untitled'))
+  rememberLastRoom({ kind: 'local-versus', id: localVersus.id })
   activeLocalVersus.value = localVersus
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
@@ -1912,9 +2004,15 @@ function startStudyGame(
   syncGameInputState()
   game.start()
   if (source.kind === 'local') {
+    rememberLastRoom({ kind: 'local-study', id: study.id })
     activeLocalStudy.value = { id: study.id, title: study.title }
   }
   else {
+    rememberLastRoom({
+      kind: 'online-study',
+      serverAddress: source.serverAddress,
+      roomId: source.roomId,
+    })
     activeOnlineStudy.value = {
       serverAddress: source.serverAddress,
       roomId: source.roomId,
@@ -1934,6 +2032,11 @@ function openStudyFromPage(study: StudyDocument, source?: StudyOpenSource) {
 function startOnlineGame(serverAddress: string, state: MatchGameState) {
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
+  rememberLastRoom({
+    kind: 'online-versus',
+    serverAddress,
+    roomId: state.room.id,
+  })
   activeLocalStudy.value = null
   activeLocalVersus.value = null
   activeOnlineStudy.value = null

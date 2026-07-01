@@ -60,6 +60,7 @@ export const GameSettingsSchema = z.preprocess(
     renderer: RendererPreferenceSchema.catch('auto' satisfies RendererPreference),
     fiveDPGN: FiveDPGNSettingsSchema.catch(() => FiveDPGNSettingsSchema.parse({})),
     autoFullscreen: BooleanWithDefault(true),
+    autoEnterLastRoom: BooleanWithDefault(false),
     autoSwitchViewPlayer: BooleanWithDefault(true),
     showClock: BooleanWithDefault(true),
     showMoveTravelAnimation: BooleanWithDefault(true),

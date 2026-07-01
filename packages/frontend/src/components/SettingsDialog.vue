@@ -199,6 +199,13 @@ function setActiveTab(tab: SettingsTab) {
           class="settings-list"
         >
           <div class="settings-row">
+            <span>{{ t('settings.autoEnterLastRoom') }}</span>
+            <GameToggle
+              v-model="settings.autoEnterLastRoom"
+              :style="buttonStyle"
+            />
+          </div>
+          <div class="settings-row">
             <span>{{ t('settings.autoSwitchView') }}</span>
             <GameToggle
               v-model="settings.autoSwitchViewPlayer"

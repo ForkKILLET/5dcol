@@ -174,6 +174,7 @@ settings.rendererStatusCanvasUnsupported: "当前使用 Canvas - WebGL 不可用
 settings.rendererStatusCanvasFailed: "当前使用 Canvas - WebGL 初始化失败"
 settings.rendererRestartHint: "刷新页面以应用渲染器更改。"
 settings.autoFullscreen: "自动全屏"
+settings.autoEnterLastRoom: "自动进入上次房间"
 settings.autoSwitchView: "自动切换视角"
 settings.travelAnimation: "穿越动画"
 settings.pointerDragThreshold: "相机拖拽阈值"
