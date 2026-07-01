@@ -74,6 +74,8 @@ const emit = defineEmits<{
 }
 
 .game-side-panel-tabs {
+  position: relative;
+  z-index: var(--z-ui-handle);
   display: flex;
   align-items: center;
   gap: calc(var(--button-content-gap) * 0.75);

@@ -14,7 +14,6 @@ defineProps<{
   addHereLabel?: string
   addLeftLabel: string
   addRightLabel: string
-  closeLabel: string
   emptyText: string
   groupId?: string
   items: GamePanelPickerItem[]
@@ -24,7 +23,6 @@ defineProps<{
 const emit = defineEmits<{
   addToGroup: [panelId: GamePanelId, groupId: string]
   addToSide: [panelId: GamePanelId, side: GamePanelSide]
-  close: []
 }>()
 </script>
 
@@ -32,15 +30,6 @@ const emit = defineEmits<{
   <GamePanel class="game-panel-picker" shadow>
     <div class="game-panel-picker-title-row">
       <h2 class="game-panel-picker-title">{{ title }}</h2>
-      <GameButton
-        size="tiny"
-        shape="circle"
-        :aria-label="closeLabel"
-        :title="closeLabel"
-        @click="emit('close')"
-      >
-        <GameIcon name="x" />
-      </GameButton>
     </div>
     <div
       v-if="items.length === 0"

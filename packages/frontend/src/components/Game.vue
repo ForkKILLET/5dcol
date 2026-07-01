@@ -1662,6 +1662,7 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     if (dialogMode.value !== 'none') backDialog()
+    else if (panelPickerOpen.value) closePanelPicker()
     else if (! gameStarted.value && mainMenuMode.value === 'versus') {
       closeVersusPage()
     }
@@ -2958,6 +2959,17 @@ watch([exportFormat, exportMode], () => {
           size="icon"
           shape="circle"
           :style="menuButtonStyle"
+          :aria-label="t('panel.pickerTitle')"
+          :aria-expanded="panelPickerOpen"
+          @click="openPanelPicker()"
+        >
+          <GameIcon name="panels" />
+        </GameButton>
+        <GameButton
+          v-if="gameStarted"
+          size="icon"
+          shape="circle"
+          :style="menuButtonStyle"
           :aria-label="t('button.menu')"
           :aria-expanded="secondaryMenuOpen"
           @click="toggleSecondaryMenu"
@@ -2966,32 +2978,25 @@ watch([exportFormat, exportMode], () => {
         </GameButton>
       </div>
 
-      <GameButton
-        v-if="gameStarted"
-        class="panel-picker-launcher"
-        :style="menuButtonStyle"
-        size="small"
-        @click="openPanelPicker()"
-      >
-        <GameIcon name="plus" />
-        {{ t('panel.dock') }}
-      </GameButton>
-
-      <GamePanelPicker
+      <div
         v-if="gameStarted && panelPickerOpen"
-        :style="menuButtonStyle"
-        :title="t('panel.pickerTitle')"
-        :items="panelPickerItems"
-        :group-id="panelPickerGroupId ?? undefined"
-        :empty-text="t('panel.noHiddenPanels')"
-        :add-here-label="t('panel.addHere')"
-        :add-left-label="t('panel.addLeft')"
-        :add-right-label="t('panel.addRight')"
-        :close-label="t('button.close')"
-        @add-to-side="addPanelToSide"
-        @add-to-group="addPanelToGroup"
-        @close="closePanelPicker"
-      />
+        class="panel-picker-backdrop"
+        @click="closePanelPicker"
+      >
+        <GamePanelPicker
+          :style="menuButtonStyle"
+          :title="t('panel.pickerTitle')"
+          :items="panelPickerItems"
+          :group-id="panelPickerGroupId ?? undefined"
+          :empty-text="t('panel.noHiddenPanels')"
+          :add-here-label="t('panel.addHere')"
+          :add-left-label="t('panel.addLeft')"
+          :add-right-label="t('panel.addRight')"
+          @add-to-side="addPanelToSide"
+          @add-to-group="addPanelToGroup"
+          @click.stop
+        />
+      </div>
 
       <div
         v-if="clockRows.length > 0"
@@ -3756,17 +3761,11 @@ canvas {
   bottom: var(--button-top);
 }
 
-.panel-picker-launcher {
+.panel-picker-backdrop {
   position: absolute;
-  left: 50%;
-  bottom: var(--button-top);
+  inset: 0;
   z-index: var(--z-ui-floating);
   pointer-events: auto;
-  transform: translateX(-50%);
-}
-
-.panel-picker-launcher:not(:disabled):active {
-  transform: translateX(-50%) translateY(var(--button-small-shadow-offset));
 }
 
 .clock-card {

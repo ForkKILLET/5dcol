@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'plus' | 'record' | 'x'
+  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'panels' | 'plus' | 'record' | 'x'
 }>()
 </script>
 
@@ -90,6 +90,36 @@ defineProps<{
       <path d="M6 6.5h12" />
       <path d="M6 12h12" />
       <path d="M6 17.5h12" />
+    </template>
+    <template v-else-if="name === 'panels'">
+      <rect
+        x="5"
+        y="5"
+        width="5.5"
+        height="5.5"
+        rx="1"
+      />
+      <rect
+        x="13.5"
+        y="5"
+        width="5.5"
+        height="5.5"
+        rx="1"
+      />
+      <rect
+        x="5"
+        y="13.5"
+        width="5.5"
+        height="5.5"
+        rx="1"
+      />
+      <rect
+        x="13.5"
+        y="13.5"
+        width="5.5"
+        height="5.5"
+        rx="1"
+      />
     </template>
     <template v-else-if="name === 'members'">
       <circle
