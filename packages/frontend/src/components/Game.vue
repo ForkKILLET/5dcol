@@ -1039,31 +1039,34 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: 
   document.documentElement.classList.add('game-side-panel-vertical-resizing')
   document.addEventListener('selectstart', preventSelection, true)
   document.addEventListener('dragstart', preventSelection, true)
+  document.addEventListener('selectionchange', clearSelection)
 
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return
     moveEvent.preventDefault()
+    moveEvent.stopPropagation()
     clearSelection()
     panelLayout.resizeGroupPair(side, snapshot, moveEvent.clientY - startClientY, totalHeight)
   }
 
   const stop = (stopEvent: PointerEvent | Event) => {
     if ('pointerId' in stopEvent && stopEvent.pointerId !== pointerId) return
-    handle.removeEventListener('pointermove', move)
-    handle.removeEventListener('pointerup', stop)
-    handle.removeEventListener('pointercancel', stop)
+    document.removeEventListener('pointermove', move, true)
+    document.removeEventListener('pointerup', stop, true)
+    document.removeEventListener('pointercancel', stop, true)
     handle.removeEventListener('lostpointercapture', stop)
     window.removeEventListener('blur', stop)
     document.removeEventListener('selectstart', preventSelection, true)
     document.removeEventListener('dragstart', preventSelection, true)
+    document.removeEventListener('selectionchange', clearSelection)
     if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
     clearSelection()
     document.documentElement.classList.remove('game-side-panel-vertical-resizing')
   }
 
-  handle.addEventListener('pointermove', move)
-  handle.addEventListener('pointerup', stop)
-  handle.addEventListener('pointercancel', stop)
+  document.addEventListener('pointermove', move, true)
+  document.addEventListener('pointerup', stop, true)
+  document.addEventListener('pointercancel', stop, true)
   handle.addEventListener('lostpointercapture', stop)
   window.addEventListener('blur', stop)
 }
