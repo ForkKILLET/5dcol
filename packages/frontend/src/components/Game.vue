@@ -1022,11 +1022,10 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, edge: G
 
   const stack = handle.closest<HTMLElement>('.game-side-panel-stack')
   const totalHeight = stack?.getBoundingClientRect().height ?? 0
-  const snapshot = panelLayout.getGroupResizeSnapshot(side, groupId, edge, totalHeight)
-  if (! snapshot || totalHeight <= 0) return
+  if (! panelLayout.getGroupResizeSnapshot(side, groupId, edge, totalHeight) || totalHeight <= 0) return
 
   const pointerId = event.pointerId
-  const startClientY = event.clientY
+  let previousClientY = event.clientY
   const previousHtmlCursor = document.documentElement.style.cursor
   const previousBodyCursor = document.body.style.cursor
   let stopped = false
@@ -1037,7 +1036,14 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, edge: G
 
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return
-    panelLayout.resizeGroupEdge(side, snapshot, moveEvent.clientY - startClientY)
+    const nextClientY = moveEvent.clientY
+    const delta = nextClientY - previousClientY
+    if (delta === 0) return
+    const currentTotalHeight = stack?.getBoundingClientRect().height ?? totalHeight
+    const snapshot = panelLayout.getGroupResizeSnapshot(side, groupId, edge, currentTotalHeight)
+    if (! snapshot) return
+    panelLayout.resizeGroupEdge(side, snapshot, delta)
+    previousClientY = nextClientY
   }
 
   const stop = (stopEvent: PointerEvent | Event) => {
