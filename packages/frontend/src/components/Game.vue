@@ -1807,6 +1807,7 @@ function startLocalGame(localGame: LocalVersusSummary | null = null) {
   onlineStudySubmitPending = false
   game = new Game({
     renderer: gameRenderer,
+    inputElement: canvas.value!,
     soundManager,
     logger,
     debug: query.get('debug') === '1',
@@ -1866,6 +1867,7 @@ function startStudyGame(
   else panelLayout.closeStudyPanels()
   game = new Game({
     renderer: gameRenderer,
+    inputElement: canvas.value!,
     soundManager,
     logger,
     debug: query.get('debug') === '1',
@@ -1964,6 +1966,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   spectatorDeductionStartActionIndex.value = null
   game = new Game({
     renderer: gameRenderer,
+    inputElement: canvas.value!,
     soundManager,
     logger,
     debug: query.get('debug') === '1',

@@ -40,6 +40,7 @@ export type { GameRecordAction, GameRecordCursor, GameRecordMoveSegment, GameRec
 
 export interface GameContext {
   debug: boolean
+  inputElement?: HTMLElement
   logger: Logger
   renderer: Renderer
   soundManager: SoundManager
@@ -309,6 +310,7 @@ export class Game extends Disposable(Empty) {
   private recordSignature = ''
   private statusSignature = ''
   private gameInputDisabled = false
+  private pointerInsideInput = false
   private cameraMotionId = 0
   private autoSwitchViewPlayer = true
   private showMoveTravelAnimation = true
@@ -365,6 +367,15 @@ export class Game extends Disposable(Empty) {
     this.hoverCheckWarning = null
     this.finishPointerGesture()
     this.syncCanvasCursor()
+  }
+
+  private clearHoverState() {
+    if (! this.hoverSquare && ! this.hoverPiece && ! this.hoverCheckWarning) return
+    this.hoverSquare = null
+    this.hoverPiece = null
+    this.hoverCheckWarning = null
+    this.syncCanvasCursor()
+    this.syncToolbarButtons()
   }
 
   public setViewPlayer(
@@ -994,6 +1005,7 @@ export class Game extends Disposable(Empty) {
 
     this.collect(Effect.useListener(window, 'wheel', e => {
       if (this.gameInputDisabled) return
+      if (! this.isInputEvent(e)) return
       e.preventDefault()
       this.zoomCameraByStep(- Math.sign(e.deltaY) * CameraControl.WheelZoomStep)
     }, { passive: false }))
@@ -1003,8 +1015,16 @@ export class Game extends Disposable(Empty) {
     return [e.clientX, e.clientY]
   }
 
+  private isInputEvent(e: Event): boolean {
+    const inputElement = this.ctx.inputElement
+    if (! inputElement) return e.target instanceof HTMLCanvasElement
+    return e.composedPath().includes(inputElement)
+  }
+
   private handlePointerDown(e: PointerEvent) {
     if (this.gameInputDisabled) return
+    if (! this.isInputEvent(e)) return
+    this.pointerInsideInput = true
     if (! e.isPrimary && e.pointerType !== 'touch') return
     if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1 && e.button !== 2) return
     const recordFocusClick = e.pointerType === 'mouse' && (e.button === 1 || (e.button === 0 && e.ctrlKey))
@@ -1046,6 +1066,15 @@ export class Game extends Disposable(Empty) {
 
   private handlePointerMove(e: PointerEvent) {
     if (this.gameInputDisabled) return
+    const isInputEvent = this.isInputEvent(e)
+    this.pointerInsideInput = isInputEvent
+    const hasActivePointer = this.pointer.activePointerId === e.pointerId
+      || (e.pointerType === 'touch' && this.pointer.touchPointers.has(e.pointerId))
+      || this.pointer.pinchLastDistance !== null
+    if (! hasActivePointer && ! isInputEvent) {
+      this.clearHoverState()
+      return
+    }
 
     const screen = this.getPointerScreen(e)
     this.pointer.screen = screen
@@ -1603,6 +1632,10 @@ export class Game extends Disposable(Empty) {
       this.hoverCheckWarning = null
       this.syncCanvasCursor()
       this.syncToolbarButtons()
+      return
+    }
+    if (! this.pointerInsideInput) {
+      this.clearHoverState()
       return
     }
 
