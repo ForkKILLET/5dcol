@@ -28,6 +28,13 @@ button.settings: "Settings"
 
 panel.dock: "Panels"
 panel.collapseDock: "Collapse panels"
+panel.pickerTitle: "Add panel"
+panel.noHiddenPanels: "All available panels are already open."
+panel.addPanel: "Add panel"
+panel.closePanel: "Close panel"
+panel.addHere: "Here"
+panel.addLeft: "Left"
+panel.addRight: "Right"
 
 main.start: "Start"
 main.resume: "Resume"

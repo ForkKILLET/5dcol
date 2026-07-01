@@ -28,6 +28,13 @@ button.settings: "设置"
 
 panel.dock: "面板"
 panel.collapseDock: "收起面板"
+panel.pickerTitle: "添加面板"
+panel.noHiddenPanels: "所有可用面板都已打开。"
+panel.addPanel: "添加面板"
+panel.closePanel: "关闭面板"
+panel.addHere: "此处"
+panel.addLeft: "左侧"
+panel.addRight: "右侧"
 
 main.start: "开始"
 main.resume: "继续"

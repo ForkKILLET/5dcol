@@ -59,14 +59,15 @@ import { useGameSettings } from '@/composables/settings'
 import { useLocalStudies, useStudyWorkspaces } from '@/composables/study'
 import { useDialogStack } from '@/composables/dialogStack'
 import { normalizeOnlineServerAddress } from '@/composables/online'
-import { usePanelLayout, type GamePanelId } from '@/composables/panelLayout'
+import { usePanelLayout, type GamePanelGroup, type GamePanelId, type GamePanelSide } from '@/composables/panelLayout'
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import ChatPanel from './ChatPanel.vue'
 import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
-import GameDock from './GameDock.vue'
 import GameIcon from './GameIcon.vue'
+import GamePanelPicker, { type GamePanelPickerItem } from './GamePanelPicker.vue'
+import GameSidePanelGroup, { type GameSidePanelTab } from './GameSidePanelGroup.vue'
 import GameSidePanelStack from './GameSidePanelStack.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
@@ -190,18 +191,15 @@ const panelLayout = usePanelLayout({
   onlineStudyActive: computed(() => activeOnlineStudy.value !== null),
   viewportWidth,
 })
+const panelPickerOpen = ref(false)
+const panelPickerGroupId = ref<string | null>(null)
 const recordPanelOpen = computed({
   get: () => panelLayout.isPanelOpen('record'),
   set: (open: boolean) => panelLayout.setPanelOpen('record', open),
 })
-const recordPanelWidth = computed(() => panelLayout.getPanelSize('record'))
 const membersPanelOpen = computed({
   get: () => panelLayout.isPanelOpen('members'),
   set: (open: boolean) => panelLayout.setPanelOpen('members', open),
-})
-const chatPanelOpen = computed({
-  get: () => panelLayout.isPanelOpen('chat'),
-  set: (open: boolean) => panelLayout.setPanelOpen('chat', open),
 })
 const logger = new Logger(messages)
 let game: Game | null = null
@@ -419,49 +417,16 @@ const recordActionButtons = computed(() => (
 const menuButtons = computed(() => (
   secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
-const gameDockItems = computed(() => {
-  const items: Array<{
-    icon: 'chat' | 'clock' | 'members' | 'record'
-    id: GamePanelId
-    label: string
-    pressed: boolean
-  }> = [
-    {
-      id: 'record',
-      icon: 'record',
-      label: t('button.record'),
-      pressed: recordPanelOpen.value,
-    },
-  ]
-
-  if (! activeLocalStudy.value && ! activeOnlineStudy.value) {
-    items.push({
-      id: 'clock',
-      icon: 'clock',
-      label: t('button.clock'),
-      pressed: gameSettings.showClock,
-    })
-  }
-
-  if (activeOnlineStudy.value) {
-    items.push({
-      id: 'members',
-      icon: 'members',
-      label: t('button.members'),
-      pressed: membersPanelOpen.value,
-    })
-    items.push({
-      id: 'chat',
-      icon: 'chat',
-      label: t('button.chat'),
-      pressed: chatPanelOpen.value,
-    })
-  }
-
-  return items
-})
+const panelSides = ['left', 'right'] as const
+const panelPickerItems = computed<GamePanelPickerItem[]>(() => (
+  panelLayout.hiddenPanelIds.value.map(id => ({
+    id,
+    icon: getPanelIcon(id),
+    label: getPanelLabel(id),
+  }))
+))
 const uiOverlayOpen = computed(() => (
-  secondaryMenuOpen.value || dialogMode.value !== 'none' || ! gameStarted.value
+  secondaryMenuOpen.value || panelPickerOpen.value || dialogMode.value !== 'none' || ! gameStarted.value
 ))
 const isOnlineSpectator = computed(() => onlineRoomStatus.value !== null && onlinePlayer.value === null)
 const shouldShowReturnLiveButton = computed(() => (
@@ -493,10 +458,6 @@ const menuButtonStyle = computed(() => getPresetButtonStyle(
   themeButtonPreset.value,
   themeHoverButtonPreset.value,
   themeDisabledButtonPreset.value,
-))
-const leftPanelWidth = computed(() => Math.max(
-  panelLayout.getPanelSize('members'),
-  panelLayout.getPanelSize('chat'),
 ))
 const mainMenuVisible = computed(() => ! loading.value && ! gameStarted.value)
 const mainMenuLayout = computed(() => getMainMenuLayout(viewportWidth.value, viewportHeight.value))
@@ -836,18 +797,6 @@ function toggleRecordPanel() {
   recordPanelOpen.value = ! recordPanelOpen.value
 }
 
-function toggleChatPanel() {
-  if (! activeOnlineStudy.value) return
-  playUISound()
-  chatPanelOpen.value = ! chatPanelOpen.value
-}
-
-function toggleMembersPanel() {
-  if (! activeOnlineStudy.value) return
-  playUISound()
-  membersPanelOpen.value = ! membersPanelOpen.value
-}
-
 function focusRecordMoveFromBoard(target: GameRecordMoveFocusTarget) {
   if (! gameStarted.value) return
   const request = game?.getFiveDPGNExport()
@@ -940,21 +889,109 @@ function toggleClockPanel() {
   panelLayout.togglePanel('clock')
 }
 
-function clickGameDockItem(id: string) {
-  switch (id as GamePanelId) {
+function getPanelLabel(id: GamePanelId): string {
+  switch (id) {
     case 'record':
-      toggleRecordPanel()
-      break
-    case 'clock':
-      toggleClockPanel()
-      break
+      return t('button.record')
     case 'members':
-      toggleMembersPanel()
-      break
+      return t('button.members')
     case 'chat':
-      toggleChatPanel()
-      break
+      return t('button.chat')
+    case 'clock':
+      return t('button.clock')
   }
+}
+
+function getPanelIcon(id: GamePanelId): GamePanelPickerItem['icon'] {
+  switch (id) {
+    case 'members':
+      return 'members'
+    case 'chat':
+      return 'chat'
+    case 'record':
+    case 'clock':
+      return 'record'
+  }
+}
+
+function getPanelTabs(group: GamePanelGroup): GameSidePanelTab[] {
+  return panelLayout.getGroupPanels(group).map(id => ({
+    id,
+    icon: getPanelIcon(id),
+    label: getPanelLabel(id),
+  }))
+}
+
+function openPanelPicker(groupId: string | null = null) {
+  if (! gameStarted.value) return
+  playUISound()
+  panelPickerGroupId.value = groupId
+  panelPickerOpen.value = true
+}
+
+function closePanelPicker() {
+  panelPickerOpen.value = false
+  panelPickerGroupId.value = null
+}
+
+function addPanelToSide(panelId: GamePanelId, side: GamePanelSide) {
+  playUISound()
+  if (panelId === 'record') prepareRecordPanelOpen()
+  panelLayout.addPanelToSide(panelId, side)
+  closePanelPicker()
+  syncGameViewportInsets()
+}
+
+function addPanelToGroup(panelId: GamePanelId, groupId: string) {
+  playUISound()
+  if (panelId === 'record') prepareRecordPanelOpen()
+  panelLayout.addPanelToGroup(panelId, groupId)
+  closePanelPicker()
+  syncGameViewportInsets()
+}
+
+function selectPanelTab(groupId: string, panelId: GamePanelId) {
+  playUISound()
+  if (panelId === 'record') prepareRecordPanelOpen()
+  panelLayout.setGroupActivePanel(groupId, panelId)
+}
+
+function closePanel(panelId: GamePanelId) {
+  playUISound()
+  panelLayout.setPanelOpen(panelId, false)
+  syncGameViewportInsets()
+}
+
+function prepareRecordPanelOpen() {
+  const request = game?.getFiveDPGNExport()
+  if (request) updateRecord(request)
+}
+
+function getPanelStackTop(side: GamePanelSide): string {
+  return side === 'right'
+    ? 'var(--button-top)'
+    : 'calc(var(--button-top) + 120px)'
+}
+
+function getPanelStackBottom(side: GamePanelSide): string {
+  return side === 'right'
+    ? 'calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2)'
+    : 'auto'
+}
+
+function getPanelStackMaxHeight(side: GamePanelSide): string {
+  return side === 'right'
+    ? 'none'
+    : 'calc(var(--app-height) - var(--button-top) * 2 - 120px)'
+}
+
+function getPanelStackMinSize(side: GamePanelSide): number {
+  return side === 'right' ? Sizes.RecordPanelMinWidth : 260
+}
+
+function updateSidePanelWidth(side: GamePanelSide, width: number) {
+  panelLayout.setSideSize(side, width)
+  syncGameViewportInsets()
 }
 
 function jumpToOnlineStudyMember(userId: string) {
@@ -1367,16 +1404,6 @@ function syncGameViewportInsets() {
     left: insets.left,
     right: insets.right,
   })
-}
-
-function updateRecordPanelWidth(width: number) {
-  panelLayout.setPanelSize('record', width)
-  syncGameViewportInsets()
-}
-
-function updateLeftPanelWidth(width: number) {
-  panelLayout.setSideSize('left', width)
-  syncGameViewportInsets()
 }
 
 function getViewportSize() {
@@ -2939,14 +2966,31 @@ watch([exportFormat, exportMode], () => {
         </GameButton>
       </div>
 
-      <GameDock
+      <GameButton
         v-if="gameStarted"
+        class="panel-picker-launcher"
         :style="menuButtonStyle"
-        :items="gameDockItems"
-        :label="t('panel.dock')"
-        :collapse-label="t('panel.collapseDock')"
-        @select="clickGameDockItem"
-        @toggle-collapsed="playUISound"
+        size="small"
+        @click="openPanelPicker()"
+      >
+        <GameIcon name="plus" />
+        {{ t('panel.dock') }}
+      </GameButton>
+
+      <GamePanelPicker
+        v-if="gameStarted && panelPickerOpen"
+        :style="menuButtonStyle"
+        :title="t('panel.pickerTitle')"
+        :items="panelPickerItems"
+        :group-id="panelPickerGroupId ?? undefined"
+        :empty-text="t('panel.noHiddenPanels')"
+        :add-here-label="t('panel.addHere')"
+        :add-left-label="t('panel.addLeft')"
+        :add-right-label="t('panel.addRight')"
+        :close-label="t('button.close')"
+        @add-to-side="addPanelToSide"
+        @add-to-group="addPanelToGroup"
+        @close="closePanelPicker"
       />
 
       <div
@@ -2967,46 +3011,6 @@ watch([exportFormat, exportMode], () => {
         </div>
       </div>
 
-      <GameSidePanelStack
-        v-if="activeOnlineStudy && (membersPanelOpen || chatPanelOpen)"
-        :style="menuButtonStyle"
-        :size="leftPanelWidth"
-        :max-size="Math.max(260, viewportWidth - Sizes.ButtonTop * 2)"
-        @resize-panel="updateLeftPanelWidth"
-      >
-        <MembersPanel
-          v-if="membersPanelOpen"
-          :members="onlineStudyMemberRows"
-          :focused-member-id="focusedOnlineStudyMember?.userId ?? null"
-          :focus-pulse-id="focusedOnlineStudyMember?.pulseId ?? 0"
-          :title="t('members.title')"
-          :empty-text="t('members.empty')"
-          :you-label="t('members.you')"
-          :online-label="t('members.online')"
-          :offline-label="t('members.offline')"
-          :jump-label="t('members.jump')"
-          :follow-label="t('members.follow')"
-          :unfollow-label="t('members.unfollow')"
-          :following-label="t('members.following')"
-          :followed-by-label="t('members.followedBy')"
-          @follow="followOnlineStudyMember"
-          @jump="jumpToOnlineStudyMember"
-        />
-        <ChatPanel
-          v-if="chatPanelOpen"
-          :messages="onlineStudyChatMessages"
-          :current-user-id="matchUserId"
-          :get-author-color="getRecordMarkerAuthorColor"
-          :disabled="onlineConnectionStatus !== 'connected'"
-          :title="t('chat.title')"
-          :empty-text="t('chat.empty')"
-          :placeholder="t('chat.placeholder')"
-          :send-label="t('chat.send')"
-          @send="sendOnlineStudyChatMessage"
-          @ui-sound="playUISound"
-        />
-      </GameSidePanelStack>
-
       <div
         v-if="gameStarted"
         class="game-status-stack"
@@ -3025,41 +3029,90 @@ watch([exportFormat, exportMode], () => {
         </div>
       </div>
 
-      <GameSidePanelStack
-        v-if="gameStarted && recordPanelOpen"
-        side="right"
-        :style="menuButtonStyle"
-        :size="recordPanelWidth"
-        :min-size="Sizes.RecordPanelMinWidth"
-        :max-size="Math.max(Sizes.RecordPanelMinWidth, viewportWidth - Sizes.ButtonTop * 2)"
-        top="var(--button-top)"
-        bottom="calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2)"
-        max-stack-height="none"
-        @resize-panel="updateRecordPanelWidth"
+      <template
+        v-for="side in panelSides"
+        :key="side"
       >
-        <RecordPanel
+        <GameSidePanelStack
+          v-if="gameStarted && panelLayout.getSideGroups(side).length > 0"
+          :side="side"
           :style="menuButtonStyle"
-          :record-text="recordText"
-          :rows="recordActions"
-          :action-buttons="recordActionButtons"
-          :has-pending-moves="recordHasPendingMoves"
-          :online="onlineSession !== null"
-          :online-spectator="isOnlineSpectator"
-          :deduction-start-action-index="spectatorDeductionStartActionIndex"
-          :focused-move="recordFocusedMove"
-          :presence-cursors="recordPresenceCursors"
-          :custom-glyph-templates="customRecordGlyphTemplates"
-          @toolbar-button-click="clickToolbarButton"
-          @focus-segment="focusRecordSegment"
-          @focus-presence-member="focusOnlineStudyMember"
-          @rollback-cursor="rollbackToRecordCursor"
-          @delete-future="deleteRecordFuture"
-          @replace-action-comments="replaceRecordActionComments"
-          @replace-move-glyphs="replaceRecordMoveGlyphs"
-          @update-custom-glyph-templates="customRecordGlyphTemplates = $event"
-          @ui-sound="playUISound"
-        />
-      </GameSidePanelStack>
+          :size="panelLayout.getSideSize(side)"
+          :min-size="getPanelStackMinSize(side)"
+          :max-size="Math.max(getPanelStackMinSize(side), viewportWidth - Sizes.ButtonTop * 2)"
+          :top="getPanelStackTop(side)"
+          :bottom="getPanelStackBottom(side)"
+          :max-stack-height="getPanelStackMaxHeight(side)"
+          @resize-panel="updateSidePanelWidth(side, $event)"
+        >
+          <GameSidePanelGroup
+            v-for="group in panelLayout.getSideGroups(side)"
+            :key="group.id"
+            :group="group"
+            :tabs="getPanelTabs(group)"
+            :add-label="t('panel.addPanel')"
+            :close-label="t('panel.closePanel')"
+            @add-panel="openPanelPicker"
+            @close-panel="closePanel"
+            @select-panel="selectPanelTab"
+          >
+            <MembersPanel
+              v-if="group.activePanelId === 'members'"
+              :members="onlineStudyMemberRows"
+              :focused-member-id="focusedOnlineStudyMember?.userId ?? null"
+              :focus-pulse-id="focusedOnlineStudyMember?.pulseId ?? 0"
+              :title="t('members.title')"
+              :empty-text="t('members.empty')"
+              :you-label="t('members.you')"
+              :online-label="t('members.online')"
+              :offline-label="t('members.offline')"
+              :jump-label="t('members.jump')"
+              :follow-label="t('members.follow')"
+              :unfollow-label="t('members.unfollow')"
+              :following-label="t('members.following')"
+              :followed-by-label="t('members.followedBy')"
+              @follow="followOnlineStudyMember"
+              @jump="jumpToOnlineStudyMember"
+            />
+            <ChatPanel
+              v-else-if="group.activePanelId === 'chat'"
+              :messages="onlineStudyChatMessages"
+              :current-user-id="matchUserId"
+              :get-author-color="getRecordMarkerAuthorColor"
+              :disabled="onlineConnectionStatus !== 'connected'"
+              :title="t('chat.title')"
+              :empty-text="t('chat.empty')"
+              :placeholder="t('chat.placeholder')"
+              :send-label="t('chat.send')"
+              @send="sendOnlineStudyChatMessage"
+              @ui-sound="playUISound"
+            />
+            <RecordPanel
+              v-else-if="group.activePanelId === 'record'"
+              :style="menuButtonStyle"
+              :record-text="recordText"
+              :rows="recordActions"
+              :action-buttons="recordActionButtons"
+              :has-pending-moves="recordHasPendingMoves"
+              :online="onlineSession !== null"
+              :online-spectator="isOnlineSpectator"
+              :deduction-start-action-index="spectatorDeductionStartActionIndex"
+              :focused-move="recordFocusedMove"
+              :presence-cursors="recordPresenceCursors"
+              :custom-glyph-templates="customRecordGlyphTemplates"
+              @toolbar-button-click="clickToolbarButton"
+              @focus-segment="focusRecordSegment"
+              @focus-presence-member="focusOnlineStudyMember"
+              @rollback-cursor="rollbackToRecordCursor"
+              @delete-future="deleteRecordFuture"
+              @replace-action-comments="replaceRecordActionComments"
+              @replace-move-glyphs="replaceRecordMoveGlyphs"
+              @update-custom-glyph-templates="customRecordGlyphTemplates = $event"
+              @ui-sound="playUISound"
+            />
+          </GameSidePanelGroup>
+        </GameSidePanelStack>
+      </template>
 
       <div
         v-if="gameStarted && secondaryMenuOpen"
@@ -3703,6 +3756,19 @@ canvas {
 .toolbar-secondary {
   right: var(--button-top);
   bottom: var(--button-top);
+}
+
+.panel-picker-launcher {
+  position: absolute;
+  left: 50%;
+  bottom: var(--button-top);
+  z-index: var(--z-ui-floating);
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+.panel-picker-launcher:not(:disabled):active {
+  transform: translateX(-50%) translateY(var(--button-small-shadow-offset));
 }
 
 .clock-card {
