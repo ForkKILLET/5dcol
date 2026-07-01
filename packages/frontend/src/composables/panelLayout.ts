@@ -11,6 +11,7 @@ export interface GamePanelGroup {
   height: number
   id: string
   panelIds: GamePanelId[]
+  top: number
 }
 
 export interface GamePanelColumn {
@@ -33,12 +34,17 @@ interface PanelLayoutOptions {
   viewportWidth: Ref<number>
 }
 
+export type GamePanelGroupResizeEdge = 'before' | 'after'
+
 export interface GamePanelGroupResizeSnapshot {
-  firstGroupId: string
-  firstHeight: number
-  secondGroupId: string
-  secondHeight: number
-  visibleHeight: number
+  edge: GamePanelGroupResizeEdge
+  groupId: string
+  groups: Array<{
+    heightPx: number
+    id: string
+    topPx: number
+  }>
+  totalHeightPx: number
 }
 
 export const PANEL_LAYOUT_STORAGE_KEY = '5dcol.panelLayout'
@@ -54,6 +60,7 @@ const GamePanelGroupSchema = z.object({
   height: z.number().refine(Number.isFinite).catch(1),
   id: z.string(),
   panelIds: z.array(GamePanelIdSchema),
+  top: z.number().refine(Number.isFinite).catch(Number.NaN),
 })
 const GamePanelColumnSchema = z.object({
   groups: z.array(GamePanelGroupSchema),
@@ -115,13 +122,14 @@ export function usePanelLayout({
     ALL_SIDE_PANEL_IDS.filter(id => isPanelAvailable(id) && ! isPanelVisible(id))
   ))
 
-  function createGroup(side: GamePanelSide, panelIds: GamePanelId[]): GamePanelGroup {
+  function createGroup(side: GamePanelSide, panelIds: GamePanelId[], top = 0, height = 1): GamePanelGroup {
     const id = `${DEFAULT_GROUP_PREFIX}-${side}-${layout.value.nextGroupId++}`
     return {
       activePanelId: panelIds[0],
-      height: 1,
+      height,
       id,
       panelIds: [...panelIds],
+      top,
     }
   }
 
@@ -165,9 +173,16 @@ export function usePanelLayout({
     if (! isPanelAvailable(id)) return
     hidePanel(id)
     const groups = layout.value.columns[side].groups
-    scaleGroupHeights(groups, groups.length / (groups.length + 1))
-    groups.push(createGroup(side, [id]))
-    normalizeSideGroupHeights(side)
+    const groupCount = groups.length
+    if (groupCount === 0) {
+      groups.push(createGroup(side, [id], 0, 1))
+      return
+    }
+
+    const scale = groupCount / (groupCount + 1)
+    scaleGroupGeometry(groups, scale)
+    groups.push(createGroup(side, [id], scale, 1 - scale))
+    normalizeSideGroupLayout(side)
   }
 
   function addPanelToGroup(id: GamePanelId, groupId: string) {
@@ -187,7 +202,7 @@ export function usePanelLayout({
     group.panelIds.splice(panelIndex, 1)
     if (group.panelIds.length === 0) {
       layout.value.columns[side].groups.splice(groupIndex, 1)
-      normalizeSideGroupHeights(side)
+      normalizeSideGroupLayout(side)
       return
     }
     if (group.activePanelId === id) {
@@ -254,54 +269,60 @@ export function usePanelLayout({
     return group.height
   }
 
-  function canResizeGroupAfter(side: GamePanelSide, groupId: string): boolean {
-    const groups = getSideGroups(side)
-    const index = groups.findIndex(group => group.id === groupId)
-    return index >= 0 && index < groups.length - 1
+  function getGroupTop(group: GamePanelGroup): number {
+    return group.top
   }
 
   function getGroupResizeSnapshot(
     side: GamePanelSide,
     groupId: string,
+    edge: GamePanelGroupResizeEdge,
+    totalHeightPx: number,
   ): GamePanelGroupResizeSnapshot | null {
     const groups = getSideGroups(side)
     const index = groups.findIndex(group => group.id === groupId)
-    if (index < 0 || index >= groups.length - 1) return null
+    if (index < 0 || totalHeightPx <= 0) return null
 
-    const first = groups[index]
-    const second = groups[index + 1]
     return {
-      firstGroupId: first.id,
-      firstHeight: first.height,
-      secondGroupId: second.id,
-      secondHeight: second.height,
-      visibleHeight: getVisibleGroupHeightTotal(groups),
+      edge,
+      groupId,
+      groups: groups.map(group => ({
+        heightPx: group.height * totalHeightPx,
+        id: group.id,
+        topPx: group.top * totalHeightPx,
+      })),
+      totalHeightPx,
     }
   }
 
-  function resizeGroupPair(
+  function resizeGroupEdge(
     side: GamePanelSide,
     snapshot: GamePanelGroupResizeSnapshot,
     deltaPx: number,
-    totalHeightPx: number,
   ) {
-    if (totalHeightPx <= 0) return
-    const first = findGroupInSide(side, snapshot.firstGroupId)
-    const second = findGroupInSide(side, snapshot.secondGroupId)
-    if (! first || ! second) return
+    if (snapshot.totalHeightPx <= 0 || snapshot.groups.length === 0) return
 
-    const visibleHeight = Math.max(0.001, snapshot.visibleHeight)
-    const firstPx = snapshot.firstHeight / visibleHeight * totalHeightPx
-    const secondPx = snapshot.secondHeight / visibleHeight * totalHeightPx
-    const pairPx = firstPx + secondPx
-    if (pairPx <= MIN_GROUP_HEIGHT * 2) return
+    const items = snapshot.groups.map(group => ({
+      bottomPx: group.topPx + group.heightPx,
+      id: group.id,
+      topPx: group.topPx,
+    }))
+    const index = items.findIndex(group => group.id === snapshot.groupId)
+    if (index < 0) return
 
-    const nextFirstPx = Math.min(
-      pairPx - MIN_GROUP_HEIGHT,
-      Math.max(MIN_GROUP_HEIGHT, firstPx + deltaPx),
-    )
-    first.height = nextFirstPx / totalHeightPx * visibleHeight
-    second.height = (pairPx - nextFirstPx) / totalHeightPx * visibleHeight
+    const minHeightPx = Math.max(1, Math.min(MIN_GROUP_HEIGHT, snapshot.totalHeightPx / items.length))
+    if (snapshot.edge === 'after') {
+      resizeGroupAfterEdge(items, index, deltaPx, snapshot.totalHeightPx, minHeightPx)
+    } else {
+      resizeGroupBeforeEdge(items, index, deltaPx, minHeightPx)
+    }
+
+    for (const item of items) {
+      const group = findGroupInSide(side, item.id)
+      if (! group) continue
+      group.top = clampRatio(item.topPx / snapshot.totalHeightPx)
+      group.height = clampRatio((item.bottomPx - item.topPx) / snapshot.totalHeightPx)
+    }
   }
 
   function getSideInset(side: GamePanelSide): number {
@@ -345,19 +366,19 @@ export function usePanelLayout({
     return layout.value.columns[side].groups.find(group => group.id === groupId) ?? null
   }
 
-  function normalizeSideGroupHeights(side: GamePanelSide) {
-    normalizeGroupHeights(layout.value.columns[side].groups)
+  function normalizeSideGroupLayout(side: GamePanelSide) {
+    normalizeGroupLayout(layout.value.columns[side].groups)
   }
 
   return {
     addPanelToGroup,
     addPanelToSide,
-    canResizeGroupAfter,
     closeAll,
     closeStudyPanels,
     getGroupHeight,
     getGroupPanels,
     getGroupResizeSnapshot,
+    getGroupTop,
     getPanelSize,
     getSideGroups,
     getSideSize,
@@ -371,7 +392,7 @@ export function usePanelLayout({
     setPanelOpen,
     setPanelSize,
     setSideSize,
-    resizeGroupPair,
+    resizeGroupEdge,
     togglePanel,
     visiblePanelIds,
     viewportInsets,
@@ -406,7 +427,7 @@ function normalizeStoredPanelLayout(layout: StoredPanelLayout): StoredPanelLayou
         groupIds.add(group.id)
         return true
       })
-    normalizeGroupHeights(column.groups)
+    normalizeGroupLayout(column.groups)
   }
   normalized.nextGroupId = Math.max(
     normalized.nextGroupId,
@@ -424,6 +445,7 @@ function normalizeGroup(group: GamePanelGroup): GamePanelGroup | null {
     activePanelId: panelIds.includes(group.activePanelId) ? group.activePanelId : panelIds[0],
     height: Math.max(0.001, group.height),
     panelIds,
+    top: Number.isFinite(group.top) ? group.top : Number.NaN,
   }
 }
 
@@ -438,22 +460,131 @@ function uniquePanelIds(panelIds: GamePanelId[]): GamePanelId[] {
   return result
 }
 
-function normalizeGroupHeights(groups: GamePanelGroup[]) {
+function normalizeGroupLayout(groups: GamePanelGroup[]) {
   if (groups.length === 0) return
-  const total = groups.reduce((sum, group) => sum + Math.max(0.001, group.height), 0)
-  if (! Number.isFinite(total) || total <= 0) {
-    for (const group of groups) group.height = 1 / groups.length
+  if (! hasValidGroupGeometry(groups)) {
+    packGroupLayoutByHeight(groups)
     return
   }
-  for (const group of groups) group.height = Math.max(0.001, group.height) / total
+  for (const group of groups) {
+    group.top = clampRatio(group.top)
+    group.height = clampRatio(group.height)
+  }
 }
 
-function scaleGroupHeights(groups: GamePanelGroup[], scale: number) {
-  for (const group of groups) group.height *= scale
+function hasValidGroupGeometry(groups: GamePanelGroup[]): boolean {
+  let previousBottom = 0
+  for (const group of groups) {
+    if (! Number.isFinite(group.top) || ! Number.isFinite(group.height)) return false
+    if (group.height <= 0) return false
+    if (group.top < -0.000001) return false
+    if (group.top + group.height > 1.000001) return false
+    if (group.top < previousBottom - 0.000001) return false
+    previousBottom = group.top + group.height
+  }
+  return true
 }
 
-function getVisibleGroupHeightTotal(groups: GamePanelGroup[]): number {
-  return groups.reduce((sum, group) => sum + Math.max(0.001, group.height), 0)
+function packGroupLayoutByHeight(groups: GamePanelGroup[]) {
+  const total = groups.reduce((sum, group) => (
+    sum + (Number.isFinite(group.height) ? Math.max(0.001, group.height) : 0)
+  ), 0)
+  let cursor = 0
+  for (const group of groups) {
+    const height = total > 0
+      ? Math.max(0.001, group.height) / total
+      : 1 / groups.length
+    group.top = cursor
+    group.height = height
+    cursor += height
+  }
+  if (groups.length > 0) {
+    const last = groups[groups.length - 1]
+    last.height = Math.max(0.001, 1 - last.top)
+  }
+}
+
+function scaleGroupGeometry(groups: GamePanelGroup[], scale: number) {
+  for (const group of groups) {
+    group.top *= scale
+    group.height *= scale
+  }
+}
+
+function resizeGroupAfterEdge(
+  items: Array<{ bottomPx: number; id: string; topPx: number }>,
+  index: number,
+  deltaPx: number,
+  totalHeightPx: number,
+  minHeightPx: number,
+) {
+  const item = items[index]
+  const startBottom = item.bottomPx
+  const minBottom = item.topPx + minHeightPx
+  const desiredBottom = startBottom + deltaPx
+
+  if (desiredBottom <= startBottom) {
+    item.bottomPx = Math.max(minBottom, desiredBottom)
+    return
+  }
+
+  const maxBottom = totalHeightPx - minHeightPx * (items.length - index - 1)
+  item.bottomPx = Math.min(Math.max(minBottom, desiredBottom), maxBottom)
+  let requiredTop = item.bottomPx
+  for (let i = index + 1; i < items.length; i++) {
+    const next = items[i]
+    if (next.topPx >= requiredTop) break
+
+    const originalBottom = next.bottomPx
+    if (originalBottom - requiredTop >= minHeightPx) {
+      next.topPx = requiredTop
+      break
+    }
+
+    next.topPx = requiredTop
+    next.bottomPx = requiredTop + minHeightPx
+    requiredTop = next.bottomPx
+  }
+}
+
+function resizeGroupBeforeEdge(
+  items: Array<{ bottomPx: number; id: string; topPx: number }>,
+  index: number,
+  deltaPx: number,
+  minHeightPx: number,
+) {
+  const item = items[index]
+  const startTop = item.topPx
+  const maxTop = item.bottomPx - minHeightPx
+  const desiredTop = startTop + deltaPx
+
+  if (desiredTop >= startTop) {
+    item.topPx = Math.min(maxTop, desiredTop)
+    return
+  }
+
+  const minTop = minHeightPx * index
+  item.topPx = Math.max(minTop, Math.min(maxTop, desiredTop))
+  let requiredBottom = item.topPx
+  for (let i = index - 1; i >= 0; i--) {
+    const previous = items[i]
+    if (previous.bottomPx <= requiredBottom) break
+
+    const originalTop = previous.topPx
+    if (requiredBottom - originalTop >= minHeightPx) {
+      previous.bottomPx = requiredBottom
+      break
+    }
+
+    previous.bottomPx = requiredBottom
+    previous.topPx = requiredBottom - minHeightPx
+    requiredBottom = previous.topPx
+  }
+}
+
+function clampRatio(value: number): number {
+  if (! Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
 }
 
 function getGroupIdSequence(groupId: string): number {

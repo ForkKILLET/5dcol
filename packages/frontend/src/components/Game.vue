@@ -60,7 +60,7 @@ import { useGameSettings } from '@/composables/settings'
 import { useLocalStudies, useStudyWorkspaces } from '@/composables/study'
 import { useDialogStack } from '@/composables/dialogStack'
 import { normalizeOnlineServerAddress } from '@/composables/online'
-import { usePanelLayout, type GamePanelGroup, type GamePanelId, type GamePanelSide } from '@/composables/panelLayout'
+import { usePanelLayout, type GamePanelGroup, type GamePanelGroupResizeEdge, type GamePanelId, type GamePanelSide } from '@/composables/panelLayout'
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import ChatPanel from './ChatPanel.vue'
@@ -190,7 +190,7 @@ const panelLayout = usePanelLayout({
 })
 const panelPickerOpen = ref(false)
 const panelPickerGroupId = ref<string | null>(null)
-const resizingSidePanelGroupId = ref<string | null>(null)
+const resizingSidePanelGroup = ref<{ edge: GamePanelGroupResizeEdge; groupId: string } | null>(null)
 const recordPanelOpen = computed({
   get: () => panelLayout.isPanelOpen('record'),
   set: (open: boolean) => panelLayout.setPanelOpen('record', open),
@@ -1011,7 +1011,7 @@ function ensureClockPanelOpenIfNeeded() {
   panelLayout.setPanelOpen('clock', true)
 }
 
-function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: PointerEvent) {
+function startSidePanelGroupResize(side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge, event: PointerEvent) {
   if (event.button !== 0) return
   const handle = event.currentTarget instanceof HTMLElement
     ? event.currentTarget
@@ -1022,7 +1022,7 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: 
 
   const stack = handle.closest<HTMLElement>('.game-side-panel-stack')
   const totalHeight = stack?.getBoundingClientRect().height ?? 0
-  const snapshot = panelLayout.getGroupResizeSnapshot(side, groupId)
+  const snapshot = panelLayout.getGroupResizeSnapshot(side, groupId, edge, totalHeight)
   if (! snapshot || totalHeight <= 0) return
 
   const pointerId = event.pointerId
@@ -1031,13 +1031,13 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: 
   const previousBodyCursor = document.body.style.cursor
   let stopped = false
   handle.setPointerCapture(pointerId)
-  resizingSidePanelGroupId.value = groupId
+  resizingSidePanelGroup.value = { edge, groupId }
   document.documentElement.style.cursor = 'ns-resize'
   document.body.style.cursor = 'ns-resize'
 
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return
-    panelLayout.resizeGroupPair(side, snapshot, moveEvent.clientY - startClientY, totalHeight)
+    panelLayout.resizeGroupEdge(side, snapshot, moveEvent.clientY - startClientY)
   }
 
   const stop = (stopEvent: PointerEvent | Event) => {
@@ -1050,7 +1050,9 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: 
     handle.removeEventListener('lostpointercapture', stop)
     window.removeEventListener('blur', stop)
     if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
-    if (resizingSidePanelGroupId.value === groupId) resizingSidePanelGroupId.value = null
+    if (resizingSidePanelGroup.value?.groupId === groupId && resizingSidePanelGroup.value.edge === edge) {
+      resizingSidePanelGroup.value = null
+    }
     document.documentElement.style.cursor = previousHtmlCursor
     document.body.style.cursor = previousBodyCursor
   }
@@ -3202,15 +3204,15 @@ watch([exportFormat, exportMode], () => {
             :key="group.id"
             :side="side"
             :group="group"
+            :top="panelLayout.getGroupTop(group)"
             :height="panelLayout.getGroupHeight(group)"
             :tabs="getPanelTabs(group)"
-            :can-resize-after="panelLayout.canResizeGroupAfter(side, group.id)"
-            :resizing="resizingSidePanelGroupId === group.id"
+            :resizing-edge="resizingSidePanelGroup?.groupId === group.id ? resizingSidePanelGroup.edge : null"
             :add-label="t('panel.addPanel')"
             :close-label="t('panel.closePanel')"
             @add-panel="openPanelPicker"
             @close-panel="closePanel"
-            @resize-after="startSidePanelGroupResize"
+            @resize-edge="startSidePanelGroupResize"
             @select-panel="selectPanelTab"
           >
             <MembersPanel

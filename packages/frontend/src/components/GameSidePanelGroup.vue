@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { GamePanelGroup, GamePanelId, GamePanelSide } from '@/composables/panelLayout'
+import type { GamePanelGroup, GamePanelGroupResizeEdge, GamePanelId, GamePanelSide } from '@/composables/panelLayout'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
 import GameTab from './GameTab.vue'
@@ -13,31 +13,35 @@ export type GameSidePanelTab = {
 
 const props = defineProps<{
   addLabel: string
-  canResizeAfter?: boolean
   closeLabel: string
   group: GamePanelGroup
   height: number
-  resizing?: boolean
+  resizingEdge?: GamePanelGroupResizeEdge | null
   side: GamePanelSide
   tabs: GameSidePanelTab[]
+  top: number
 }>()
 
 const emit = defineEmits<{
   addPanel: [groupId: string]
   closePanel: [panelId: GamePanelId]
-  resizeAfter: [side: GamePanelSide, groupId: string, event: PointerEvent]
+  resizeEdge: [side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge, event: PointerEvent]
   selectPanel: [groupId: string, panelId: GamePanelId]
 }>()
 
 const groupStyle = computed(() => ({
-  '--game-side-panel-group-grow': props.height,
+  '--game-side-panel-group-height': `${props.height * 100}%`,
+  '--game-side-panel-group-top': `${props.top * 100}%`,
 }))
 </script>
 
 <template>
   <section
     class="game-side-panel-group"
-    :class="{ 'game-side-panel-group--resizing': resizing }"
+    :class="{
+      'game-side-panel-group--resizing-before': resizingEdge === 'before',
+      'game-side-panel-group--resizing-after': resizingEdge === 'after',
+    }"
     :style="groupStyle"
   >
     <div class="game-side-panel-tabs">
@@ -74,12 +78,15 @@ const groupStyle = computed(() => ({
     </div>
     <div class="game-side-panel-group-content">
       <slot />
+      <div
+        class="game-side-panel-group-resize-handle game-side-panel-group-resize-handle--before"
+        @pointerdown.stop.prevent="emit('resizeEdge', side, group.id, 'before', $event)"
+      ></div>
+      <div
+        class="game-side-panel-group-resize-handle game-side-panel-group-resize-handle--after"
+        @pointerdown.stop.prevent="emit('resizeEdge', side, group.id, 'after', $event)"
+      ></div>
     </div>
-    <div
-      v-if="canResizeAfter"
-      class="game-side-panel-group-resize-handle"
-      @pointerdown.stop.prevent="emit('resizeAfter', side, group.id, $event)"
-    ></div>
   </section>
 </template>
 
@@ -90,12 +97,15 @@ const groupStyle = computed(() => ({
   --game-side-panel-resize-line-inset: 3px;
   --game-side-panel-resize-line-size: 2px;
 
-  position: relative;
+  position: absolute;
   display: flex;
-  flex: var(--game-side-panel-group-grow) 1 0;
   flex-direction: column;
-  min-height: 132px;
+  height: var(--game-side-panel-group-height);
+  min-height: 0;
   pointer-events: auto;
+  right: 0;
+  left: 0;
+  top: var(--game-side-panel-group-top);
 }
 
 .game-side-panel-tabs {
@@ -137,12 +147,14 @@ const groupStyle = computed(() => ({
 }
 
 .game-side-panel-group-content {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
 }
 
-.game-side-panel-group-content > :deep(*) {
+.game-side-panel-group-content > :deep(.game-panel),
+.game-side-panel-group-content > :deep(.record-panel) {
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -151,18 +163,23 @@ const groupStyle = computed(() => ({
   position: absolute;
   z-index: var(--z-ui-handle);
   right: 0;
-  bottom: 0;
   left: 0;
   height: var(--game-side-panel-resize-hit-size);
   cursor: ns-resize;
   touch-action: none;
 }
 
-.game-side-panel-group-content :deep(.game-panel)::before,
-.game-side-panel-group-content :deep(.record-panel)::before {
+.game-side-panel-group-resize-handle--before {
+  top: 0;
+}
+
+.game-side-panel-group-resize-handle--after {
+  bottom: 0;
+}
+
+.game-side-panel-group-resize-handle::after {
   position: absolute;
   right: var(--game-side-panel-resize-line-end-inset);
-  bottom: var(--game-side-panel-resize-line-inset);
   left: var(--game-side-panel-resize-line-end-inset);
   height: var(--game-side-panel-resize-line-size);
   border-radius: 999px;
@@ -172,10 +189,17 @@ const groupStyle = computed(() => ({
   transition: opacity 160ms ease;
 }
 
-.game-side-panel-group:has(.game-side-panel-group-resize-handle:hover) .game-side-panel-group-content :deep(.game-panel)::before,
-.game-side-panel-group:has(.game-side-panel-group-resize-handle:hover) .game-side-panel-group-content :deep(.record-panel)::before,
-.game-side-panel-group--resizing .game-side-panel-group-content :deep(.game-panel)::before,
-.game-side-panel-group--resizing .game-side-panel-group-content :deep(.record-panel)::before {
+.game-side-panel-group-resize-handle--before::after {
+  top: var(--game-side-panel-resize-line-inset);
+}
+
+.game-side-panel-group-resize-handle--after::after {
+  bottom: var(--game-side-panel-resize-line-inset);
+}
+
+.game-side-panel-group-resize-handle:hover::after,
+.game-side-panel-group--resizing-before .game-side-panel-group-resize-handle--before::after,
+.game-side-panel-group--resizing-after .game-side-panel-group-resize-handle--after::after {
   opacity: 0.42;
 }
 </style>
