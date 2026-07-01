@@ -17,6 +17,7 @@ const props = defineProps<{
   closeLabel: string
   group: GamePanelGroup
   height: number
+  resizing?: boolean
   side: GamePanelSide
   tabs: GameSidePanelTab[]
 }>()
@@ -36,6 +37,7 @@ const groupStyle = computed(() => ({
 <template>
   <section
     class="game-side-panel-group"
+    :class="{ 'game-side-panel-group--resizing': resizing }"
     :style="groupStyle"
   >
     <div class="game-side-panel-tabs">
@@ -165,7 +167,7 @@ const groupStyle = computed(() => ({
 }
 
 .game-side-panel-group-resize-handle:hover::after,
-:global(.game-side-panel-vertical-resizing) .game-side-panel-group-resize-handle::after {
+.game-side-panel-group--resizing .game-side-panel-group-resize-handle::after {
   opacity: 0.42;
 }
 </style>

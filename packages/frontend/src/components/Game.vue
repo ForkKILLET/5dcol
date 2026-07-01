@@ -190,6 +190,7 @@ const panelLayout = usePanelLayout({
 })
 const panelPickerOpen = ref(false)
 const panelPickerGroupId = ref<string | null>(null)
+const resizingSidePanelGroupId = ref<string | null>(null)
 const recordPanelOpen = computed({
   get: () => panelLayout.isPanelOpen('record'),
   set: (open: boolean) => panelLayout.setPanelOpen('record', open),
@@ -1012,8 +1013,6 @@ function ensureClockPanelOpenIfNeeded() {
 
 function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: PointerEvent) {
   if (event.button !== 0) return
-  event.preventDefault()
-  event.stopPropagation()
   const handle = event.currentTarget instanceof HTMLElement
     ? event.currentTarget
     : event.target instanceof HTMLElement
@@ -1028,45 +1027,37 @@ function startSidePanelGroupResize(side: GamePanelSide, groupId: string, event: 
 
   const pointerId = event.pointerId
   const startClientY = event.clientY
-  const preventSelection = (selectionEvent: Event) => {
-    selectionEvent.preventDefault()
-  }
-  const clearSelection = () => {
-    window.getSelection()?.removeAllRanges()
-  }
-  clearSelection()
+  const previousHtmlCursor = document.documentElement.style.cursor
+  const previousBodyCursor = document.body.style.cursor
+  let stopped = false
   handle.setPointerCapture(pointerId)
-  document.documentElement.classList.add('game-side-panel-vertical-resizing')
-  document.addEventListener('selectstart', preventSelection, true)
-  document.addEventListener('dragstart', preventSelection, true)
-  document.addEventListener('selectionchange', clearSelection)
+  resizingSidePanelGroupId.value = groupId
+  document.documentElement.style.cursor = 'ns-resize'
+  document.body.style.cursor = 'ns-resize'
 
   const move = (moveEvent: PointerEvent) => {
     if (moveEvent.pointerId !== pointerId) return
-    moveEvent.preventDefault()
-    moveEvent.stopPropagation()
-    clearSelection()
     panelLayout.resizeGroupPair(side, snapshot, moveEvent.clientY - startClientY, totalHeight)
   }
 
   const stop = (stopEvent: PointerEvent | Event) => {
     if ('pointerId' in stopEvent && stopEvent.pointerId !== pointerId) return
-    document.removeEventListener('pointermove', move, true)
-    document.removeEventListener('pointerup', stop, true)
-    document.removeEventListener('pointercancel', stop, true)
+    if (stopped) return
+    stopped = true
+    handle.removeEventListener('pointermove', move)
+    handle.removeEventListener('pointerup', stop)
+    handle.removeEventListener('pointercancel', stop)
     handle.removeEventListener('lostpointercapture', stop)
     window.removeEventListener('blur', stop)
-    document.removeEventListener('selectstart', preventSelection, true)
-    document.removeEventListener('dragstart', preventSelection, true)
-    document.removeEventListener('selectionchange', clearSelection)
     if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
-    clearSelection()
-    document.documentElement.classList.remove('game-side-panel-vertical-resizing')
+    if (resizingSidePanelGroupId.value === groupId) resizingSidePanelGroupId.value = null
+    document.documentElement.style.cursor = previousHtmlCursor
+    document.body.style.cursor = previousBodyCursor
   }
 
-  document.addEventListener('pointermove', move, true)
-  document.addEventListener('pointerup', stop, true)
-  document.addEventListener('pointercancel', stop, true)
+  handle.addEventListener('pointermove', move)
+  handle.addEventListener('pointerup', stop)
+  handle.addEventListener('pointercancel', stop)
   handle.addEventListener('lostpointercapture', stop)
   window.addEventListener('blur', stop)
 }
@@ -3214,6 +3205,7 @@ watch([exportFormat, exportMode], () => {
             :height="panelLayout.getGroupHeight(group)"
             :tabs="getPanelTabs(group)"
             :can-resize-after="panelLayout.canResizeGroupAfter(side, group.id)"
+            :resizing="resizingSidePanelGroupId === group.id"
             :add-label="t('panel.addPanel')"
             :close-label="t('panel.closePanel')"
             @add-panel="openPanelPicker"

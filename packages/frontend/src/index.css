@@ -54,21 +54,6 @@ p {
   background: transparent;
 }
 
-html.game-side-panel-vertical-resizing,
-html.game-side-panel-vertical-resizing body,
-html.game-side-panel-vertical-resizing * {
-  cursor: ns-resize !important;
-  -webkit-user-drag: none !important;
-  -webkit-user-select: none !important;
-  user-select: none !important;
-}
-
-html.game-side-panel-vertical-resizing::selection,
-html.game-side-panel-vertical-resizing *::selection {
-  background: transparent !important;
-  color: inherit !important;
-}
-
 .dialog-title {
   margin: 0;
   color: var(--button-text-color);
