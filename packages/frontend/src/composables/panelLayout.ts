@@ -84,14 +84,20 @@ const DEFAULT_LAYOUT: StoredPanelLayout = {
   columns: {
     left: {
       size: LEFT_PANEL_DEFAULT_SIZE,
-      groups: [],
+      groups: [{
+        activePanelId: 'minimap',
+        height: 1,
+        id: `${DEFAULT_GROUP_PREFIX}-left-1`,
+        panelIds: ['minimap'],
+        top: 0,
+      }],
     },
     right: {
       size: Sizes.RecordPanelWidth,
       groups: [],
     },
   },
-  nextGroupId: 1,
+  nextGroupId: 2,
 }
 
 export function usePanelLayout({
