@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'panels' | 'plus' | 'record' | 'x'
+  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'minimap' | 'panels' | 'plus' | 'record' | 'x'
 }>()
 </script>
 
@@ -119,6 +119,36 @@ defineProps<{
         width="5.5"
         height="5.5"
         rx="1"
+      />
+    </template>
+    <template v-else-if="name === 'minimap'">
+      <rect
+        x="4.5"
+        y="5.5"
+        width="15"
+        height="13"
+        rx="1.5"
+      />
+      <rect
+        x="7"
+        y="8"
+        width="3"
+        height="2.4"
+        rx=".5"
+      />
+      <rect
+        x="13"
+        y="8.2"
+        width="4"
+        height="3"
+        rx=".5"
+      />
+      <rect
+        x="8.5"
+        y="13.4"
+        width="4"
+        height="2.6"
+        rx=".5"
       />
     </template>
     <template v-else-if="name === 'members'">

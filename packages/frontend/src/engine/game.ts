@@ -118,6 +118,21 @@ export interface GameStatusView {
   ended: boolean
 }
 
+export interface GameMinimapBoard {
+  active: boolean
+  focused: boolean
+  l: number
+  m: number
+  mandatory: boolean
+  rect: Rect
+}
+
+export interface GameMinimapSnapshot {
+  boards: GameMinimapBoard[]
+  bounds: Rect | null
+  viewport: Rect
+}
+
 interface PointerState {
   screen: Vec2
   activePointerId: number | null
@@ -1412,6 +1427,49 @@ export class Game extends Disposable(Empty) {
     }
     this.syncWorkspace()
     this.persistGameState()
+  }
+
+  public getMinimapSnapshot(): GameMinimapSnapshot {
+    const status = Multiverse.getTimelineStatus(this.multiverse, this.player)
+    const mandatoryLines = new Set(status.mandatory)
+    const activeLines = new Set([...status.mandatory, ...status.optional])
+    const focusedBoard = this.getValidFocusedBoard()
+    const boards: GameMinimapBoard[] = []
+
+    for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
+      if (! line) continue
+      const latestM = Line.getLatestBoardIndex(line)
+
+      for (const [m, board] of Line.getBoardEntries(line)) {
+        if (! board) continue
+        const active = latestM === m && activeLines.has(l)
+        boards.push({
+          active,
+          focused: focusedBoard?.l === l && focusedBoard.m === m,
+          l,
+          m,
+          mandatory: active && mandatoryLines.has(l),
+          rect: this.layout.getBoardRect(l, m),
+        })
+      }
+    }
+
+    return {
+      boards,
+      bounds: Rect.bounds(boards.map(board => board.rect)),
+      viewport: this.getViewportWorldRect(),
+    }
+  }
+
+  private getViewportWorldRect(): Rect {
+    const [[x, y], [w, h]] = this.layout.getViewportScreenRect()
+    const topLeft = this.renderer.screenToWorld([x, y])
+    const bottomRight = this.renderer.screenToWorld([x + w, y + h])
+    const x0 = Math.min(topLeft[0], bottomRight[0])
+    const y0 = Math.min(topLeft[1], bottomRight[1])
+    const x1 = Math.max(topLeft[0], bottomRight[0])
+    const y1 = Math.max(topLeft[1], bottomRight[1])
+    return [[x0, y0], [x1 - x0, y1 - y0]]
   }
 
   private applyWorkspaceState(

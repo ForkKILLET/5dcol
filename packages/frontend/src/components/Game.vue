@@ -74,6 +74,7 @@ import GameSidePanelStack from './GameSidePanelStack.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
 import MembersPanel from './MembersPanel.vue'
+import MinimapPanel from './MinimapPanel.vue'
 import RecordPanel from './RecordPanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
 import StudyPage from './StudyPage.vue'
@@ -901,6 +902,8 @@ function getPanelLabel(id: GamePanelId): string {
   switch (id) {
     case 'record':
       return t('button.record')
+    case 'minimap':
+      return t('button.minimap')
     case 'members':
       return t('button.members')
     case 'chat':
@@ -918,6 +921,8 @@ function getPanelIcon(id: GamePanelId): GamePanelPickerItem['icon'] {
       return 'chat'
     case 'record':
       return 'record'
+    case 'minimap':
+      return 'minimap'
     case 'clock':
       return 'clock'
   }
@@ -981,6 +986,15 @@ function closePanel(panelId: GamePanelId) {
   if (panelId === 'clock') gameSettings.showClock = false
   panelLayout.setPanelOpen(panelId, false)
   syncGameViewportInsets()
+}
+
+function focusMinimapBoard(board: { l: number, m: number }) {
+  if (! gameStarted.value) return
+  playUISound()
+  if (activeOnlineStudy.value && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()) {
+    setOnlineStudyFollowUser(null)
+  }
+  game?.focusBoard(board.l, board.m)
 }
 
 function prepareRecordPanelOpen() {
@@ -3241,6 +3255,12 @@ watch([exportFormat, exportMode], () => {
             <ClockPanel
               v-else-if="group.activePanelId === 'clock'"
               :rows="clockRows"
+            />
+            <MinimapPanel
+              v-else-if="group.activePanelId === 'minimap'"
+              :game="game"
+              :empty-text="t('panel.minimapEmpty')"
+              @focus-board="focusMinimapBoard"
             />
             <RecordPanel
               v-else-if="group.activePanelId === 'record'"

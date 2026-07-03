@@ -6,7 +6,7 @@ import GameIcon from './GameIcon.vue'
 import GameTab from './GameTab.vue'
 
 export type GameSidePanelTab = {
-  icon: 'chat' | 'clock' | 'members' | 'record'
+  icon: 'chat' | 'clock' | 'members' | 'minimap' | 'record'
   id: GamePanelId
   label: string
 }
