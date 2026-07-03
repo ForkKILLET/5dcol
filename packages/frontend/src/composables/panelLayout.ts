@@ -223,12 +223,7 @@ export function usePanelLayout({
   }
 
   function getSideGroups(side: GamePanelSide): GamePanelGroup[] {
-    return layout.value.columns[side].groups.filter(group => {
-      const panels = getGroupPanels(group)
-      if (panels.length === 0) return false
-      if (! panels.includes(group.activePanelId)) group.activePanelId = panels[0]
-      return true
-    })
+    return getRenderableSideGroups(side)
   }
 
   function getGroupPanels(group: GamePanelGroup): GamePanelId[] {
@@ -370,6 +365,31 @@ export function usePanelLayout({
 
   function findGroupInSide(side: GamePanelSide, groupId: string): GamePanelGroup | null {
     return layout.value.columns[side].groups.find(group => group.id === groupId) ?? null
+  }
+
+  function getRenderableSideGroups(side: GamePanelSide): GamePanelGroup[] {
+    const groups: GamePanelGroup[] = []
+    let skippedUnavailableLayout = false
+    for (const group of layout.value.columns[side].groups) {
+      const panels = getGroupPanels(group)
+      if (panels.length === 0) {
+        skippedUnavailableLayout = true
+        continue
+      }
+      const activePanelId = panels.includes(group.activePanelId) ? group.activePanelId : panels[0]
+      if (panels.length !== group.panelIds.length || activePanelId !== group.activePanelId) {
+        skippedUnavailableLayout = true
+      }
+      groups.push({
+        ...group,
+        activePanelId,
+        panelIds: panels,
+      })
+    }
+
+    if (skippedUnavailableLayout) packGroupLayoutByHeight(groups)
+    else normalizeGroupLayout(groups)
+    return groups
   }
 
   function normalizeSideGroupLayout(side: GamePanelSide) {
