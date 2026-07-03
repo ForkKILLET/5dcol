@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Player } from '@5dcol/core'
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Game, GameMinimapBoard, GameMinimapSnapshot } from '@engine/game'
 import { Color4, type Rect, type Vec2 } from '@engine/basic'
 import { Colors } from '@engine/constant'
@@ -28,10 +28,15 @@ const emit = defineEmits<{
 }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+const canvasAspectRatio = ref(1)
 const hoveredBoardKey = ref<string | null>(null)
 
 let frameId: number | null = null
 let lastHitItems: Array<{ board: GameMinimapBoard, rect: CanvasRect }> = []
+
+const canvasStyle = computed(() => ({
+  '--minimap-canvas-aspect-ratio': `${canvasAspectRatio.value}`,
+}))
 
 onMounted(() => {
   frameId = requestAnimationFrame(loop)
@@ -71,11 +76,13 @@ function draw() {
   const snapshot = props.game?.getMinimapSnapshot()
   if (! snapshot?.bounds || snapshot.boards.length === 0) return
 
+  const paddingWorld = getMinimapWorldPadding(snapshot)
+  canvasAspectRatio.value = getMinimapAspectRatio(snapshot, paddingWorld)
   const transform = getMinimapTransform(
     snapshot.bounds,
     width,
     height,
-    getMinimapWorldPadding(snapshot),
+    paddingWorld,
   )
   const colors = getMinimapColors(canvasElement)
 
@@ -172,6 +179,12 @@ function getMinimapWorldPadding(snapshot: GameMinimapSnapshot): number {
   const boardRect = snapshot.boards[0]?.rect
   if (! boardRect) return 0
   return Math.max(boardRect[1][0], boardRect[1][1])
+}
+
+function getMinimapAspectRatio(snapshot: GameMinimapSnapshot, paddingWorld: number): number {
+  if (! snapshot.bounds) return 1
+  const [, [w, h]] = snapshot.bounds
+  return Math.max(0.001, (w + paddingWorld * 2) / Math.max(1, h + paddingWorld * 2))
 }
 
 function worldRectToCanvasRect([[x, y], [w, h]]: Rect, transform: MinimapTransform): CanvasRect {
@@ -273,6 +286,7 @@ function getBoardKey({ l, m }: Pick<GameMinimapBoard, 'l' | 'm'>): string {
       ref="canvas"
       class="minimap-canvas"
       :class="{ 'is-hovering-board': hoveredBoardKey !== null }"
+      :style="canvasStyle"
       @click="handleClick"
       @pointermove="handlePointerMove"
       @pointerleave="handlePointerLeave"
@@ -289,6 +303,7 @@ function getBoardKey({ l, m }: Pick<GameMinimapBoard, 'l' | 'm'>): string {
 <style scoped>
 .minimap-panel {
   position: relative;
+  justify-content: center;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -296,10 +311,13 @@ function getBoardKey({ l, m }: Pick<GameMinimapBoard, 'l' | 'm'>): string {
 
 .minimap-canvas {
   display: block;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  align-self: stretch;
   width: 100%;
-  height: 100%;
-  min-height: 120px;
+  height: auto;
+  max-height: 100%;
+  min-height: 0;
+  aspect-ratio: var(--minimap-canvas-aspect-ratio);
   border-radius: 5px;
   cursor: default;
   touch-action: none;
