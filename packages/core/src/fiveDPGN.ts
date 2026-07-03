@@ -658,7 +658,7 @@ const formatActionInContext = (
   for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex ++) {
     const move = action.moves[moveIndex]!
     const piece = getMovePiece(nextMultiverse, move, player)
-    const sourceBoardText = options.omitSingleMoveSourceBoards && action.moves.length === 1
+    const sourceBoardText = shouldOmitSourceBoard(nextMultiverse, player, options)
       ? ''
       : formatBoard(move.from)
     const baseContext = {
@@ -713,6 +713,15 @@ const formatActionInContext = (
     multiverse: nextMultiverse,
     player: Players.opponent(player),
   }
+}
+
+const shouldOmitSourceBoard = (
+  multiverse: Multiverse,
+  player: Player,
+  options: ResolvedExportOptions,
+): boolean => {
+  const { mandatory, optional } = Multiverse.getTimelineStatus(multiverse, player)
+  return options.omitSingleMoveSourceBoards && mandatory.length + optional.length <= 1
 }
 
 const applyTerminalCheckmateMarker = (

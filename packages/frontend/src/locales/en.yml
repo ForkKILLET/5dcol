@@ -212,7 +212,7 @@ settings.fiveDPGNCheckMarkers: "Check and mate markers"
 settings.fiveDPGNPromotionMarkers: "Promotion markers"
 settings.fiveDPGNBuiltInGlyphNAGs: "Built-in glyph NAGs"
 settings.fiveDPGNOmitSourceSquares: "Omit source squares when clear"
-settings.fiveDPGNOmitSingleMoveSourceBoards: "Omit source board on single moves"
+settings.fiveDPGNOmitSingleMoveSourceBoards: "Omit source board with one active board"
 
 player.white: "White"
 player.black: "Black"

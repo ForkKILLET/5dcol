@@ -212,7 +212,7 @@ settings.fiveDPGNCheckMarkers: "将军与将杀符号"
 settings.fiveDPGNPromotionMarkers: "升变符号"
 settings.fiveDPGNBuiltInGlyphNAGs: "内置标注使用 NAG"
 settings.fiveDPGNOmitSourceSquares: "明确时省略起始格"
-settings.fiveDPGNOmitSingleMoveSourceBoards: "单步时省略源棋盘坐标"
+settings.fiveDPGNOmitSingleMoveSourceBoards: "单个激活棋盘时省略源棋盘坐标"
 
 player.white: "白方"
 player.black: "黑方"
