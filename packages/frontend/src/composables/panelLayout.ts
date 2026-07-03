@@ -8,6 +8,7 @@ export type GamePanelSide = 'left' | 'right'
 
 export interface GamePanelGroup {
   activePanelId: GamePanelId
+  fitContent?: boolean
   height: number
   id: string
   panelIds: GamePanelId[]
@@ -48,7 +49,7 @@ export interface GamePanelGroupResizeSnapshot {
 }
 
 export const PANEL_LAYOUT_STORAGE_KEY = '5dcol.panelLayout'
-export const PANEL_LAYOUT_STORAGE_VERSION = 1
+export const PANEL_LAYOUT_STORAGE_VERSION = 2
 
 const LEFT_PANEL_DEFAULT_SIZE = 360
 const DEFAULT_GROUP_PREFIX = 'panel-group'
@@ -57,6 +58,7 @@ const MIN_GROUP_HEIGHT = 132
 const GamePanelIdSchema = z.enum(['chat', 'clock', 'members', 'minimap', 'record'])
 const GamePanelGroupSchema = z.object({
   activePanelId: GamePanelIdSchema,
+  fitContent: z.boolean().optional(),
   height: z.number().refine(Number.isFinite).catch(1),
   id: z.string(),
   panelIds: z.array(GamePanelIdSchema),
@@ -86,7 +88,8 @@ const DEFAULT_LAYOUT: StoredPanelLayout = {
       size: LEFT_PANEL_DEFAULT_SIZE,
       groups: [{
         activePanelId: 'minimap',
-        height: 1,
+        fitContent: true,
+        height: 0.2,
         id: `${DEFAULT_GROUP_PREFIX}-left-1`,
         panelIds: ['minimap'],
         top: 0,
@@ -94,10 +97,16 @@ const DEFAULT_LAYOUT: StoredPanelLayout = {
     },
     right: {
       size: Sizes.RecordPanelWidth,
-      groups: [],
+      groups: [{
+        activePanelId: 'record',
+        height: 1,
+        id: `${DEFAULT_GROUP_PREFIX}-right-2`,
+        panelIds: ['record'],
+        top: 0,
+      }],
     },
   },
-  nextGroupId: 2,
+  nextGroupId: 3,
 }
 
 export function usePanelLayout({
@@ -270,6 +279,10 @@ export function usePanelLayout({
     return group.height
   }
 
+  function isGroupFitContent(group: GamePanelGroup): boolean {
+    return group.fitContent === true
+  }
+
   function getGroupTop(group: GamePanelGroup): number {
     return group.top
   }
@@ -321,6 +334,7 @@ export function usePanelLayout({
     for (const item of items) {
       const group = findGroupInSide(side, item.id)
       if (! group) continue
+      if (group.id === snapshot.groupId) group.fitContent = false
       group.top = clampRatio(item.topPx / snapshot.totalHeightPx)
       group.height = clampRatio((item.bottomPx - item.topPx) / snapshot.totalHeightPx)
     }
@@ -410,6 +424,7 @@ export function usePanelLayout({
     getSideSize,
     hiddenPanelIds,
     isPanelAvailable,
+    isGroupFitContent,
     isPanelOpen,
     isPanelVisible,
     layout,
@@ -532,6 +547,7 @@ function packGroupLayoutByHeight(groups: GamePanelGroup[]) {
 
 function scaleGroupGeometry(groups: GamePanelGroup[], scale: number) {
   for (const group of groups) {
+    group.fitContent = false
     group.top *= scale
     group.height *= scale
   }

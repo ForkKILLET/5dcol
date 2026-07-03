@@ -3214,6 +3214,7 @@ watch([exportFormat, exportMode], () => {
             :group="group"
             :top="panelLayout.getGroupTop(group)"
             :height="panelLayout.getGroupHeight(group)"
+            :fit-content="panelLayout.isGroupFitContent(group)"
             :tabs="getPanelTabs(group)"
             :resizing-edge="resizingSidePanelGroup?.groupId === group.id ? resizingSidePanelGroup.edge : null"
             :add-label="t('panel.addPanel')"

@@ -14,6 +14,7 @@ export type GameSidePanelTab = {
 const props = defineProps<{
   addLabel: string
   closeLabel: string
+  fitContent?: boolean
   group: GamePanelGroup
   height: number
   resizingEdge?: GamePanelGroupResizeEdge | null
@@ -39,6 +40,7 @@ const groupStyle = computed(() => ({
   <section
     class="game-side-panel-group"
     :class="{
+      'game-side-panel-group--fit-content': fitContent,
       'game-side-panel-group--resizing-before': resizingEdge === 'before',
       'game-side-panel-group--resizing-after': resizingEdge === 'after',
     }"
@@ -108,6 +110,11 @@ const groupStyle = computed(() => ({
   top: var(--game-side-panel-group-top);
 }
 
+.game-side-panel-group--fit-content {
+  height: auto;
+  max-height: calc(100% - var(--game-side-panel-group-top));
+}
+
 .game-side-panel-tabs {
   position: relative;
   z-index: var(--z-ui-handle);
@@ -153,10 +160,20 @@ const groupStyle = computed(() => ({
   min-height: 0;
 }
 
+.game-side-panel-group--fit-content .game-side-panel-group-content {
+  flex: 0 1 auto;
+}
+
 .game-side-panel-group-content > :deep(.game-panel),
 .game-side-panel-group-content > :deep(.record-panel) {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.game-side-panel-group--fit-content .game-side-panel-group-content > :deep(.game-panel),
+.game-side-panel-group--fit-content .game-side-panel-group-content > :deep(.record-panel) {
+  height: auto;
+  max-height: 100%;
 }
 
 .game-side-panel-group-resize-handle {
