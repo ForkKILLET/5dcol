@@ -48,42 +48,44 @@ function create() {
     tag="section"
     class="versus-create-panel"
   >
-    <div class="versus-create-panel__header">
-      <div class="versus-create-panel__heading">
-        <div class="versus-create-panel__title">{{ title }}</div>
-        <div
-          v-if="serverName || displayAddress"
-          class="versus-create-panel__server"
-        >
-          <span v-if="serverName">{{ serverName }}</span>
-          <span
-            v-if="displayAddress"
-            class="versus-create-panel__address"
-          >{{ displayAddress }}</span>
+    <div class="versus-create-panel__body">
+      <div class="versus-create-panel__header">
+        <div class="versus-create-panel__heading">
+          <div class="versus-create-panel__title">{{ title }}</div>
+          <div
+            v-if="serverName || displayAddress"
+            class="versus-create-panel__server"
+          >
+            <span v-if="serverName">{{ serverName }}</span>
+            <span
+              v-if="displayAddress"
+              class="versus-create-panel__address"
+            >{{ displayAddress }}</span>
+          </div>
         </div>
       </div>
+
+      <label class="versus-create-panel__row">
+        <span>{{ nameLabel }}</span>
+        <span class="versus-create-panel__input">
+          <GameTextInput
+            v-model="name"
+            :placeholder="namePlaceholder"
+            spellcheck="false"
+            @keydown.enter.prevent="create"
+          />
+        </span>
+      </label>
+
+      <slot name="settings" />
+
+      <VersusSourcePicker
+        v-model:source="source"
+        v-model:import-text="importText"
+        v-model:imported-source="importSource"
+        v-model:error="importError"
+      />
     </div>
-
-    <label class="versus-create-panel__row">
-      <span>{{ nameLabel }}</span>
-      <span class="versus-create-panel__input">
-        <GameTextInput
-          v-model="name"
-          :placeholder="namePlaceholder"
-          spellcheck="false"
-          @keydown.enter.prevent="create"
-        />
-      </span>
-    </label>
-
-    <slot name="settings" />
-
-    <VersusSourcePicker
-      v-model:source="source"
-      v-model:import-text="importText"
-      v-model:imported-source="importSource"
-      v-model:error="importError"
-    />
 
     <div class="versus-create-panel__actions">
       <GameButton
@@ -106,9 +108,17 @@ function create() {
 <style scoped>
 .versus-create-panel {
   flex: 1 1 auto;
-  justify-content: flex-start;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.versus-create-panel__body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   gap: calc(var(--button-content-gap) * 2);
   min-height: 0;
+  padding-right: calc(var(--button-content-gap) * 0.5);
   overflow: auto;
 }
 
@@ -163,7 +173,8 @@ function create() {
 }
 
 .versus-create-panel__actions {
+  flex: 0 0 auto;
   justify-content: flex-end;
-  margin-top: auto;
+  padding-top: var(--button-content-gap);
 }
 </style>
