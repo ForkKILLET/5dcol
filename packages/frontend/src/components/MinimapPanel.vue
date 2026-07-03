@@ -89,9 +89,6 @@ function drawGrid(
     const rect = worldRectToCanvasRect(cell.rect, transform)
     ctx.fillStyle = cell.white ? colors.gridWhiteFill : colors.gridBlackFill
     fillCanvasRect(ctx, rect)
-    ctx.lineWidth = 1
-    ctx.strokeStyle = colors.gridStroke
-    strokeCanvasRect(ctx, rect)
   }
 }
 
@@ -188,7 +185,6 @@ function getMinimapColors(element: HTMLElement) {
     boardStroke: withAlpha(getCssColor(style, '--button-border-color', 'rgba(39, 39, 39, 1)'), 0.6),
     focusStroke: participant,
     gridBlackFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.36),
-    gridStroke: withAlpha(getCssColor(style, '--button-border-color', 'rgba(39, 39, 39, 1)'), 0.22),
     gridWhiteFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.36),
     hoverStroke: getCssColor(style, '--button-hover-border-color', 'rgba(152, 180, 149, 1)'),
     mandatoryFill: withAlpha(active, 0.18),
