@@ -71,7 +71,12 @@ function draw() {
   const snapshot = props.game?.getMinimapSnapshot()
   if (! snapshot?.bounds || snapshot.boards.length === 0) return
 
-  const transform = getMinimapTransform(snapshot.bounds, width, height)
+  const transform = getMinimapTransform(
+    snapshot.bounds,
+    width,
+    height,
+    getMinimapWorldPadding(snapshot),
+  )
   const colors = getMinimapColors(canvasElement)
 
   drawGrid(ctx, snapshot, transform, colors)
@@ -139,22 +144,34 @@ function drawViewport(
   strokeCanvasRect(ctx, rect)
 }
 
-function getMinimapTransform(bounds: Rect, width: number, height: number): MinimapTransform {
+function getMinimapTransform(
+  bounds: Rect,
+  width: number,
+  height: number,
+  paddingWorld: number,
+): MinimapTransform {
   const [[x, y], [w, h]] = bounds
-  const padding = 10
-  const availableWidth = Math.max(1, width - padding * 2)
-  const availableHeight = Math.max(1, height - padding * 2)
+  const paddedX = x - paddingWorld
+  const paddedY = y - paddingWorld
+  const paddedWidth = w + paddingWorld * 2
+  const paddedHeight = h + paddingWorld * 2
   const scale = Math.min(
-    availableWidth / Math.max(1, w),
-    availableHeight / Math.max(1, h),
+    width / Math.max(1, paddedWidth),
+    height / Math.max(1, paddedHeight),
   )
   return {
     scale: Math.max(0.001, scale),
     offset: [
-      (width - w * scale) / 2 - x * scale,
-      (height - h * scale) / 2 - y * scale,
+      (width - paddedWidth * scale) / 2 - paddedX * scale,
+      (height - paddedHeight * scale) / 2 - paddedY * scale,
     ],
   }
+}
+
+function getMinimapWorldPadding(snapshot: GameMinimapSnapshot): number {
+  const boardRect = snapshot.boards[0]?.rect
+  if (! boardRect) return 0
+  return Math.max(boardRect[1][0], boardRect[1][1])
 }
 
 function worldRectToCanvasRect([[x, y], [w, h]]: Rect, transform: MinimapTransform): CanvasRect {
