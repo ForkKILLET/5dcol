@@ -88,7 +88,7 @@ function draw() {
 
   drawGrid(ctx, snapshot, transform, colors)
   drawBoards(ctx, snapshot, transform, colors)
-  drawViewport(ctx, snapshot.viewport, transform, colors)
+  drawViewport(ctx, snapshot.viewport, transform, colors, width, height)
 }
 
 function drawGrid(
@@ -144,11 +144,80 @@ function drawViewport(
   viewport: Rect,
   transform: MinimapTransform,
   colors: ReturnType<typeof getMinimapColors>,
+  canvasWidth: number,
+  canvasHeight: number,
 ) {
   const rect = worldRectToCanvasRect(viewport, transform)
-  ctx.lineWidth = 2
+  const lineWidth = 2
+  ctx.lineWidth = lineWidth
   ctx.strokeStyle = colors.viewportStroke
   strokeCanvasRect(ctx, rect)
+  drawViewportOverflowBoundary(ctx, rect, canvasWidth, canvasHeight, lineWidth)
+}
+
+function drawViewportOverflowBoundary(
+  ctx: CanvasRenderingContext2D,
+  rect: CanvasRect,
+  canvasWidth: number,
+  canvasHeight: number,
+  lineWidth: number,
+) {
+  const left = rect.x
+  const right = rect.x + rect.w
+  const top = rect.y
+  const bottom = rect.y + rect.h
+  const inset = lineWidth / 2
+
+  ctx.save()
+  ctx.setLineDash([5, 4])
+  ctx.beginPath()
+  if (left < 0) {
+    drawClippedVerticalLine(ctx, inset, top, bottom, canvasHeight)
+  }
+  if (right > canvasWidth) {
+    drawClippedVerticalLine(ctx, canvasWidth - inset, top, bottom, canvasHeight)
+  }
+  if (top < 0) {
+    drawClippedHorizontalLine(ctx, inset, left, right, canvasWidth)
+  }
+  if (bottom > canvasHeight) {
+    drawClippedHorizontalLine(ctx, canvasHeight - inset, left, right, canvasWidth)
+  }
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawClippedVerticalLine(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y0: number,
+  y1: number,
+  canvasHeight: number,
+) {
+  const [start, end] = getClippedRange(y0, y1, canvasHeight)
+  if (end <= start) return
+  ctx.moveTo(x, start)
+  ctx.lineTo(x, end)
+}
+
+function drawClippedHorizontalLine(
+  ctx: CanvasRenderingContext2D,
+  y: number,
+  x0: number,
+  x1: number,
+  canvasWidth: number,
+) {
+  const [start, end] = getClippedRange(x0, x1, canvasWidth)
+  if (end <= start) return
+  ctx.moveTo(start, y)
+  ctx.lineTo(end, y)
+}
+
+function getClippedRange(start: number, end: number, limit: number): [number, number] {
+  return [
+    Math.max(0, Math.min(start, limit)),
+    Math.max(0, Math.min(end, limit)),
+  ]
 }
 
 function getMinimapTransform(
