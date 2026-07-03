@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { MatchServerStats, StudyDocument, StudyRoom } from '@5dcol/shared/protocol'
+import { StudyDocumentSchema, type MatchServerStats, type StudyDocument, type StudyRoom } from '@5dcol/shared/protocol'
 import { MatchClient, type MatchServerConnectionStatus } from '@engine/matchClient'
 import {
   DEFAULT_ONLINE_SERVER_IDS,
@@ -19,10 +19,9 @@ import GameListItemMenu from './GameListItemMenu.vue'
 import GamePanel from './GamePanel.vue'
 import GameTab from './GameTab.vue'
 import GameTextInput from './GameTextInput.vue'
-import GameToggle from './GameToggle.vue'
 import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
-import OnlineRoomCreatePanel from './OnlineRoomCreatePanel.vue'
 import OnlineServerItem from './OnlineServerItem.vue'
+import StudyCreatePanel from './StudyCreatePanel.vue'
 
 const props = defineProps<{
   active: boolean
@@ -31,7 +30,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   openStudy: [study: StudyDocument, source?: StudyOpenSource]
-  importRecord: []
   openOnlineSettings: []
   uiSound: []
 }>()
@@ -39,6 +37,12 @@ const emit = defineEmits<{
 type StudyOpenSource =
   | { kind: 'local' }
   | { kind: 'online', serverAddress: string, roomId: string, version: number }
+
+type StudySourceKind = 'empty' | 'import'
+
+type StudyCreateTarget =
+  | { kind: 'local' }
+  | { kind: 'online', serverId: string }
 
 interface StudyServerState {
   id: string
@@ -59,6 +63,7 @@ const STUDY_REFRESH_INTERVAL_MS = 5000
 const { t } = useI18n({ useScope: 'global' })
 const {
   createStudy,
+  createStudyFromDocument,
   deleteStudy,
   getStudy,
   renameStudy,
@@ -74,20 +79,24 @@ const activeTab = ref<'local' | 'online'>('local')
 const editingStudyId = ref<string | null>(null)
 const editingStudyTitle = ref('')
 const openStudyActionMenuId = ref<string | null>(null)
-const onlineStudyPanelMode = ref<'servers' | 'create-room'>('servers')
-const onlineStudyCreateServerId = ref<string | null>(null)
-const onlineStudyName = ref('')
-const onlineStudyPrivate = ref(true)
+const studyCreateTarget = ref<StudyCreateTarget | null>(null)
+const studyCreateName = ref('')
+const studyCreatePrivate = ref(true)
+const studyCreateSource = ref<StudySourceKind>('empty')
+const studyCreateImportText = ref('')
+const studyCreateImportDocument = ref<StudyDocument | null>(null)
+const studyCreateImportError = ref('')
 const expandedStudyServerIds = reactive(new Set(DEFAULT_ONLINE_SERVER_IDS))
 const studyServers = reactive<StudyServerState[]>(getOnlineServerEntries()
   .map(entry => createStudyServerState(entry)))
 let studyRefreshTimer: number | null = null
 
-const onlineStudyCreateServer = computed(() => (
-  onlineStudyCreateServerId.value === null
-    ? null
-    : studyServers.find(server => server.id === onlineStudyCreateServerId.value) ?? null
-))
+const onlineStudyCreateServer = computed(() => {
+  const target = studyCreateTarget.value
+  return target?.kind === 'online'
+    ? studyServers.find(server => server.id === target.serverId) ?? null
+    : null
+})
 const pageTitle = computed(() => {
   if (activeTab.value === 'local') return t('study.localTitle')
   return t('study.onlineTitle')
@@ -100,7 +109,7 @@ watch([
   if (! isActive) {
     cancelRenameStudy()
     openStudyActionMenuId.value = null
-    closeOnlineStudyCreatePanel({ sound: false })
+    closeStudyCreatePanel({ sound: false })
     stopStudyServerRefresh()
     return
   }
@@ -110,7 +119,7 @@ watch([
     startStudyServerRefresh()
   }
   else {
-    closeOnlineStudyCreatePanel({ sound: false })
+    closeStudyCreatePanel({ sound: false })
     stopStudyServerRefresh()
   }
 }, { immediate: true })
@@ -128,7 +137,7 @@ function selectTab(tab: 'local' | 'online') {
   emit('uiSound')
   cancelRenameStudy()
   openStudyActionMenuId.value = null
-  closeOnlineStudyCreatePanel({ sound: false })
+  closeStudyCreatePanel({ sound: false })
   activeTab.value = tab
 }
 
@@ -250,30 +259,75 @@ function toggleStudyServerExpanded(server: StudyServerState) {
 }
 
 function openOnlineStudyCreatePanel(server: StudyServerState) {
-  emit('uiSound')
   if (server.status !== 'connected') return
-  onlineStudyCreateServerId.value = server.id
-  onlineStudyPanelMode.value = 'create-room'
   expandedStudyServerIds.add(server.id)
+  openStudyCreatePanel({ kind: 'online', serverId: server.id })
 }
 
-function closeOnlineStudyCreatePanel(options: { sound?: boolean } = {}) {
+function openLocalStudyCreatePanel(source: StudySourceKind = 'empty') {
+  openStudyCreatePanel({ kind: 'local' }, source)
+}
+
+function openStudyCreatePanel(target: StudyCreateTarget, source: StudySourceKind = 'empty') {
+  emit('uiSound')
+  cancelRenameStudy()
+  openStudyActionMenuId.value = null
+  studyCreateTarget.value = target
+  studyCreateName.value = ''
+  studyCreatePrivate.value = true
+  studyCreateSource.value = source
+  studyCreateImportText.value = ''
+  studyCreateImportDocument.value = null
+  studyCreateImportError.value = ''
+}
+
+function closeStudyCreatePanel(options: { sound?: boolean } = {}) {
+  if (! studyCreateTarget.value) return
   if (options.sound !== false) emit('uiSound')
-  onlineStudyPanelMode.value = 'servers'
-  onlineStudyCreateServerId.value = null
+  studyCreateTarget.value = null
+  studyCreateName.value = ''
+  studyCreateSource.value = 'empty'
+  studyCreateImportText.value = ''
+  studyCreateImportDocument.value = null
+  studyCreateImportError.value = ''
 }
 
-async function createOnlineStudy(server: StudyServerState | null = onlineStudyCreateServer.value) {
+function createStudyFromCreatePanel(document: StudyDocument | null) {
+  const target = studyCreateTarget.value
+  if (! target) return
+  if (target.kind === 'local') {
+    createLocalStudyFromCreatePanel(document)
+    return
+  }
+  void createOnlineStudy(document, onlineStudyCreateServer.value)
+}
+
+function createLocalStudyFromCreatePanel(document: StudyDocument | null) {
+  emit('uiSound')
+  const title = getStudyCreateTitle(document)
+  const study = document
+    ? createStudyFromDocument(prepareStudyCreateDocument(document, title))
+    : createStudy({ title })
+  closeStudyCreatePanel({ sound: false })
+  emit('openStudy', study, { kind: 'local' })
+}
+
+async function createOnlineStudy(
+  document: StudyDocument | null,
+  server: StudyServerState | null = onlineStudyCreateServer.value,
+) {
   emit('uiSound')
   if (! server || server.status !== 'connected') return
 
+  const title = getStudyCreateTitle(document)
   try {
     const client = new MatchClient(server.address)
     const response = await client.createStudy({
       userId: onlineUserId.value ?? undefined,
       nickname: studyNickname.value,
-      name: onlineStudyName.value.trim() || t('study.untitled'),
-      private: onlineStudyPrivate.value,
+      name: title,
+      private: studyCreatePrivate.value,
+      document: document ? prepareStudyCreateDocument(document, title) : undefined,
     })
     onlineUserId.value = response.user.id
     upsertServerStudy(server, response.room)
@@ -283,11 +337,24 @@ async function createOnlineStudy(server: StudyServerState | null = onlineStudyCr
       roomId: response.room.id,
       version: response.room.version,
     })
+    closeStudyCreatePanel({ sound: false })
   }
   catch (err) {
     server.status = 'failed'
     server.error = err instanceof Error ? err.message : String(err)
   }
+}
+
+function getStudyCreateTitle(document: StudyDocument | null): string {
+  return studyCreateName.value.trim() || document?.title.trim() || t('study.untitled')
+}
+
+function prepareStudyCreateDocument(document: StudyDocument, title: string): StudyDocument {
+  return StudyDocumentSchema.parse({
+    ...document,
+    title,
+    updatedAt: Date.now(),
+  })
 }
 
 async function openOnlineStudy(server: StudyServerState, study: StudyRoom) {
@@ -353,15 +420,6 @@ function getStudyVisibilityMeta(study: StudyRoom) {
     : t('study.public')
 }
 
-function createAndOpenStudy() {
-  emit('uiSound')
-  openStudyActionMenuId.value = null
-  const study = createStudy({
-    title: t('study.untitled'),
-  })
-  emit('openStudy', study, { kind: 'local' })
-}
-
 function openStudy(id: string) {
   if (editingStudyId.value) return
   const study = getStudy(id)
@@ -376,12 +434,6 @@ function removeStudy(id: string) {
   if (editingStudyId.value === id) cancelRenameStudy()
   openStudyActionMenuId.value = null
   deleteStudy(id)
-}
-
-function openImportDialog() {
-  cancelRenameStudy()
-  openStudyActionMenuId.value = null
-  emit('importRecord')
 }
 
 function beginRenameStudy(id: string, title: string) {
@@ -413,7 +465,7 @@ function clickCancelRenameStudy() {
 function close() {
   emit('uiSound')
   openStudyActionMenuId.value = null
-  closeOnlineStudyCreatePanel({ sound: false })
+  closeStudyCreatePanel({ sound: false })
   stopStudyServerRefresh()
   emit('close')
 }
@@ -448,7 +500,9 @@ function syncStudyServerRegistry() {
   for (const server of studyServers) {
     if (entryAddressSet.has(server.address)) continue
     expandedStudyServerIds.delete(server.id)
-    if (onlineStudyCreateServerId.value === server.id) closeOnlineStudyCreatePanel({ sound: false })
+    if (studyCreateTarget.value?.kind === 'online' && studyCreateTarget.value.serverId === server.id) {
+      closeStudyCreatePanel({ sound: false })
+    }
   }
 
   const nextServers = entries.map(entry => {
@@ -506,7 +560,7 @@ function syncStudyServerRegistry() {
       </div>
 
       <OnlinePanelToolbar
-        v-if="activeTab === 'online' && onlineStudyPanelMode === 'servers'"
+        v-if="activeTab === 'online' && !studyCreateTarget"
         v-model:nickname="studyNickname"
         class="study-online-toolbar"
         :show-back="false"
@@ -515,24 +569,43 @@ function syncStudyServerRegistry() {
       />
 
       <div
-        v-if="activeTab === 'local'"
+        v-if="activeTab === 'local' && !studyCreateTarget"
         class="study-local-toolbar"
       >
         <GameButton
           size="small"
-          @click="createAndOpenStudy"
+          @click="openLocalStudyCreatePanel('empty')"
         >
           <span>{{ t('study.create') }}</span>
         </GameButton>
         <GameButton
           size="small"
-          @click="openImportDialog"
+          @click="openLocalStudyCreatePanel('import')"
         >
           <span>{{ t('button.import') }}</span>
         </GameButton>
       </div>
+      <StudyCreatePanel
+        v-if="studyCreateTarget"
+        v-model:name="studyCreateName"
+        v-model:visibility-private="studyCreatePrivate"
+        v-model:source="studyCreateSource"
+        v-model:import-text="studyCreateImportText"
+        v-model:import-document="studyCreateImportDocument"
+        v-model:import-error="studyCreateImportError"
+        :title="studyCreateTarget.kind === 'online' ? t('study.createOnlineTitle') : t('study.createLocalTitle')"
+        :server-name="onlineStudyCreateServer?.name"
+        :server-address="onlineStudyCreateServer?.address"
+        :name-label="t('study.studyName')"
+        :name-placeholder="t('study.namePlaceholder')"
+        :create-label="t('study.create')"
+        :imported-title="t('study.imported')"
+        :show-private="studyCreateTarget.kind === 'online'"
+        @back="closeStudyCreatePanel"
+        @create="createStudyFromCreatePanel"
+      />
       <div
-        v-if="activeTab === 'local'"
+        v-else-if="activeTab === 'local'"
         class="study-list"
       >
         <GamePanel
@@ -604,7 +677,7 @@ function syncStudyServerRegistry() {
         </GamePanel>
       </div>
       <div
-        v-else-if="onlineStudyPanelMode === 'servers'"
+        v-else
         class="study-list"
       >
         <OnlineServerItem
@@ -654,27 +727,6 @@ function syncStudyServerRegistry() {
           </template>
         </OnlineServerItem>
       </div>
-      <OnlineRoomCreatePanel
-        v-else-if="onlineStudyCreateServer"
-        v-model:name="onlineStudyName"
-        :title="t('study.createOnlineTitle')"
-        :server-name="onlineStudyCreateServer.name"
-        :server-address="onlineStudyCreateServer.address"
-        :name-label="t('study.studyName')"
-        :name-placeholder="t('study.namePlaceholder')"
-        :create-label="t('study.create')"
-        @back="closeOnlineStudyCreatePanel"
-        @create="createOnlineStudy()"
-      >
-        <template #settings>
-          <div class="settings-list study-online-create-settings">
-            <div class="settings-row">
-              <span>{{ t('match.setting.private') }}</span>
-              <GameToggle v-model="onlineStudyPrivate" />
-            </div>
-          </div>
-        </template>
-      </OnlineRoomCreatePanel>
     </div>
   </div>
 </template>

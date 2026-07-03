@@ -125,28 +125,23 @@ export function useLocalStudies() {
       now = Date.now(),
     }: CreateLocalStudyFromTextOptions = {},
   ): CreateLocalStudyFromTextResult {
-    try {
-      const gameState = FiveDPGN.importGameState(input)
-      const recordDocument = RecordDocument.fromFiveDPGN(input)
-      const study = recordDocument.toStudyDocument({
-        id,
-        title,
-        initialMultiverse: gameState.initialMultiverse,
-        createdAt: now,
-        updatedAt: now,
-      })
-      upsertStudy(study, { touch: false })
+    const result = createStudyDocumentFromText(input, { id, title, now })
+    if (result.study) {
+      upsertStudy(result.study, { touch: false })
       return {
-        study: cloneStudyDocument(study),
+        study: cloneStudyDocument(result.study),
         error: null,
       }
     }
-    catch (err) {
-      return {
-        study: null,
-        error: err instanceof Error ? err.message : 'Failed to import study',
-      }
-    }
+
+    return result
+  }
+
+  function createStudyFromDocument(
+    document: StudyDocument,
+    { touch = false }: { touch?: boolean } = {},
+  ): StudyDocument {
+    return upsertStudy(document, { touch })
   }
 
   function upsertStudy(
@@ -184,9 +179,41 @@ export function useLocalStudies() {
     getStudy,
     createStudy,
     createStudyFromText,
+    createStudyFromDocument,
     upsertStudy,
     renameStudy,
     deleteStudy,
+  }
+}
+
+export function createStudyDocumentFromText(
+  input: string,
+  {
+    id = createLocalStudyId(),
+    title = 'Imported Study',
+    now = Date.now(),
+  }: CreateLocalStudyFromTextOptions = {},
+): CreateLocalStudyFromTextResult {
+  try {
+    const gameState = FiveDPGN.importGameState(input)
+    const recordDocument = RecordDocument.fromFiveDPGN(input)
+    const study = recordDocument.toStudyDocument({
+      id,
+      title,
+      initialMultiverse: gameState.initialMultiverse,
+      createdAt: now,
+      updatedAt: now,
+    })
+    return {
+      study: cloneStudyDocument(study),
+      error: null,
+    }
+  }
+  catch (err) {
+    return {
+      study: null,
+      error: err instanceof Error ? err.message : 'Failed to import study',
+    }
   }
 }
 

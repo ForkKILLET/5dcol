@@ -3070,7 +3070,6 @@ watch([exportFormat, exportMode], () => {
         <StudyPage
           :active="mainMenuMode === 'study'"
           @close="closeStudyPage"
-          @import-record="openImportDialog('local-study')"
           @open-online-settings="openOnlineSettingsDialog"
           @open-study="openStudyFromPage"
           @ui-sound="playUISound"
