@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { Player } from '@5dcol/core'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Game, GameMinimapBoard, GameMinimapSnapshot } from '@engine/game'
-import type { Rect, Vec2 } from '@engine/basic'
+import { Color4, type Rect, type Vec2 } from '@engine/basic'
+import { Colors } from '@engine/constant'
 import GamePanel from './GamePanel.vue'
 
 interface CanvasRect {
@@ -72,8 +74,25 @@ function draw() {
   const transform = getMinimapTransform(snapshot.bounds, width, height)
   const colors = getMinimapColors(canvasElement)
 
+  drawGrid(ctx, snapshot, transform, colors)
   drawBoards(ctx, snapshot, transform, colors)
   drawViewport(ctx, snapshot.viewport, transform, colors)
+}
+
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  snapshot: GameMinimapSnapshot,
+  transform: MinimapTransform,
+  colors: ReturnType<typeof getMinimapColors>,
+) {
+  for (const cell of snapshot.gridCells) {
+    const rect = worldRectToCanvasRect(cell.rect, transform)
+    ctx.fillStyle = cell.white ? colors.gridWhiteFill : colors.gridBlackFill
+    fillCanvasRect(ctx, rect)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = colors.gridStroke
+    strokeCanvasRect(ctx, rect)
+  }
 }
 
 function drawBoards(
@@ -90,11 +109,16 @@ function drawBoards(
     const key = getBoardKey(board)
 
     ctx.globalAlpha = board.active ? 0.92 : 0.68
-    ctx.fillStyle = board.mandatory ? colors.mandatoryFill : colors.boardFill
+    ctx.fillStyle = board.player === Player.W ? colors.boardWhiteFill : colors.boardBlackFill
     fillCanvasRect(ctx, rect)
     ctx.globalAlpha = 1
 
-    ctx.lineWidth = board.focused ? 3 : board.active || key === hoverKey ? 2 : 1
+    if (board.mandatory) {
+      ctx.fillStyle = colors.mandatoryFill
+      fillCanvasRect(ctx, rect)
+    }
+
+    ctx.lineWidth = board.focused || board.active || key === hoverKey ? 2 : 1
     ctx.strokeStyle = board.focused
       ? colors.focusStroke
       : key === hoverKey
@@ -113,8 +137,6 @@ function drawViewport(
   colors: ReturnType<typeof getMinimapColors>,
 ) {
   const rect = worldRectToCanvasRect(viewport, transform)
-  ctx.fillStyle = colors.viewportFill
-  fillCanvasRect(ctx, rect)
   ctx.lineWidth = 2
   ctx.strokeStyle = colors.viewportStroke
   strokeCanvasRect(ctx, rect)
@@ -161,12 +183,15 @@ function getMinimapColors(element: HTMLElement) {
   const active = getCssColor(style, '--game-status-color', participant)
   return {
     activeStroke: active,
-    boardFill: getCssColor(style, '--button-fill-color', 'rgba(244, 245, 237, 1)'),
+    boardBlackFill: Color4.toRgbaString(Colors.BoardBlack),
+    boardWhiteFill: Color4.toRgbaString(Colors.BoardWhite),
     boardStroke: withAlpha(getCssColor(style, '--button-border-color', 'rgba(39, 39, 39, 1)'), 0.6),
     focusStroke: participant,
+    gridBlackFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.36),
+    gridStroke: withAlpha(getCssColor(style, '--button-border-color', 'rgba(39, 39, 39, 1)'), 0.22),
+    gridWhiteFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.36),
     hoverStroke: getCssColor(style, '--button-hover-border-color', 'rgba(152, 180, 149, 1)'),
     mandatoryFill: withAlpha(active, 0.18),
-    viewportFill: withAlpha(participant, 0.16),
     viewportStroke: participant,
   }
 }

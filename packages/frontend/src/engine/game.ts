@@ -124,12 +124,21 @@ export interface GameMinimapBoard {
   l: number
   m: number
   mandatory: boolean
+  player: Player
+  rect: Rect
+}
+
+export interface GameMinimapGridCell {
+  l: number
+  t: number
+  white: boolean
   rect: Rect
 }
 
 export interface GameMinimapSnapshot {
   boards: GameMinimapBoard[]
   bounds: Rect | null
+  gridCells: GameMinimapGridCell[]
   viewport: Rect
 }
 
@@ -1435,13 +1444,21 @@ export class Game extends Disposable(Empty) {
     const activeLines = new Set([...status.mandatory, ...status.optional])
     const focusedBoard = this.getValidFocusedBoard()
     const boards: GameMinimapBoard[] = []
+    const timelineLines: number[] = []
+    let minTurn = Number.POSITIVE_INFINITY
+    let maxTurn = Number.NEGATIVE_INFINITY
 
     for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
       if (! line) continue
       const latestM = Line.getLatestBoardIndex(line)
+      let hasBoard = false
 
       for (const [m, board] of Line.getBoardEntries(line)) {
         if (! board) continue
+        hasBoard = true
+        const turn = Math.floor(m / 2)
+        minTurn = Math.min(minTurn, turn)
+        maxTurn = Math.max(maxTurn, turn)
         const active = latestM === m && activeLines.has(l)
         boards.push({
           active,
@@ -1449,14 +1466,32 @@ export class Game extends Disposable(Empty) {
           l,
           m,
           mandatory: active && mandatoryLines.has(l),
+          player: this.getBoardPlayer(m),
           rect: this.layout.getBoardRect(l, m),
         })
+      }
+
+      if (hasBoard) timelineLines.push(l)
+    }
+
+    const gridCells: GameMinimapGridCell[] = []
+    if (Number.isFinite(minTurn) && Number.isFinite(maxTurn)) {
+      for (const l of timelineLines) {
+        for (let t = minTurn; t <= maxTurn; t++) {
+          gridCells.push({
+            l,
+            t,
+            white: (t + l) % 2 === 0,
+            rect: this.layout.getTurnRect(l, t),
+          })
+        }
       }
     }
 
     return {
       boards,
-      bounds: Rect.bounds(boards.map(board => board.rect)),
+      bounds: Rect.bounds([...gridCells.map(cell => cell.rect), ...boards.map(board => board.rect)]),
+      gridCells,
       viewport: this.getViewportWorldRect(),
     }
   }
