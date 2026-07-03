@@ -109,6 +109,7 @@ function create() {
   justify-content: flex-start;
   gap: calc(var(--button-content-gap) * 2);
   min-height: 0;
+  overflow: auto;
 }
 
 .versus-create-panel__header,
