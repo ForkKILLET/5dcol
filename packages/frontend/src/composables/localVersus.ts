@@ -1,6 +1,6 @@
 import { computed, type Ref } from 'vue'
 import { z } from 'zod'
-import { FiveDPGN } from '@5dcol/core'
+import { FiveDPGN, type Action, type Multiverse } from '@5dcol/core'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type StoredGameState } from '@engine/gameState'
 import { RecordDocument } from '@engine/recordTree'
 import { readStorageJson, removeStorageValue, useStorageRef } from './storage'
@@ -34,6 +34,19 @@ export interface LocalVersusSummary extends StoredLocalVersusGame {
 
 export interface CreateLocalVersusFromTextOptions {
   title?: string
+}
+
+export interface VersusImportedSource {
+  initialMultiverse: Multiverse
+  actions: Action[]
+  state: StoredGameState
+  actionCount: number
+  annotationCount: number
+}
+
+export interface CreateVersusSourceFromTextResult {
+  source: VersusImportedSource | null
+  error: string | null
 }
 
 export interface CreateLocalVersusFromTextResult {
@@ -78,9 +91,22 @@ export function useLocalVersus() {
       title = 'Imported game',
     }: CreateLocalVersusFromTextOptions = {},
   ): CreateLocalVersusFromTextResult {
+    const result = createVersusSourceFromText(input)
+    if (! result.source) {
+      return {
+        game: null,
+        error: result.error,
+      }
+    }
+
+    return createGameFromSource(result.source, title)
+  }
+
+  function createGameFromSource(
+    source: VersusImportedSource | null,
+    title = 'Imported game',
+  ): CreateLocalVersusFromTextResult {
     try {
-      const gameState = FiveDPGN.importGameState(input)
-      const recordDocument = RecordDocument.fromFiveDPGN(input)
       const now = Date.now()
       const id = createLocalVersusId()
       const game: StoredLocalVersusGame = {
@@ -90,23 +116,9 @@ export function useLocalVersus() {
         createdAt: now,
         updatedAt: now,
       }
-      const state: StoredGameState = {
-        version: 1,
-        initialMultiverse: gameState.initialMultiverse,
-        actions: gameState.actions,
-        multiverseCommitted: gameState.multiverseCommitted,
-        multiverse: gameState.multiverse,
-        player: gameState.player,
-        actionIndex: gameState.actionIndex,
-        pendingMoves: [],
-        recordLines: recordDocument.serializeLines(),
-        recordAnnotations: recordDocument.serializeAnnotations(),
-        activeRecordLineId: recordDocument.activeRecordLineId,
-        nextRecordLineId: recordDocument.nextRecordLineId,
-      }
       const storage = getLocalStorage()
       if (! storage) throw new Error('Local storage is unavailable')
-      storage.setItem(game.storageKey, JSON.stringify(state))
+      if (source) storage.setItem(game.storageKey, JSON.stringify(source.state))
       stored.value.games.push(game)
       return {
         game: toLocalVersusSummary(game),
@@ -152,11 +164,51 @@ export function useLocalVersus() {
   return {
     summaries,
     createGame,
+    createGameFromSource,
     createGameFromText,
+    createVersusSourceFromText,
     deleteGame,
     getGame,
     renameGame,
     touchGame,
+  }
+}
+
+export function createVersusSourceFromText(input: string): CreateVersusSourceFromTextResult {
+  try {
+    const gameState = FiveDPGN.importGameState(input)
+    const recordDocument = RecordDocument.fromFiveDPGN(input)
+    const recordLines = recordDocument.serializeLines()
+    const recordAnnotations = recordDocument.serializeAnnotations()
+    return {
+      source: {
+        initialMultiverse: gameState.initialMultiverse,
+        actions: gameState.actions,
+        state: {
+          version: 1,
+          initialMultiverse: gameState.initialMultiverse,
+          actions: gameState.actions,
+          multiverseCommitted: gameState.multiverseCommitted,
+          multiverse: gameState.multiverse,
+          player: gameState.player,
+          actionIndex: gameState.actionIndex,
+          pendingMoves: [],
+          recordLines,
+          recordAnnotations,
+          activeRecordLineId: recordDocument.activeRecordLineId,
+          nextRecordLineId: recordDocument.nextRecordLineId,
+        },
+        actionCount: recordLines.reduce((sum, line) => sum + line.actions.length, 0),
+        annotationCount: recordAnnotations.length,
+      },
+      error: null,
+    }
+  }
+  catch (err) {
+    return {
+      source: null,
+      error: err instanceof Error ? err.message : 'Failed to import game',
+    }
   }
 }
 

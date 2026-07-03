@@ -9,12 +9,15 @@
   "license": "MIT",
   "scripts": {
     "build": "vite build",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "dev": "vite-node --watch src/index.ts",
     "start": "node dist/main.js",
     "check": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
+    "drizzle-kit": "1.0.0-rc.4-5d5b77c",
     "typescript": "^5.9.3",
     "vite": "^8.0.10",
     "vite-node": "^6.0.0"

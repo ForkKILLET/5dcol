@@ -142,6 +142,7 @@ export const MatchGameStateSchema = z.object({
   presence: MatchPresenceSchema.nullable(),
   spectatorCount: z.number().int().nonnegative().catch(0),
   actions: z.array(ActionSchema),
+  initialMultiverse: MultiverseSchema,
   currentPlayer: PlayerSchema,
   clock: MatchClockSchema,
   updatedAt: z.number(),
@@ -172,6 +173,8 @@ export const CreateMatchRoomRequestSchema = z.object({
   name: z.string().optional(),
   nickname: z.string().optional(),
   settings: z.custom<Partial<MatchRoomSettings>>().optional(),
+  initialMultiverse: MultiverseSchema.optional(),
+  actions: z.array(ActionSchema).optional(),
 }).nullish()
 
 export type CreateMatchRoomRequest = NonNullable<z.infer<typeof CreateMatchRoomRequestSchema>>

@@ -1,6 +1,7 @@
 import { computed, reactive, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { z } from 'zod'
+import type { Action, Multiverse } from '@5dcol/core'
 import {
   DEFAULT_MATCH_ROOM_SETTINGS,
   MATCH_ROOM_SETTINGS_STORAGE_VERSION,
@@ -90,6 +91,11 @@ const StoredOnlineGameSchema = z.object({
   status: MatchRoomStatusSchema.extract(['waiting', 'playing']),
   updatedAt: z.number(),
 })
+
+export interface MatchRoomInitialSource {
+  initialMultiverse: Multiverse
+  actions: Action[]
+}
 
 interface UseMatchOptions {
   gameStarted: Readonly<Ref<boolean>>
@@ -372,7 +378,10 @@ export function useMatch(options?: UseMatchOptions) {
     expandedMatchServerIds.add(server.id)
   }
 
-  async function createMatchRoom(server: MatchServerState | null = customRoomServer.value) {
+  async function createMatchRoom(
+    source: MatchRoomInitialSource | null = null,
+    server: MatchServerState | null = customRoomServer.value,
+  ) {
     getOptions().playUISound()
     if (! server) return
     if (getOptions().gameStarted.value || server.status !== 'connected' || ! getOptions().canStartOnlineGame()) return
@@ -384,6 +393,8 @@ export function useMatch(options?: UseMatchOptions) {
         name: matchRoomName.value,
         nickname: matchNickname.value,
         settings: matchRoomSettings,
+        initialMultiverse: source?.initialMultiverse,
+        actions: source?.actions,
       })
       matchUserId.value = response.user.id
       getOptions().startOnlineGame(server.address, response.state)

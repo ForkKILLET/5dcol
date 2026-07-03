@@ -45,6 +45,7 @@ export interface GameContext {
   logger: Logger
   renderer: Renderer
   soundManager: SoundManager
+  initialMultiverse?: Multiverse
   initialActions?: Action[]
   storageKey?: string | null
   localPlayer?: Player | null
@@ -244,6 +245,9 @@ export class Game extends Disposable(Empty) {
     this.presentPainter = new PresentPainter(ctx.renderer, this.layout)
     this.timelineTilesPainter = new TimelineTilesPainter(ctx.renderer, this.layout)
     this.linePainter = new LinePainter(ctx.renderer, this.layout)
+    this.initialMultiverse = ctx.initialMultiverse ?? this.initialMultiverse
+    this.multiverseCommitted = this.initialMultiverse
+    this.multiverse = this.multiverseCommitted
     this.viewPlayer = ctx.viewPlayer ?? Player.W
     this.autoSwitchViewPlayer = ctx.autoSwitchViewPlayer ?? true
     this.showMoveTravelAnimation = ctx.showMoveTravelAnimation ?? true

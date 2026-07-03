@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MatchGameState } from '@5dcol/shared/protocol'
 import { useMatch } from '@/composables/match'
-import { useLocalVersus, type LocalVersusSummary } from '@/composables/localVersus'
+import { useLocalVersus, type LocalVersusSummary, type VersusImportedSource } from '@/composables/localVersus'
 import GameButton from './GameButton.vue'
 import GameListItem from './GameListItem.vue'
 import GameListItemMenu from './GameListItemMenu.vue'
@@ -12,6 +12,8 @@ import GameTab from './GameTab.vue'
 import GameTextInput from './GameTextInput.vue'
 import MatchPanel from './MatchPanel.vue'
 import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
+import VersusCreatePanel from './VersusCreatePanel.vue'
+import type { VersusSourceKind } from './VersusSourcePicker.vue'
 
 const props = defineProps<{
   active: boolean
@@ -22,7 +24,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  importRecord: []
   openOnlineSettings: []
   startLocalGame: [game: LocalVersusSummary]
   startOnlineGame: [serverAddress: string, state: MatchGameState]
@@ -58,6 +59,7 @@ const {
 })
 const {
   createGame: createLocalGame,
+  createGameFromSource: createLocalGameFromSource,
   deleteGame: deleteLocalGame,
   getGame: getLocalGame,
   renameGame: renameLocalGame,
@@ -69,6 +71,16 @@ const activeTab = ref<'local' | 'online'>('local')
 const editingLocalGameId = ref<string | null>(null)
 const editingLocalGameTitle = ref('')
 const openLocalGameActionMenuId = ref<string | null>(null)
+const localCreateOpen = ref(false)
+const localCreateName = ref('')
+const localCreateSource = ref<VersusSourceKind>('empty')
+const localCreateImportText = ref('')
+const localCreateImportSource = ref<VersusImportedSource | null>(null)
+const localCreateImportError = ref('')
+const onlineCreateSource = ref<VersusSourceKind>('empty')
+const onlineCreateImportText = ref('')
+const onlineCreateImportSource = ref<VersusImportedSource | null>(null)
+const onlineCreateImportError = ref('')
 const { t } = useI18n({ useScope: 'global' })
 const pageTitle = computed(() => {
   if (activeTab.value === 'local') return t('versus.localTitle')
@@ -82,6 +94,8 @@ watch([
   if (! active) {
     stopMatchServerRefresh()
     matchPanelMode.value = 'servers'
+    closeLocalCreatePanel({ sound: false })
+    closeOnlineCreatePanel({ sound: false })
     cancelRenameLocalGame()
     return
   }
@@ -93,6 +107,7 @@ watch([
   else {
     stopMatchServerRefresh()
     matchPanelMode.value = 'servers'
+    closeOnlineCreatePanel({ sound: false })
   }
 }, { immediate: true })
 
@@ -104,28 +119,82 @@ function selectTab(tab: 'local' | 'online') {
   if (activeTab.value === tab) return
   emit('uiSound')
   openLocalGameActionMenuId.value = null
+  closeLocalCreatePanel({ sound: false })
+  closeOnlineCreatePanel({ sound: false })
   activeTab.value = tab
 }
 
 function close() {
   stopMatchServerRefresh()
   matchPanelMode.value = 'servers'
+  closeLocalCreatePanel({ sound: false })
+  closeOnlineCreatePanel({ sound: false })
   cancelRenameLocalGame()
   openLocalGameActionMenuId.value = null
   emit('close')
 }
 
 function createAndOpenLocalGame() {
-  emit('uiSound')
-  cancelRenameLocalGame()
-  const game = createLocalGame(t('versus.untitled'))
-  emit('startLocalGame', game)
+  openLocalCreatePanel()
 }
 
-function openImportDialog() {
+function openLocalCreatePanel(source: VersusSourceKind = 'empty') {
+  emit('uiSound')
   cancelRenameLocalGame()
   openLocalGameActionMenuId.value = null
-  emit('importRecord')
+  localCreateOpen.value = true
+  localCreateName.value = source === 'import' ? t('versus.imported') : t('versus.untitled')
+  localCreateSource.value = source
+  localCreateImportText.value = ''
+  localCreateImportSource.value = null
+  localCreateImportError.value = ''
+}
+
+function closeLocalCreatePanel({ sound = true }: { sound?: boolean } = {}) {
+  if (! localCreateOpen.value) return
+  if (sound) emit('uiSound')
+  localCreateOpen.value = false
+  localCreateImportText.value = ''
+  localCreateImportSource.value = null
+  localCreateImportError.value = ''
+}
+
+function createLocalGameFromPanel(source: VersusImportedSource | null) {
+  emit('uiSound')
+  const title = localCreateName.value.trim() || t('versus.untitled')
+  const result = source
+    ? createLocalGameFromSource(source, title)
+    : { game: createLocalGame(title), error: null }
+  if (! result.game) {
+    localCreateImportError.value = result.error ?? 'Failed to create game'
+    return
+  }
+  closeLocalCreatePanel({ sound: false })
+  emit('startLocalGame', result.game)
+}
+
+function openOnlineCreatePanel(server: Parameters<typeof openCustomRoomForm>[0]) {
+  onlineCreateSource.value = 'empty'
+  onlineCreateImportText.value = ''
+  onlineCreateImportSource.value = null
+  onlineCreateImportError.value = ''
+  openCustomRoomForm(server)
+}
+
+function closeOnlineCreatePanel({ sound = true }: { sound?: boolean } = {}) {
+  const wasOpen = matchPanelMode.value === 'create-room'
+  if (sound && wasOpen) emit('uiSound')
+  closeMatchCreateRoomPanel()
+  onlineCreateImportText.value = ''
+  onlineCreateImportSource.value = null
+  onlineCreateImportError.value = ''
+}
+
+function createOnlineRoomFromPanel(source: VersusImportedSource | null) {
+  void createMatchRoom(source ? {
+    initialMultiverse: source.initialMultiverse,
+    actions: source.actions,
+  } : null)
 }
 
 function openLocalGame(id: string) {
@@ -228,7 +297,7 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
       />
 
       <div
-        v-if="activeTab === 'local'"
+        v-if="activeTab === 'local' && !localCreateOpen"
         class="versus-local-toolbar"
       >
         <p>{{ t('versus.localDescription') }}</p>
@@ -238,16 +307,10 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
         >
           <span>{{ t('versus.create') }}</span>
         </GameButton>
-        <GameButton
-          size="small"
-          @click="openImportDialog"
-        >
-          <span>{{ t('button.import') }}</span>
-        </GameButton>
       </div>
 
     <div
-      v-if="activeTab === 'local'"
+      v-if="activeTab === 'local' && !localCreateOpen"
       class="versus-local-list"
     >
       <GamePanel
@@ -321,9 +384,28 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
       </template>
     </div>
 
+    <VersusCreatePanel
+      v-else-if="activeTab === 'local'"
+      v-model:name="localCreateName"
+      v-model:source="localCreateSource"
+      v-model:import-text="localCreateImportText"
+      v-model:import-source="localCreateImportSource"
+      v-model:import-error="localCreateImportError"
+      :title="t('versus.createLocalTitle')"
+      :name-label="t('versus.gameName')"
+      :name-placeholder="t('versus.namePlaceholder')"
+      :create-label="t('versus.create')"
+      @back="closeLocalCreatePanel"
+      @create="createLocalGameFromPanel"
+    />
+
     <MatchPanel
       v-else
       v-model:room-name="matchRoomName"
+      v-model:create-source="onlineCreateSource"
+      v-model:create-import-text="onlineCreateImportText"
+      v-model:create-import-source="onlineCreateImportSource"
+      v-model:create-import-error="onlineCreateImportError"
       embedded
       class="versus-online-panel"
       :show-title="false"
@@ -332,11 +414,11 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
       :servers="matchServers"
       :custom-room-server="customRoomServer"
       :expanded-server-ids="expandedMatchServerIds"
-      @create-back="closeMatchCreateRoomPanel"
-      @create-room="createMatchRoom()"
+      @create-back="closeOnlineCreatePanel"
+      @create-room="createOnlineRoomFromPanel"
       @toggle-server="toggleMatchServerExpanded"
       @connect-server="clickConnectMatchServer"
-      @open-custom-room="openCustomRoomForm"
+      @open-custom-room="openOnlineCreatePanel"
       @return-room="returnToMatchRoom"
       @join-room="joinMatchRoom"
       @view-room="viewMatchRoom"

@@ -14,6 +14,7 @@ export const roomsTable = sqliteTable('rooms', {
   settingsJson: text('settings_json').notNull(),
   password: text('password'),
   clockJson: text('clock_json').notNull(),
+  initialMultiverseJson: text('initial_multiverse_json'),
   createdAt: integer('created_at').notNull(),
   startedAt: integer('started_at'),
   updatedAt: integer('updated_at').notNull(),

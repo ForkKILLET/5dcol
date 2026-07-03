@@ -1,0 +1,1 @@
+ALTER TABLE `rooms` ADD `initial_multiverse_json` text;

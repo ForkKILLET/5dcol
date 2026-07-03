@@ -4,7 +4,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
-import { GameState, type Action } from '@5dcol/core'
+import { GameState, Multiverse, type Action } from '@5dcol/core'
 import {
   ChatMessageSchema,
   MATCH_STORAGE_VERSION,
@@ -17,6 +17,7 @@ import {
   type StoredMatchRoomsFile,
 } from '@5dcol/shared/protocol'
 import { drizzle } from 'drizzle-orm/node-sqlite'
+import { migrate } from 'drizzle-orm/node-sqlite/migrator'
 import { asc, eq } from 'drizzle-orm'
 import type { RoomState } from './server.ts'
 import {
@@ -54,6 +55,7 @@ export interface UserState {
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_DATABASE_FILE = path.resolve(dirname, '../data/rooms.sqlite')
 const DEFAULT_LEGACY_DATA_FILE = path.resolve(dirname, '../data/rooms.json')
+const DEFAULT_MIGRATIONS_FOLDER = path.resolve(dirname, '../drizzle')
 const STORAGE_VERSION_KEY = 'storageVersion'
 
 export function createRoomStorage(
@@ -68,7 +70,7 @@ export function createRoomStorage(
     client: sqlite,
     schema: storageSchema,
   })
-  initializeDatabase(sqlite)
+  migrate(db, { migrationsFolder: DEFAULT_MIGRATIONS_FOLDER })
 
   return {
     load(): RoomState[] {
@@ -109,76 +111,6 @@ export function createRoomStorage(
 
 type RoomDatabase = ReturnType<typeof drizzle<typeof storageSchema>>
 
-function initializeDatabase(sqlite: DatabaseSync) {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS metadata (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS rooms (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      max_players INTEGER NOT NULL,
-      winner INTEGER,
-      finish_reason TEXT,
-      settings_json TEXT NOT NULL,
-      password TEXT,
-      clock_json TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      started_at INTEGER,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      nickname TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-      player INTEGER NOT NULL,
-      nickname TEXT,
-      last_seen_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS actions (
-      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-      action_index INTEGER NOT NULL,
-      action_json TEXT NOT NULL,
-      PRIMARY KEY (room_id, action_index)
-    );
-
-    CREATE TABLE IF NOT EXISTS study_rooms (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      owner_user_id TEXT NOT NULL,
-      private INTEGER NOT NULL,
-      document_json TEXT NOT NULL,
-      members_json TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS chat_messages (
-      id TEXT PRIMARY KEY,
-      room_kind TEXT NOT NULL,
-      room_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      nickname TEXT,
-      text TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-  `)
-  addColumnIfMissing(sqlite, 'sessions', 'user_id', 'TEXT')
-  addColumnIfMissing(sqlite, 'study_rooms', 'private', 'INTEGER NOT NULL DEFAULT 1')
-}
-
 function migrateLegacyJsonIfNeeded(db: RoomDatabase, legacyJsonPath: string) {
   const storageVersion = db
     .select()
@@ -205,12 +137,6 @@ function migrateLegacyJsonIfNeeded(db: RoomDatabase, legacyJsonPath: string) {
       set: { value: String(MATCH_STORAGE_VERSION) },
     })
     .run()
-}
-
-function addColumnIfMissing(sqlite: DatabaseSync, table: string, column: string, definition: string) {
-  const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
-  if (columns.some(current => current.name === column)) return
-  sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
 }
 
 function loadLegacyRooms(filePath: string): RoomState[] {
@@ -342,6 +268,7 @@ function roomToRow(room: RoomState): typeof roomsTable.$inferInsert {
     settingsJson: JSON.stringify(room.settings),
     password: null,
     clockJson: JSON.stringify(room.clock),
+    initialMultiverseJson: JSON.stringify(room.initialMultiverse),
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     updatedAt: room.updatedAt,
@@ -390,6 +317,9 @@ function rowToRoom(room: RoomRow, sessions: SessionRow[], actions: ActionRow[]):
       lastSeenAt: session.lastSeenAt,
     })),
     actions: actions.map(action => parseJson<Action>(action.actionJson)),
+    initialMultiverse: room.initialMultiverseJson === null
+      ? Multiverse.createInitial()
+      : parseJson<RoomState['initialMultiverse']>(room.initialMultiverseJson),
     winner: room.winner,
     finishReason: room.finishReason === null
       ? null
@@ -564,6 +494,7 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
   room.winner ??= null
   room.finishReason ??= null
   room.settings = MatchRoomSettingsSchema.parse(room.settings)
+  room.initialMultiverse ??= Multiverse.createInitial()
   room.createdAt ??= room.updatedAt
   room.startedAt ??= null
   room.clock = getValidRoomClock(room)
@@ -578,7 +509,7 @@ function isValidRoom(room: Partial<RoomState>): room is RoomState {
   ) return false
 
   try {
-    GameState.create(room.actions)
+    GameState.create(room.actions, [], room.initialMultiverse)
     return true
   }
   catch {

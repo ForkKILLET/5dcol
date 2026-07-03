@@ -120,7 +120,7 @@ const focusedOnlineStudyMember = ref<{ userId: string; pulseId: number } | null>
 const secondaryMenuOpen = ref(false)
 type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
 type GameImportFormat = 'pgn' | 'fen'
-type GameImportTarget = 'active-game' | 'local-versus' | 'local-study'
+type GameImportTarget = 'active-game' | 'local-study'
 type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'study' | 'online' | 'fiveDPGN'
 type StudyOpenSource =
   | { kind: 'local' }
@@ -275,7 +275,6 @@ const {
 } = useMatch()
 const {
   createGame: createLocalVersusGame,
-  createGameFromText: createLocalVersusGameFromText,
   deleteGame: deleteLocalVersusGame,
   getGame: getLocalVersusGame,
   touchGame: touchLocalVersusGame,
@@ -1535,20 +1534,6 @@ function submitImportDialog() {
   if (! text) return
   playUISound()
 
-  if (importTarget.value === 'local-versus') {
-    const result = createLocalVersusGameFromText(text, {
-      title: t('versus.imported'),
-    })
-    if (! result.game) {
-      importError.value = result.error || t('error.importFailed')
-      return
-    }
-    importFiveDPGNGlyphTemplates(text)
-    closeDialog(false)
-    startLocalGame(result.game)
-    return
-  }
-
   if (importTarget.value === 'local-study') {
     const result = createLocalStudyFromText(text, {
       title: t('study.imported'),
@@ -2129,6 +2114,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     soundManager,
     logger,
     debug: query.get('debug') === '1',
+    initialMultiverse: state.initialMultiverse,
     initialActions: state.actions,
     storageKey: null,
     localPlayer: state.session?.player ?? null,
@@ -3061,7 +3047,6 @@ watch([exportFormat, exportMode], () => {
           :main-menu-mode="mainMenuMode"
           :can-start-online-game="Boolean(gameRenderer && soundManager)"
           @close="closeVersusPage"
-          @import-record="openImportDialog('local-versus')"
           @open-online-settings="openOnlineSettingsDialog"
           @start-local-game="startLocalGame"
           @start-online-game="startOnlineGame"

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { MatchRoom, MatchRoomSettings } from '@5dcol/shared/protocol'
+import type { VersusImportedSource } from '@/composables/localVersus'
 import type { MatchServerState } from '@engine/matchClient'
 import MatchRoomSettingsPanel from './MatchRoomSettingsPanel.vue'
 import MatchServerItem from './MatchServerItem.vue'
-import OnlineRoomCreatePanel from './OnlineRoomCreatePanel.vue'
+import VersusCreatePanel from './VersusCreatePanel.vue'
+import type { VersusSourceKind } from './VersusSourcePicker.vue'
 
 type MatchPanelMode = 'servers' | 'create-room'
 
@@ -20,7 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   createBack: []
-  createRoom: []
+  createRoom: [source: VersusImportedSource | null]
   toggleServer: [server: MatchServerState]
   connectServer: [server: MatchServerState]
   openCustomRoom: [server: MatchServerState]
@@ -30,6 +32,10 @@ const emit = defineEmits<{
 }>()
 
 const roomName = defineModel<string>('roomName', { required: true })
+const createSource = defineModel<VersusSourceKind>('createSource', { required: true })
+const createImportText = defineModel<string>('createImportText', { required: true })
+const createImportSource = defineModel<VersusImportedSource | null>('createImportSource', { required: true })
+const createImportError = defineModel<string>('createImportError', { required: true })
 
 const { t } = useI18n({ useScope: 'global' })
 
@@ -92,9 +98,13 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
         @view-room="forwardViewRoom"
       />
     </div>
-    <OnlineRoomCreatePanel
+    <VersusCreatePanel
       v-else-if="mode === 'create-room' && customRoomServer"
       v-model:name="roomName"
+      v-model:source="createSource"
+      v-model:import-text="createImportText"
+      v-model:import-source="createImportSource"
+      v-model:import-error="createImportError"
       :title="t('match.createRoom')"
       :server-name="customRoomServer.name"
       :server-address="customRoomServer.address"
@@ -102,12 +112,12 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
       :name-placeholder="t('match.roomNamePlaceholder')"
       :create-label="t('match.create')"
       @back="emit('createBack')"
-      @create="emit('createRoom')"
+      @create="emit('createRoom', $event)"
     >
       <template #settings>
         <MatchRoomSettingsPanel :settings="roomSettings" />
       </template>
-    </OnlineRoomCreatePanel>
+    </VersusCreatePanel>
   </div>
 </template>
 

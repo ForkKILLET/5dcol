@@ -86,6 +86,7 @@ export interface RoomState {
   maxPlayers: number
   sessions: SessionState[]
   actions: Action[]
+  initialMultiverse: Multiverse
   winner: Player | null
   finishReason: MatchRoomFinishReason | null
   settings: MatchRoomSettings
@@ -177,7 +178,8 @@ export function createBackendServer(options: BackendServerOptions) {
       name: body?.name?.trim() || `Room ${rooms.length + 1}`,
       maxPlayers: 2,
       sessions: [],
-      actions: [],
+      actions: body.actions ?? [],
+      initialMultiverse: body.initialMultiverse ?? Multiverse.createInitial(),
       winner: null,
       finishReason: null,
       settings,
@@ -376,7 +378,7 @@ export function createBackendServer(options: BackendServerOptions) {
       if (! session) return sendError(reply, 403, 'Invalid session')
       if (toRoomView(room).status !== 'playing') return sendError(reply, 409, 'Room is not ready')
 
-      const state = GameState.create(room.actions)
+      const state = GameState.create(room.actions, [], room.initialMultiverse)
       if (state.player !== session.player) return sendError(reply, 409, 'Not your turn')
 
       let nextState: GameState
@@ -384,7 +386,7 @@ export function createBackendServer(options: BackendServerOptions) {
       try {
         // This replays the full authoritative action list and validates every move
         // in the submitted action against core rules before mutating room state.
-        nextState = GameState.create([...room.actions, action])
+        nextState = GameState.create([...room.actions, action], [], room.initialMultiverse)
       }
       catch (err) {
         return sendError(reply, 400, err instanceof Error ? err.message : 'Illegal action')
@@ -859,7 +861,7 @@ function pruneUnrecordedRooms(rooms: RoomState[]) {
   for (let i = rooms.length - 1; i >= 0; i -= 1) {
     const room = rooms[i]!
     if (room.id === 'debug-room') continue
-    if (room.sessions.length === 0 && room.actions.length === 0) {
+    if (room.sessions.length === 0 && room.startedAt === null) {
       rooms.splice(i, 1)
     }
   }
@@ -879,7 +881,7 @@ function toGameStateView(
     spectatorCount?: number
   } = {},
 ): MatchGameState {
-  const state = GameState.create(room.actions)
+  const state = GameState.create(room.actions, [], room.initialMultiverse)
   const viewUserId = session?.userId ?? options.userId ?? null
   return {
     room: toRoomView(room, viewUserId, onlineSessionCounts),
@@ -887,6 +889,7 @@ function toGameStateView(
     presence: getMatchPresence(room, session, onlineSessionCounts),
     spectatorCount: options.spectatorCount ?? 0,
     actions: room.actions,
+    initialMultiverse: room.initialMultiverse,
     currentPlayer: state.player,
     clock: getClockView(room, state),
     updatedAt: room.updatedAt,
