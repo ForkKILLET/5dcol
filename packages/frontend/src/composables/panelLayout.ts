@@ -12,6 +12,8 @@ export interface GamePanelGroup {
   height: number
   id: string
   panelIds: GamePanelId[]
+  savedFreeAfter?: number
+  savedFreeBefore?: number
   stretch?: GamePanelStretch
   top: number
   width?: number
@@ -19,7 +21,7 @@ export interface GamePanelGroup {
 
 export interface GamePanelColumn {
   groups: GamePanelGroup[]
-  size: number
+  size?: number
 }
 
 export interface GamePanelLayout {
@@ -34,6 +36,7 @@ export interface GamePanelViewportInsets {
 interface PanelLayoutOptions {
   clockAvailable: ComputedRef<boolean>
   onlineStudyActive: ComputedRef<boolean>
+  viewportHeight: Ref<number>
   viewportWidth: Ref<number>
 }
 
@@ -50,16 +53,29 @@ export interface GamePanelGroupResizeSnapshot {
   totalHeightPx: number
 }
 
+interface DetachedPanel {
+  groupId: string
+  groupHeight: number
+  groupIndex: number
+  groupStretch?: GamePanelStretch
+  groupTop: number
+  groupWidth?: number
+  panelIndex: number
+  removedGroup: boolean
+  side: GamePanelSide
+}
+
 export const PANEL_LAYOUT_STORAGE_KEY = '5dcol.panelLayout'
-export const PANEL_LAYOUT_STORAGE_VERSION = 3
+export const PANEL_LAYOUT_STORAGE_VERSION = 4
 
 const LEFT_PANEL_DEFAULT_SIZE = 360
 const DEFAULT_GROUP_PREFIX = 'panel-group'
 const MIN_GROUP_HEIGHT = 132
-const GROUP_WIDTH_SNAP_PX = 12
+const GROUP_WIDTH_SNAP_PX = 10
 const FILL_PANEL_IDS = new Set<GamePanelId>(['chat', 'members', 'record'])
 const COMPACT_PANEL_DEFAULT_HEIGHT = 0.2
 const COMPACT_PANEL_DEFAULT_WIDTHS = new Map<GamePanelId, number>([
+  ['axisView', 520],
   ['clock', 260],
   ['minimap', 260],
 ])
@@ -71,16 +87,18 @@ const GamePanelGroupSchema = z.object({
   height: z.number().refine(Number.isFinite).catch(1),
   id: z.string(),
   panelIds: z.array(GamePanelIdSchema),
+  savedFreeAfter: z.number().refine(Number.isFinite).optional().catch(undefined),
+  savedFreeBefore: z.number().refine(Number.isFinite).optional().catch(undefined),
   stretch: GamePanelStretchSchema.optional(),
   top: z.number().refine(Number.isFinite).catch(Number.NaN),
   width: z.number().refine(Number.isFinite).optional().catch(undefined),
 })
 const GamePanelColumnSchema = z.object({
   groups: z.array(GamePanelGroupSchema),
-  size: z.number().refine(Number.isFinite).catch(LEFT_PANEL_DEFAULT_SIZE),
+  size: z.number().refine(Number.isFinite).optional().catch(undefined),
 })
 const StoredPanelLayoutSchema = z.object({
-  version: z.literal(PANEL_LAYOUT_STORAGE_VERSION),
+  version: z.union([z.literal(3), z.literal(PANEL_LAYOUT_STORAGE_VERSION)]),
   columns: z.object({
     left: GamePanelColumnSchema,
     right: GamePanelColumnSchema,
@@ -96,7 +114,6 @@ const DEFAULT_LAYOUT: StoredPanelLayout = {
   version: PANEL_LAYOUT_STORAGE_VERSION,
   columns: {
     left: {
-      size: LEFT_PANEL_DEFAULT_SIZE,
       groups: [{
         activePanelId: 'minimap',
         height: 0.2,
@@ -104,10 +121,10 @@ const DEFAULT_LAYOUT: StoredPanelLayout = {
         panelIds: ['minimap'],
         stretch: 'never',
         top: 0,
+        width: 260,
       }],
     },
     right: {
-      size: Sizes.RecordPanelWidth,
       groups: [{
         activePanelId: 'record',
         height: 1,
@@ -115,6 +132,7 @@ const DEFAULT_LAYOUT: StoredPanelLayout = {
         panelIds: ['record'],
         stretch: 'top-bottom',
         top: 0,
+        width: Sizes.RecordPanelWidth,
       }],
     },
   },
@@ -124,6 +142,7 @@ const DEFAULT_LAYOUT: StoredPanelLayout = {
 export function usePanelLayout({
   clockAvailable,
   onlineStudyActive,
+  viewportHeight,
   viewportWidth,
 }: PanelLayoutOptions) {
   const layout = useStorageRef<StoredPanelLayout>(
@@ -154,6 +173,7 @@ export function usePanelLayout({
     panelIds: GamePanelId[],
     top = 0,
     height = getDefaultGroupHeight(panelIds),
+    width = getDefaultGroupWidth(side, panelIds),
   ): GamePanelGroup {
     const id = `${DEFAULT_GROUP_PREFIX}-${side}-${layout.value.nextGroupId++}`
     const stretch = getDefaultGroupStretch(panelIds)
@@ -164,6 +184,7 @@ export function usePanelLayout({
       panelIds: [...panelIds],
       stretch,
       top,
+      width,
     }
   }
 
@@ -214,7 +235,7 @@ export function usePanelLayout({
       return
     }
 
-    appendPanelGroup(groups, createGroup(side, [id]))
+    appendPanelGroup(groups, createGroup(side, [id]), getPanelGroupGapRatio())
     normalizeSideGroupLayout(side)
   }
 
@@ -225,6 +246,59 @@ export function usePanelLayout({
     hidePanel(id)
     group.panelIds.push(id)
     group.activePanelId = id
+  }
+
+  function movePanelToGroup(id: GamePanelId, groupId: string, panelIndex: number) {
+    if (! isPanelAvailable(id)) return
+    const targetBefore = findGroupLocation(groupId)
+    if (! targetBefore) return
+
+    const sourceBefore = findPanelLocation(id)
+    if (sourceBefore?.group.id === groupId) {
+      const nextIndex = clampPanelIndex(panelIndex, sourceBefore.group.panelIds.length)
+      if (nextIndex === sourceBefore.panelIndex || nextIndex === sourceBefore.panelIndex + 1) {
+        sourceBefore.group.activePanelId = id
+        return
+      }
+    }
+
+    const detached = detachPanel(id)
+    if (! detached) return
+
+    const target = findGroupLocation(groupId)
+    if (! target) {
+      insertPanelAsNewGroup(id, targetBefore.side, targetBefore.groupIndex, detached)
+      normalizeChangedSideLayouts(detached.side, targetBefore.side, true)
+      return
+    }
+
+    const insertionIndex = detached.groupId === groupId && detached.panelIndex < panelIndex
+      ? panelIndex - 1
+      : panelIndex
+    target.group.panelIds.splice(
+      clampPanelIndex(insertionIndex, target.group.panelIds.length),
+      0,
+      id,
+    )
+    target.group.activePanelId = id
+    normalizeChangedSideLayouts(detached.side, target.side, detached.removedGroup)
+  }
+
+  function movePanelToNewGroup(
+    id: GamePanelId,
+    side: GamePanelSide,
+    groupIndex: number,
+    options: { anchor?: 'bottom' | 'top', place?: 'after-previous' | 'before-next' } = {},
+  ) {
+    if (! isPanelAvailable(id)) return
+    const detached = detachPanel(id)
+    if (! detached) return
+
+    const targetIndex = detached.removedGroup && detached.side === side && detached.groupIndex < groupIndex
+      ? groupIndex - 1
+      : groupIndex
+    insertPanelAsNewGroup(id, side, targetIndex, detached, options)
+    normalizeChangedSideLayouts(detached.side, side, true)
   }
 
   function hidePanel(id: GamePanelId) {
@@ -243,6 +317,70 @@ export function usePanelLayout({
     }
   }
 
+  function detachPanel(id: GamePanelId): DetachedPanel | null {
+    const location = findPanelLocation(id)
+    if (! location) return null
+
+    const { group, groupIndex, panelIndex, side } = location
+    const groupId = group.id
+    const groupHeight = group.height
+    const groupStretch = group.stretch
+    const groupTop = group.top
+    const groupWidth = group.width
+    group.panelIds.splice(panelIndex, 1)
+    const removedGroup = group.panelIds.length === 0
+    if (removedGroup) {
+      layout.value.columns[side].groups.splice(groupIndex, 1)
+    }
+    else if (group.activePanelId === id) {
+      group.activePanelId = group.panelIds[Math.min(panelIndex, group.panelIds.length - 1)]
+    }
+
+    return {
+      groupId,
+      groupHeight,
+      groupIndex,
+      groupStretch,
+      groupTop,
+      groupWidth,
+      panelIndex,
+      removedGroup,
+      side,
+    }
+  }
+
+  function insertPanelAsNewGroup(
+    id: GamePanelId,
+    side: GamePanelSide,
+    groupIndex: number,
+    detached: Pick<DetachedPanel, 'groupHeight' | 'groupStretch' | 'groupTop' | 'groupWidth'> | undefined,
+    options: { anchor?: 'bottom' | 'top', place?: 'after-previous' | 'before-next' } = {},
+  ) {
+    const groups = layout.value.columns[side].groups
+    const group = createGroup(side, [id])
+    if (detached) {
+      group.height = detached.groupHeight
+      group.stretch = detached.groupStretch
+      group.top = detached.groupTop
+      if (detached.groupWidth !== undefined) group.width = detached.groupWidth
+    }
+    if (options.anchor === 'top') {
+      group.top = 0
+    }
+    else if (options.anchor === 'bottom') {
+      group.top = Math.max(0, 1 - group.height)
+    }
+    else if (options.place === 'after-previous') {
+      const previous = groups[groupIndex - 1]
+      if (previous) group.top = clampRatio(previous.top + previous.height + getPanelGroupGapRatio())
+    }
+    else if (options.place === 'before-next') {
+      const next = groups[groupIndex]
+      if (next) group.top = clampRatio(next.top - group.height - getPanelGroupGapRatio())
+    }
+    groups.splice(clampGroupIndex(groupIndex, groups.length), 0, group)
+  }
+
   function setGroupActivePanel(groupId: string, panelId: GamePanelId) {
     const group = findGroup(groupId)
     if (! group || ! group.panelIds.includes(panelId)) return
@@ -258,25 +396,41 @@ export function usePanelLayout({
   }
 
   function setPanelSize(id: GamePanelId, size: number) {
-    const side = findPanelLocation(id)?.side ?? getDefaultPanelSide(id)
-    setSideSize(side, size)
+    const location = findPanelLocation(id)
+    if (location) setGroupWidth(location.side, location.group.id, size)
   }
 
-  function setSideSize(side: GamePanelSide, size: number) {
-    layout.value.columns[side].size = clampPanelWidth(side, size, viewportWidth.value)
-  }
-
-  function setGroupWidth(side: GamePanelSide, groupId: string, size: number) {
+  function setGroupWidth(
+    side: GamePanelSide,
+    groupId: string,
+    size: number,
+    options: { snap?: boolean } = {},
+  ): { snapped: boolean, width: number } | null {
     const group = findGroupInSide(side, groupId)
-    if (! group) return
+    if (! group) return null
 
-    const columnWidth = layout.value.columns[side].size
-    const width = clampPanelWidth(side, size, viewportWidth.value)
-    if (Math.abs(width - columnWidth) <= GROUP_WIDTH_SNAP_PX) {
-      delete group.width
-      return
+    const width = clampGroupWidth(group, size, viewportWidth.value)
+    const snapWidth = options.snap === false ? null : getGroupWidthSnapCandidate(side, groupId, width)
+    if (snapWidth !== null) {
+      group.width = snapWidth
+      return { snapped: true, width: snapWidth }
     }
     group.width = width
+    return { snapped: false, width }
+  }
+
+  function getGroupWidthSnapCandidate(side: GamePanelSide, groupId: string, width: number): number | null {
+    let best: { distance: number, width: number } | null = null
+    for (const group of getSideGroups(side)) {
+      if (group.id === groupId) continue
+      const candidateWidth = getGroupWidth(side, group)
+      const distance = Math.abs(width - candidateWidth)
+      if (distance > GROUP_WIDTH_SNAP_PX) continue
+      if (best === null || distance < best.distance) {
+        best = { distance, width: candidateWidth }
+      }
+    }
+    return best?.width ?? null
   }
 
   function setOnlineStudyDefaultPanels() {
@@ -296,16 +450,18 @@ export function usePanelLayout({
   }
 
   function getPanelSize(id: GamePanelId): number {
-    const side = findPanelLocation(id)?.side ?? getDefaultPanelSide(id)
-    return layout.value.columns[side].size
+    const location = findPanelLocation(id)
+    return location ? getGroupWidth(location.side, location.group) : getDefaultGroupWidth(getDefaultPanelSide(id), [id])
   }
 
   function getSideSize(side: GamePanelSide): number {
-    return layout.value.columns[side].size
+    const groups = getSideGroups(side)
+    if (groups.length === 0) return getDefaultSideWidth(side)
+    return groups.reduce((width, group) => Math.max(width, getGroupWidth(side, group)), 0)
   }
 
   function getGroupWidth(side: GamePanelSide, group: GamePanelGroup): number {
-    return clampPanelWidth(side, group.width ?? getGroupDefaultWidth(group) ?? layout.value.columns[side].size, viewportWidth.value)
+    return clampGroupWidth(group, group.width ?? getDefaultGroupWidth(side, group.panelIds), viewportWidth.value)
   }
 
   function getGroupHeight(group: GamePanelGroup): number {
@@ -314,10 +470,6 @@ export function usePanelLayout({
 
   function getGroupStretch(group: GamePanelGroup): GamePanelStretch {
     return getEffectiveGroupStretch(group)
-  }
-
-  function isGroupIndependentWidth(group: GamePanelGroup): boolean {
-    return Number.isFinite(group.width)
   }
 
   function getGroupTop(group: GamePanelGroup): number {
@@ -361,26 +513,38 @@ export function usePanelLayout({
     const index = items.findIndex(group => group.id === snapshot.groupId)
     if (index < 0) return
 
-    const minHeightPx = Math.max(1, Math.min(MIN_GROUP_HEIGHT, snapshot.totalHeightPx / items.length))
+    const gapPx = getPanelGroupGapPx(snapshot.totalHeightPx)
+    const totalGapPx = gapPx * Math.max(0, items.length - 1)
+    const minHeightPx = Math.max(1, Math.min(MIN_GROUP_HEIGHT, (snapshot.totalHeightPx - totalGapPx) / items.length))
     if (snapshot.edge === 'after') {
-      resizeGroupAfterEdge(items, index, deltaPx, snapshot.totalHeightPx, minHeightPx)
+      resizeGroupAfterEdge(items, index, deltaPx, snapshot.totalHeightPx, minHeightPx, gapPx)
     } else {
-      resizeGroupBeforeEdge(items, index, deltaPx, minHeightPx)
+      resizeGroupBeforeEdge(items, index, deltaPx, minHeightPx, gapPx)
     }
 
     for (const item of items) {
       const group = findGroupInSide(side, item.id)
       if (! group) continue
-      if (group.id === snapshot.groupId) group.stretch = removeGroupStretchEdge(getEffectiveGroupStretch(group), snapshot.edge)
+      if (group.id === snapshot.groupId) {
+        group.stretch = removeGroupStretchEdge(getEffectiveGroupStretch(group), snapshot.edge)
+        clearSavedFreeEdge(group, snapshot.edge)
+      }
       group.top = clampRatio(item.topPx / snapshot.totalHeightPx)
       group.height = clampRatio((item.bottomPx - item.topPx) / snapshot.totalHeightPx)
     }
   }
 
-  function addGroupStretchEdge(side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge) {
+  function toggleGroupStretchEdge(side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge) {
     const group = findGroupInSide(side, groupId)
     if (! group) return
-    group.stretch = addStretchEdge(getEffectiveGroupStretch(group), edge)
+    const stretch = getEffectiveGroupStretch(group)
+    if (hasStretchEdge(stretch, edge)) {
+      group.stretch = removeGroupStretchEdge(stretch, edge)
+      restoreSavedFreeEdge(group, edge)
+    } else {
+      saveFreeEdge(group, edge)
+      group.stretch = addStretchEdge(stretch, edge)
+    }
     normalizeSideGroupLayout(side)
   }
 
@@ -421,6 +585,22 @@ export function usePanelLayout({
     return null
   }
 
+  function findGroupLocation(groupId: string): {
+    group: GamePanelGroup
+    groupIndex: number
+    side: GamePanelSide
+  } | null {
+    for (const side of PANEL_SIDES) {
+      const groupIndex = layout.value.columns[side].groups.findIndex(group => group.id === groupId)
+      if (groupIndex >= 0) return {
+        group: layout.value.columns[side].groups[groupIndex]!,
+        groupIndex,
+        side,
+      }
+    }
+    return null
+  }
+
   function findGroupInSide(side: GamePanelSide, groupId: string): GamePanelGroup | null {
     return layout.value.columns[side].groups.find(group => group.id === groupId) ?? null
   }
@@ -445,19 +625,35 @@ export function usePanelLayout({
       })
     }
 
-    if (skippedUnavailableLayout) packGroupLayoutByStretch(groups)
-    else normalizeGroupLayout(groups)
+    if (skippedUnavailableLayout) packGroupLayoutByStretch(groups, getPanelGroupGapRatio())
+    else normalizeGroupLayout(groups, getPanelGroupGapRatio())
     return groups
   }
 
   function normalizeSideGroupLayout(side: GamePanelSide) {
-    packGroupLayoutByStretch(layout.value.columns[side].groups)
+    packGroupLayoutByStretch(layout.value.columns[side].groups, getPanelGroupGapRatio())
   }
+
+  function normalizeChangedSideLayouts(sourceSide: GamePanelSide, targetSide: GamePanelSide, structureChanged: boolean) {
+    if (! structureChanged) return
+    normalizeSideGroupLayout(sourceSide)
+    if (targetSide !== sourceSide) normalizeSideGroupLayout(targetSide)
+  }
+
+  function getPanelGroupGapRatio(): number {
+    return getPanelGroupGapPx(getPanelStackHeightPx()) / Math.max(1, getPanelStackHeightPx())
+  }
+
+  function getPanelStackHeightPx(): number {
+    const bottomInset = Sizes.ButtonTop + Sizes.ButtonHeight + Sizes.ButtonShadowOffset + Sizes.ButtonContentGap * 2
+    return Math.max(1, viewportHeight.value - Sizes.ButtonTop - bottomInset)
+  }
+
+  for (const side of PANEL_SIDES) normalizeSideGroupLayout(side)
 
   return {
     addPanelToGroup,
     addPanelToSide,
-    addGroupStretchEdge,
     closeAll,
     closeStudyPanels,
     getGroupHeight,
@@ -471,16 +667,17 @@ export function usePanelLayout({
     getSideSize,
     hiddenPanelIds,
     isPanelAvailable,
-    isGroupIndependentWidth,
     isPanelOpen,
     isPanelVisible,
     layout,
+    movePanelToGroup,
+    movePanelToNewGroup,
     setGroupActivePanel,
+    toggleGroupStretchEdge,
     setOnlineStudyDefaultPanels,
     setPanelOpen,
     setPanelSize,
     setGroupWidth,
-    setSideSize,
     resizeGroupEdge,
     togglePanel,
     visiblePanelIds,
@@ -509,36 +706,44 @@ function getGroupDefaultWidth(group: Pick<GamePanelGroup, 'panelIds'>): number |
   return COMPACT_PANEL_DEFAULT_WIDTHS.get(group.panelIds[0])
 }
 
+function getDefaultSideWidth(side: GamePanelSide): number {
+  return side === 'right' ? Sizes.RecordPanelWidth : LEFT_PANEL_DEFAULT_SIZE
+}
+
+function getDefaultGroupWidth(side: GamePanelSide, panelIds: GamePanelId[]): number {
+  return getGroupDefaultWidth({ panelIds }) ?? getDefaultSideWidth(side)
+}
+
 function getDefaultGroupHeight(panelIds: GamePanelId[]): number {
   return getDefaultGroupStretch(panelIds) === 'top-bottom' ? 1 : COMPACT_PANEL_DEFAULT_HEIGHT
 }
 
-function getSideMinSize(side: GamePanelSide): number {
-  return side === 'right'
-    ? getMinPanelSize('record')
-    : Math.max(getMinPanelSize('members'), getMinPanelSize('chat'))
+function getGroupMinWidth(group: Pick<GamePanelGroup, 'panelIds'>): number {
+  return group.panelIds.reduce((max, id) => Math.max(max, getMinPanelSize(id)), 0)
 }
 
-function clampPanelWidth(side: GamePanelSide, size: number, viewportWidth: number): number {
-  const minSize = getSideMinSize(side)
+function clampGroupWidth(group: Pick<GamePanelGroup, 'panelIds'>, size: number, viewportWidth: number): number {
+  const minSize = getGroupMinWidth(group)
   const maxWidth = Math.max(minSize, viewportWidth - Sizes.ButtonTop * 2)
   return Math.min(Math.max(size, minSize), maxWidth)
 }
 
 function normalizeStoredPanelLayout(layout: StoredPanelLayout): StoredPanelLayout {
   const normalized = StoredPanelLayoutSchema.parse(layout)
+  normalized.version = PANEL_LAYOUT_STORAGE_VERSION
   const groupIds = new Set<string>()
   for (const side of PANEL_SIDES) {
     const column = normalized.columns[side]
-    column.size = Math.max(getSideMinSize(side), column.size)
+    const legacyColumnSize = column.size
     column.groups = column.groups
-      .map(group => normalizeGroup(group))
+      .map(group => normalizeGroup(group, side, legacyColumnSize))
       .filter((group): group is GamePanelGroup => group !== null)
       .filter(group => {
         if (groupIds.has(group.id)) return false
         groupIds.add(group.id)
         return true
       })
+    delete column.size
     normalizeGroupLayout(column.groups)
   }
   normalized.nextGroupId = Math.max(
@@ -549,10 +754,18 @@ function normalizeStoredPanelLayout(layout: StoredPanelLayout): StoredPanelLayou
   return normalized
 }
 
-function normalizeGroup(group: GamePanelGroup): GamePanelGroup | null {
+function normalizeGroup(
+  group: Omit<GamePanelGroup, 'width'> & { width?: number },
+  side: GamePanelSide,
+  legacyColumnSize: number | undefined,
+): GamePanelGroup | null {
   const panelIds = uniquePanelIds(group.panelIds)
   if (panelIds.length === 0) return null
-  const stretch = group.stretch ?? getDefaultGroupStretch(panelIds)
+  const stretch = normalizeStoredGroupStretch(panelIds, group)
+  const rawWidth = group.width
+  const width = typeof rawWidth === 'number' && Number.isFinite(rawWidth)
+    ? rawWidth
+    : legacyColumnSize ?? getDefaultGroupWidth(side, panelIds)
   return {
     ...group,
     activePanelId: panelIds.includes(group.activePanelId) ? group.activePanelId : panelIds[0],
@@ -560,8 +773,31 @@ function normalizeGroup(group: GamePanelGroup): GamePanelGroup | null {
     panelIds,
     stretch,
     top: Number.isFinite(group.top) ? group.top : Number.NaN,
-    width: Number.isFinite(group.width) ? group.width : undefined,
+    width: clampGroupWidth({ panelIds }, width, Number.POSITIVE_INFINITY),
   }
+}
+
+function normalizeStoredGroupStretch(
+  panelIds: GamePanelId[],
+  group: Pick<GamePanelGroup, 'savedFreeAfter' | 'savedFreeBefore' | 'stretch'>,
+): GamePanelStretch {
+  const defaultStretch = getDefaultGroupStretch(panelIds)
+  let stretch = group.stretch ?? defaultStretch
+  if (
+    hasStretchEdge(stretch, 'before')
+    && ! hasStretchEdge(defaultStretch, 'before')
+    && group.savedFreeBefore === undefined
+  ) {
+    stretch = removeGroupStretchEdge(stretch, 'before')
+  }
+  if (
+    hasStretchEdge(stretch, 'after')
+    && ! hasStretchEdge(defaultStretch, 'after')
+    && group.savedFreeAfter === undefined
+  ) {
+    stretch = removeGroupStretchEdge(stretch, 'after')
+  }
+  return stretch
 }
 
 function uniquePanelIds(panelIds: GamePanelId[]): GamePanelId[] {
@@ -575,19 +811,11 @@ function uniquePanelIds(panelIds: GamePanelId[]): GamePanelId[] {
   return result
 }
 
-function normalizeGroupLayout(groups: GamePanelGroup[]) {
-  if (groups.length === 0) return
-  if (! hasValidGroupGeometry(groups)) {
-    packGroupLayoutByStretch(groups)
-    return
-  }
-  for (const group of groups) {
-    group.top = clampRatio(group.top)
-    group.height = clampRatio(group.height)
-  }
+function normalizeGroupLayout(groups: GamePanelGroup[], gapRatio = 0) {
+  packGroupLayoutByStretch(groups, gapRatio)
 }
 
-function hasValidGroupGeometry(groups: GamePanelGroup[]): boolean {
+function hasValidGroupGeometry(groups: GamePanelGroup[], gapRatio = 0): boolean {
   let previousBottom = 0
   for (const group of groups) {
     if (! Number.isFinite(group.top) || ! Number.isFinite(group.height)) return false
@@ -595,24 +823,46 @@ function hasValidGroupGeometry(groups: GamePanelGroup[]): boolean {
     if (group.top < -0.000001) return false
     if (group.top + group.height > 1.000001) return false
     if (group.top < previousBottom - 0.000001) return false
+    if (previousBottom > 0 && group.top < previousBottom + gapRatio - 0.000001) return false
     previousBottom = group.top + group.height
   }
   return true
 }
 
-function appendPanelGroup(groups: GamePanelGroup[], group: GamePanelGroup) {
+function appendPanelGroup(groups: GamePanelGroup[], group: GamePanelGroup, gapRatio = 0) {
   groups.push(group)
-  packGroupLayoutByStretch(groups)
+  packGroupLayoutByStretch(groups, gapRatio)
 }
 
-function packGroupLayoutByStretch(groups: GamePanelGroup[]) {
+function packGroupLayoutByStretch(groups: GamePanelGroup[], gapRatio = 0) {
   const minHeight = 0.001
+  const gap = Math.max(0, Math.min(0.05, gapRatio))
+  if (groups.length === 0) return
+  if (hasValidGroupGeometry(groups, gap)) {
+    for (const group of groups) {
+      group.top = clampRatio(group.top)
+      group.height = clampRatio(group.height)
+    }
+    applyGroupStretchEdges(groups, gap, minHeight)
+    return
+  }
+
+  if (groups.length === 1) {
+    const group = groups[0]!
+    group.top = clampRatio(group.top)
+    group.height = Math.min(1 - group.top, getPackGroupHeight(group, minHeight))
+    applyGroupStretchEdges(groups, gap, minHeight)
+    return
+  }
+
+  const totalGap = gap * Math.max(0, groups.length - 1)
+  const availableHeight = Math.max(minHeight * groups.length, 1 - totalGap)
   const fillGroups = groups.filter(group => getEffectiveGroupStretch(group) === 'top-bottom')
   const fixedGroups = groups.filter(group => getEffectiveGroupStretch(group) !== 'top-bottom')
   let fixedHeight = fixedGroups.reduce((sum, group) => sum + getPackGroupHeight(group, minHeight), 0)
 
-  if (fillGroups.length > 0 && fixedHeight + minHeight * fillGroups.length > 1) {
-    const maxFixedHeight = Math.max(0, 1 - minHeight * fillGroups.length)
+  if (fillGroups.length > 0 && fixedHeight + minHeight * fillGroups.length > availableHeight) {
+    const maxFixedHeight = Math.max(0, availableHeight - minHeight * fillGroups.length)
     const scale = fixedHeight > 0 ? maxFixedHeight / fixedHeight : 1
     for (const group of fixedGroups) {
       group.height = Math.max(minHeight, getPackGroupHeight(group, minHeight) * scale)
@@ -621,7 +871,7 @@ function packGroupLayoutByStretch(groups: GamePanelGroup[]) {
   }
 
   if (fillGroups.length > 0) {
-    const fillSpace = Math.max(minHeight * fillGroups.length, 1 - fixedHeight)
+    const fillSpace = Math.max(minHeight * fillGroups.length, availableHeight - fixedHeight)
     const fillHeight = fillGroups.reduce((sum, group) => sum + getPackGroupHeight(group, minHeight), 0)
     for (const group of fillGroups) {
       group.height = fillHeight > 0
@@ -630,18 +880,52 @@ function packGroupLayoutByStretch(groups: GamePanelGroup[]) {
     }
   } else {
     const totalHeight = groups.reduce((sum, group) => sum + getPackGroupHeight(group, minHeight), 0)
-    if (totalHeight > 1) {
+    if (totalHeight > availableHeight) {
       for (const group of groups) {
-        group.height = Math.max(minHeight, getPackGroupHeight(group, minHeight) / totalHeight)
+        group.height = Math.max(minHeight, availableHeight * getPackGroupHeight(group, minHeight) / totalHeight)
       }
     }
   }
 
   let cursor = 0
-  for (const group of groups) {
+  for (const [index, group] of groups.entries()) {
+    const remainingGroups = groups.length - index - 1
+    const maxHeight = Math.max(minHeight, 1 - cursor - gap * remainingGroups)
     group.top = clampRatio(cursor)
-    group.height = Math.max(minHeight, Math.min(getPackGroupHeight(group, minHeight), 1 - group.top))
-    cursor += group.height
+    group.height = Math.max(minHeight, Math.min(getPackGroupHeight(group, minHeight), maxHeight))
+    cursor += group.height + gap
+  }
+  applyGroupStretchEdges(groups, gap, minHeight)
+}
+
+function applyGroupStretchEdges(groups: GamePanelGroup[], gapRatio: number, minHeight: number) {
+  for (let index = 0; index < groups.length; index++) {
+    const group = groups[index]!
+    const stretch = getEffectiveGroupStretch(group)
+    if (stretch === 'never') continue
+
+    const previous = groups[index - 1]
+    const next = groups[index + 1]
+    let top = group.top
+    let bottom = group.top + group.height
+
+    if (hasStretchEdge(stretch, 'before')) {
+      top = previous ? previous.top + previous.height + gapRatio : 0
+    }
+    if (hasStretchEdge(stretch, 'after')) {
+      bottom = next ? next.top - gapRatio : 1
+    }
+
+    if (bottom - top < minHeight) {
+      if (hasStretchEdge(stretch, 'before') && ! hasStretchEdge(stretch, 'after')) {
+        top = bottom - minHeight
+      } else {
+        bottom = top + minHeight
+      }
+    }
+
+    group.top = clampRatio(top)
+    group.height = Math.max(minHeight, Math.min(1 - group.top, bottom - group.top))
   }
 }
 
@@ -658,6 +942,51 @@ function addStretchEdge(stretch: GamePanelStretch, edge: GamePanelGroupResizeEdg
   if (stretch === 'top') return 'top-bottom'
   if (stretch === 'never') return 'bottom'
   return stretch
+}
+
+function hasStretchEdge(stretch: GamePanelStretch, edge: GamePanelGroupResizeEdge): boolean {
+  if (edge === 'before') return stretch === 'top' || stretch === 'top-bottom'
+  return stretch === 'bottom' || stretch === 'top-bottom'
+}
+
+function saveFreeEdge(group: GamePanelGroup, edge: GamePanelGroupResizeEdge) {
+  if (edge === 'before') {
+    group.savedFreeBefore = clampRatio(group.top)
+  } else {
+    group.savedFreeAfter = clampRatio(group.top + group.height)
+  }
+}
+
+function restoreSavedFreeEdge(group: GamePanelGroup, edge: GamePanelGroupResizeEdge) {
+  const minHeight = 0.001
+  if (edge === 'before') {
+    const savedTop = group.savedFreeBefore
+    clearSavedFreeEdge(group, edge)
+    if (savedTop === undefined) return
+
+    const bottom = clampRatio(group.top + group.height)
+    const top = Math.min(Math.max(0, savedTop), Math.max(0, bottom - minHeight))
+    group.top = top
+    group.height = bottom - top
+    return
+  }
+
+  const savedBottom = group.savedFreeAfter
+  clearSavedFreeEdge(group, edge)
+  if (savedBottom === undefined) return
+
+  const top = clampRatio(group.top)
+  const bottom = Math.max(top + minHeight, Math.min(1, savedBottom))
+  group.top = top
+  group.height = bottom - top
+}
+
+function clearSavedFreeEdge(group: GamePanelGroup, edge: GamePanelGroupResizeEdge) {
+  if (edge === 'before') {
+    delete group.savedFreeBefore
+  } else {
+    delete group.savedFreeAfter
+  }
 }
 
 function removeGroupStretchEdge(stretch: GamePanelStretch, edge: GamePanelGroupResizeEdge): GamePanelStretch {
@@ -677,6 +1006,7 @@ function resizeGroupAfterEdge(
   deltaPx: number,
   totalHeightPx: number,
   minHeightPx: number,
+  gapPx: number,
 ) {
   const item = items[index]
   const startBottom = item.bottomPx
@@ -688,9 +1018,10 @@ function resizeGroupAfterEdge(
     return
   }
 
-  const maxBottom = totalHeightPx - minHeightPx * (items.length - index - 1)
+  const trailingItemCount = items.length - index - 1
+  const maxBottom = totalHeightPx - minHeightPx * trailingItemCount - gapPx * trailingItemCount
   item.bottomPx = Math.min(Math.max(minBottom, desiredBottom), maxBottom)
-  let requiredTop = item.bottomPx
+  let requiredTop = item.bottomPx + gapPx
   for (let i = index + 1; i < items.length; i++) {
     const next = items[i]
     if (next.topPx >= requiredTop) break
@@ -703,7 +1034,7 @@ function resizeGroupAfterEdge(
 
     next.topPx = requiredTop
     next.bottomPx = requiredTop + minHeightPx
-    requiredTop = next.bottomPx
+    requiredTop = next.bottomPx + gapPx
   }
 }
 
@@ -712,6 +1043,7 @@ function resizeGroupBeforeEdge(
   index: number,
   deltaPx: number,
   minHeightPx: number,
+  gapPx: number,
 ) {
   const item = items[index]
   const startTop = item.topPx
@@ -723,9 +1055,9 @@ function resizeGroupBeforeEdge(
     return
   }
 
-  const minTop = minHeightPx * index
+  const minTop = minHeightPx * index + gapPx * index
   item.topPx = Math.max(minTop, Math.min(maxTop, desiredTop))
-  let requiredBottom = item.topPx
+  let requiredBottom = item.topPx - gapPx
   for (let i = index - 1; i >= 0; i--) {
     const previous = items[i]
     if (previous.bottomPx <= requiredBottom) break
@@ -738,13 +1070,28 @@ function resizeGroupBeforeEdge(
 
     previous.bottomPx = requiredBottom
     previous.topPx = requiredBottom - minHeightPx
-    requiredBottom = previous.topPx
+    requiredBottom = previous.topPx - gapPx
   }
+}
+
+function getPanelGroupGapPx(totalHeightPx: number): number {
+  if (! Number.isFinite(totalHeightPx) || totalHeightPx <= 0) return 0
+  return Math.min(totalHeightPx * 0.05, Sizes.ButtonContentGap * 0.6)
 }
 
 function clampRatio(value: number): number {
   if (! Number.isFinite(value)) return 0
   return Math.min(1, Math.max(0, value))
+}
+
+function clampGroupIndex(value: number, length: number): number {
+  if (! Number.isFinite(value)) return length
+  return Math.min(length, Math.max(0, Math.round(value)))
+}
+
+function clampPanelIndex(value: number, length: number): number {
+  if (! Number.isFinite(value)) return length
+  return Math.min(length, Math.max(0, Math.round(value)))
 }
 
 function getGroupIdSequence(groupId: string): number {

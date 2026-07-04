@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch, type CSSProperties } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
 import { Player } from '@5dcol/core'
 import * as FiveDPGN from '@5dcol/core/fiveDPGN'
@@ -71,7 +71,7 @@ import GameButton from './GameButton.vue'
 import GameDialog from './GameDialog.vue'
 import GameIcon from './GameIcon.vue'
 import GamePanelPicker, { type GamePanelPickerItem } from './GamePanelPicker.vue'
-import GameSidePanelGroup, { type GameSidePanelTab } from './GameSidePanelGroup.vue'
+import GameSidePanelGroup, { type GameSidePanelGroupDropTarget, type GameSidePanelTab } from './GameSidePanelGroup.vue'
 import GameSidePanelStack from './GameSidePanelStack.vue'
 import GameToggle from './GameToggle.vue'
 import MainMenuAnimation from './MainMenuAnimation.vue'
@@ -189,12 +189,16 @@ const clockAvailable = computed(() => gameStarted.value && onlineSession.value !
 const panelLayout = usePanelLayout({
   clockAvailable,
   onlineStudyActive: computed(() => activeOnlineStudy.value !== null),
+  viewportHeight,
   viewportWidth,
 })
 const panelPickerOpen = ref(false)
 const panelPickerGroupId = ref<string | null>(null)
+const panelDragState = ref<PanelDragState | null>(null)
+const suppressNextPanelTabClick = ref(false)
 const resizingSidePanelGroup = ref<{ edge: GamePanelGroupResizeEdge; groupId: string } | null>(null)
 const resizingSidePanelWidthGroupId = ref<string | null>(null)
+const panelWidthSnapGuide = ref<PanelWidthSnapGuide | null>(null)
 const recordPanelOpen = computed({
   get: () => panelLayout.isPanelOpen('record'),
   set: (open: boolean) => panelLayout.setPanelOpen('record', open),
@@ -430,6 +434,38 @@ const menuButtons = computed(() => (
   secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
 const panelSides = ['left', 'right'] as const
+const PANEL_DRAG_THRESHOLD_PX = 6
+const PANEL_DRAG_GHOST_OFFSET_PX = 12
+const PANEL_COLUMN_EDGE_DROP_MAX_RATIO = 0.25
+
+type PanelDragDropTarget =
+  | { groupId: string, index: number, kind: 'tab' }
+  | {
+    groupIndex: number
+    kind: 'side'
+    placement?: 'column-end' | 'column-start' | 'group-after' | 'group-before'
+    side: GamePanelSide
+  }
+
+interface PanelDragState {
+  currentClientX: number
+  currentClientY: number
+  dragging: boolean
+  groupId: string
+  icon: GamePanelPickerItem['icon']
+  label: string
+  panelId: GamePanelId
+  pointerId: number
+  startClientX: number
+  startClientY: number
+  target: PanelDragDropTarget | null
+}
+
+interface PanelWidthSnapGuide {
+  side: GamePanelSide
+  width: number
+}
+
 const panelPickerItems = computed<GamePanelPickerItem[]>(() => (
   panelLayout.hiddenPanelIds.value.map(id => ({
     id,
@@ -438,8 +474,36 @@ const panelPickerItems = computed<GamePanelPickerItem[]>(() => (
   }))
 ))
 const uiOverlayOpen = computed(() => (
-  secondaryMenuOpen.value || panelPickerOpen.value || dialogMode.value !== 'none' || ! gameStarted.value
+  secondaryMenuOpen.value
+  || panelPickerOpen.value
+  || panelDragState.value?.dragging === true
+  || dialogMode.value !== 'none'
+  || ! gameStarted.value
 ))
+const panelDragGhostStyle = computed<CSSProperties>(() => {
+  const state = panelDragState.value
+  if (! state) return {}
+  return {
+    transform: `translate(${state.currentClientX + PANEL_DRAG_GHOST_OFFSET_PX}px, ${state.currentClientY + PANEL_DRAG_GHOST_OFFSET_PX}px)`,
+  }
+})
+const panelSideDropTarget = computed<Extract<PanelDragDropTarget, { kind: 'side' }> | null>(() => {
+  const target = panelDragState.value?.target
+  return panelDragState.value?.dragging === true && target?.kind === 'side' ? target : null
+})
+const panelWidthSnapGuideStyle = computed<CSSProperties>(() => {
+  const guide = panelWidthSnapGuide.value
+  if (! guide) return {}
+  const rect = getPanelStackClientRect(guide.side)
+  const x = guide.side === 'left'
+    ? rect.left + guide.width
+    : rect.right - guide.width
+  return {
+    left: `${x - 1}px`,
+    top: `${rect.top}px`,
+    height: `${rect.height}px`,
+  }
+})
 const isOnlineSpectator = computed(() => onlineRoomStatus.value !== null && onlinePlayer.value === null)
 const shouldShowReturnLiveButton = computed(() => (
   isOnlineSpectator.value
@@ -983,14 +1047,488 @@ function addPanelToGroup(panelId: GamePanelId, groupId: string) {
 }
 
 function selectPanelTab(groupId: string, panelId: GamePanelId) {
+  if (suppressNextPanelTabClick.value) {
+    suppressNextPanelTabClick.value = false
+    return
+  }
   playUISound()
   if (panelId === 'record') prepareRecordPanelOpen()
   panelLayout.setGroupActivePanel(groupId, panelId)
 }
 
+function startPanelTabDrag({ event, groupId, panelId }: { event: PointerEvent, groupId: string, panelId: GamePanelId }) {
+  if (event.button !== 0) return
+  const handle = event.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>('[data-panel-tab-id]')
+      : null
+  if (! handle) return
+
+  const pointerId = event.pointerId
+  const previousHtmlCursor = document.documentElement.style.cursor
+  const previousBodyCursor = document.body.style.cursor
+  let stopped = false
+
+  panelDragState.value = {
+    currentClientX: event.clientX,
+    currentClientY: event.clientY,
+    dragging: false,
+    groupId,
+    icon: getPanelIcon(panelId),
+    label: getPanelLabel(panelId),
+    panelId,
+    pointerId,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    target: null,
+  }
+
+  const cleanup = () => {
+    handle.removeEventListener('pointermove', move)
+    handle.removeEventListener('pointerup', stop)
+    handle.removeEventListener('pointercancel', cancel)
+    handle.removeEventListener('lostpointercapture', cancel)
+    window.removeEventListener('blur', cancel)
+    window.removeEventListener('keydown', keydown)
+    if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
+    document.documentElement.classList.remove('game-side-panel-dragging')
+    document.documentElement.style.cursor = previousHtmlCursor
+    document.body.style.cursor = previousBodyCursor
+  }
+
+  const finishDrag = (applyDrop: boolean) => {
+    const state = panelDragState.value
+    if (applyDrop && state?.dragging) {
+      dropPanelDragTarget(state)
+      playUISound()
+      suppressNextPanelTabClick.value = true
+      window.setTimeout(() => {
+        suppressNextPanelTabClick.value = false
+      })
+    }
+    panelDragState.value = null
+    syncGameInputState()
+  }
+
+  function move(moveEvent: PointerEvent) {
+    if (moveEvent.pointerId !== pointerId) return
+    const state = panelDragState.value
+    if (! state) return
+    state.currentClientX = moveEvent.clientX
+    state.currentClientY = moveEvent.clientY
+
+    const distance = Math.hypot(
+      moveEvent.clientX - state.startClientX,
+      moveEvent.clientY - state.startClientY,
+    )
+    if (! state.dragging && distance >= PANEL_DRAG_THRESHOLD_PX) {
+      closePanelPicker()
+      state.dragging = true
+      document.documentElement.classList.add('game-side-panel-dragging')
+      document.documentElement.style.cursor = 'grabbing'
+      document.body.style.cursor = 'grabbing'
+      suppressNextPanelTabClick.value = true
+      syncGameInputState()
+    }
+    if (state.dragging) {
+      moveEvent.preventDefault()
+      state.target = resolvePanelDragDropTarget(moveEvent.clientX, moveEvent.clientY, state)
+    }
+  }
+
+  function stop(stopEvent: PointerEvent | Event) {
+    if ('pointerId' in stopEvent && stopEvent.pointerId !== pointerId) return
+    if (stopped) return
+    stopped = true
+    cleanup()
+    finishDrag(true)
+  }
+
+  function cancel(cancelEvent: PointerEvent | Event) {
+    if ('pointerId' in cancelEvent && cancelEvent.pointerId !== pointerId) return
+    if (stopped) return
+    stopped = true
+    cleanup()
+    finishDrag(false)
+  }
+
+  function keydown(keyboardEvent: KeyboardEvent) {
+    if (keyboardEvent.key !== 'Escape') return
+    keyboardEvent.preventDefault()
+    cancel(keyboardEvent)
+  }
+
+  handle.setPointerCapture(pointerId)
+  handle.addEventListener('pointermove', move)
+  handle.addEventListener('pointerup', stop)
+  handle.addEventListener('pointercancel', cancel)
+  handle.addEventListener('lostpointercapture', cancel)
+  window.addEventListener('blur', cancel)
+  window.addEventListener('keydown', keydown)
+}
+
+function getPanelGroupDropTarget(groupId: string): GameSidePanelGroupDropTarget | null {
+  const target = panelDragState.value?.dragging ? panelDragState.value.target : null
+  if (! target) return null
+  if (target.kind === 'tab' && target.groupId === groupId) {
+    return { kind: 'tab', index: target.index }
+  }
+  return null
+}
+
+function dropPanelDragTarget(state: PanelDragState) {
+  const target = state.target
+  if (! target) return
+  if (state.panelId === 'record') prepareRecordPanelOpen()
+  if (target.kind === 'tab') {
+    panelLayout.movePanelToGroup(state.panelId, target.groupId, target.index)
+  }
+  else {
+    panelLayout.movePanelToNewGroup(state.panelId, target.side, target.groupIndex, {
+      anchor: target.placement === 'column-start'
+        ? 'top'
+        : target.placement === 'column-end'
+          ? 'bottom'
+          : undefined,
+      place: target.placement === 'group-after'
+        ? 'after-previous'
+        : target.placement === 'group-before'
+          ? 'before-next'
+          : undefined,
+    })
+  }
+  syncGameViewportInsets()
+}
+
+function resolvePanelDragDropTarget(clientX: number, clientY: number, state: PanelDragState): PanelDragDropTarget | null {
+  const element = document.elementFromPoint(clientX, clientY)
+  const edgeTarget = resolvePanelColumnEdgeDropTarget(clientX, clientY)
+  if (edgeTarget) return edgeTarget
+
+  const tab = element instanceof HTMLElement
+    ? element.closest<HTMLElement>('[data-panel-tab-id]')
+    : null
+  if (tab?.dataset.panelGroupId) {
+    return {
+      groupId: tab.dataset.panelGroupId,
+      index: getPanelTabInsertIndex(tab.dataset.panelGroupId, clientX),
+      kind: 'tab',
+    }
+  }
+
+  const tabs = element instanceof HTMLElement
+    ? element.closest<HTMLElement>('[data-panel-tabs="true"]')
+    : null
+  if (tabs?.dataset.panelGroupId) {
+    return {
+      groupId: tabs.dataset.panelGroupId,
+      index: getPanelTabInsertIndex(tabs.dataset.panelGroupId, clientX),
+      kind: 'tab',
+    }
+  }
+
+  const groupEdgeTarget = element instanceof HTMLElement
+    ? resolvePanelGroupEdgeDropTarget(element, clientY)
+    : null
+  if (groupEdgeTarget) return groupEdgeTarget
+
+  const group = element instanceof HTMLElement
+    ? element.closest<HTMLElement>('[data-panel-group-id]')
+    : null
+  if (group) return null
+
+  return resolvePanelSideDropTarget(clientX, clientY, state)
+}
+
+function getPanelTabInsertIndex(groupId: string, clientX: number): number {
+  const tabs = Array.from(document.querySelectorAll<HTMLElement>(
+    `[data-panel-group-id="${CSS.escape(groupId)}"][data-panel-tab-index]`,
+  ))
+  for (const tab of tabs) {
+    const rect = tab.getBoundingClientRect()
+    if (clientX < rect.left + rect.width / 2) return Number(tab.dataset.panelTabIndex) || 0
+  }
+  return tabs.length
+}
+
+function resolvePanelColumnEdgeDropTarget(clientX: number, clientY: number): Extract<PanelDragDropTarget, { kind: 'side' }> | null {
+  for (const side of panelSides) {
+    const rect = getPanelSideVisualRect(side)
+    if (! isPointInPanelRect(clientX, clientY, rect)) continue
+    const groups = panelLayout.getSideGroups(side)
+    const firstGroupRect = getPanelGroupClientRect(groups[0]?.id)
+    const lastGroupRect = getPanelGroupClientRect(groups[groups.length - 1]?.id)
+    const edgeSize = Math.min(rect.height * PANEL_COLUMN_EDGE_DROP_MAX_RATIO, getPanelColumnEdgeDropSizePx())
+    const firstTop = firstGroupRect?.top ?? rect.top
+    const lastBottom = lastGroupRect?.bottom ?? rect.bottom
+    const hasTopGap = firstTop > rect.top + 1
+    const hasBottomGap = lastBottom < rect.bottom - 1
+    if (groups.length === 0) {
+      return {
+        groupIndex: 0,
+        kind: 'side',
+        placement: clientY < rect.top + rect.height / 2 ? 'column-start' : 'column-end',
+        side,
+      }
+    }
+    const topSplit = rect.top + (firstTop - rect.top) / 2
+    const bottomSplit = lastBottom + (rect.bottom - lastBottom) / 2
+    if (
+      (hasTopGap && clientY < topSplit)
+      || (! hasTopGap && clientY <= rect.top + edgeSize)
+    ) {
+      return { groupIndex: 0, kind: 'side', placement: 'column-start', side }
+    }
+    if (
+      (hasBottomGap && clientY > bottomSplit)
+      || (! hasBottomGap && clientY >= rect.bottom - edgeSize)
+    ) {
+      return { groupIndex: groups.length, kind: 'side', placement: 'column-end', side }
+    }
+  }
+  return null
+}
+
+function resolvePanelGroupEdgeDropTarget(element: HTMLElement, clientY: number): Extract<PanelDragDropTarget, { kind: 'side' }> | null {
+  const groupElement = element.closest<HTMLElement>('[data-panel-group-id]')
+  const groupId = groupElement?.dataset.panelGroupId
+  const side = parsePanelSide(groupElement?.dataset.panelSide)
+  if (! groupElement || ! groupId || ! side) return null
+
+  const groups = panelLayout.getSideGroups(side)
+  const groupIndex = groups.findIndex(group => group.id === groupId)
+  if (groupIndex < 0) return null
+
+  const rect = groupElement.getBoundingClientRect()
+  const edgeSize = Math.min(rect.height * PANEL_COLUMN_EDGE_DROP_MAX_RATIO, getPanelColumnEdgeDropSizePx())
+  if (clientY <= rect.top + edgeSize) {
+    return { groupIndex, kind: 'side', placement: 'group-before', side }
+  }
+  if (clientY >= rect.bottom - edgeSize) {
+    return { groupIndex: groupIndex + 1, kind: 'side', placement: 'group-after', side }
+  }
+  return null
+}
+
+function resolvePanelSideDropTarget(clientX: number, clientY: number, state: PanelDragState): PanelDragDropTarget | null {
+  for (const side of panelSides) {
+    const rect = getPanelStackClientRect(side)
+    if (! isPointInPanelRect(clientX, clientY, rect)) continue
+    const groups = panelLayout.getSideGroups(side)
+    const groupRects = groups.map(group => getPanelGroupClientRect(group.id))
+    if (groupRects.some(groupRect => groupRect !== null)) {
+      let fallbackTarget: Extract<PanelDragDropTarget, { kind: 'side' }> = {
+        groupIndex: groups.length,
+        kind: 'side',
+        placement: 'group-after',
+        side,
+      }
+      for (const [index, groupRect] of groupRects.entries()) {
+        if (! groupRect) continue
+        const previousBottom = index > 0 ? groupRects[index - 1]?.bottom ?? rect.top : rect.top
+        if (clientY < groupRect.top) {
+          if (index <= 0) {
+            fallbackTarget = {
+              groupIndex: 0,
+              kind: 'side',
+              placement: 'group-before',
+              side,
+            }
+            break
+          }
+          const splitTop = previousBottom + (groupRect.top - previousBottom) / 2
+          fallbackTarget = clientY < splitTop
+            ? {
+              groupIndex: index,
+              kind: 'side',
+              placement: 'group-after',
+              side,
+            }
+            : {
+              groupIndex: index,
+              kind: 'side',
+              placement: 'group-before',
+              side,
+            }
+          break
+        }
+        if (clientY <= groupRect.bottom) {
+          fallbackTarget = clientY < groupRect.top + groupRect.height / 2
+            ? {
+              groupIndex: index,
+              kind: 'side',
+              placement: 'group-before',
+              side,
+            }
+            : {
+              groupIndex: index + 1,
+              kind: 'side',
+              placement: 'group-after',
+              side,
+            }
+          break
+        }
+      }
+      return fallbackTarget
+    }
+
+    let groupIndex = groups.length
+    for (const [index, group] of groups.entries()) {
+      const groupMidY = rect.top + (panelLayout.getGroupTop(group) + panelLayout.getGroupHeight(group) / 2) * rect.height
+      if (clientY < groupMidY) {
+        groupIndex = index
+        break
+      }
+    }
+    return { groupIndex, kind: 'side', side }
+  }
+
+  const sourceSide = getPanelSideFromGroupId(state.groupId)
+  if (! sourceSide) return null
+  const fallbackRect = getPanelStackClientRect(sourceSide)
+  if (clientY < fallbackRect.top || clientY > fallbackRect.bottom) return null
+  return {
+    groupIndex: clientY < fallbackRect.top + fallbackRect.height / 2 ? 0 : panelLayout.getSideGroups(sourceSide).length,
+    kind: 'side',
+    side: sourceSide,
+  }
+}
+
+function getPanelSideDropSlotStyle(target: Extract<PanelDragDropTarget, { kind: 'side' }>): CSSProperties {
+  const rect = getPanelSideVisualRect(target.side)
+  const groups = panelLayout.getSideGroups(target.side)
+  let top = getPanelGroupClientRect(groups[0]?.id)?.top ?? rect.top
+  if (target.placement === 'column-start') {
+    top = rect.top
+  }
+  else if (target.placement === 'column-end') {
+    top = rect.bottom
+  }
+  else if (target.placement === 'group-before') {
+    const group = groups[target.groupIndex]
+    top = getPanelGroupClientRect(group?.id)?.top
+      ?? (group ? rect.top + panelLayout.getGroupTop(group) * rect.height : top)
+  }
+  else if (target.placement === 'group-after') {
+    const group = groups[target.groupIndex - 1]
+    top = getPanelGroupClientRect(group?.id)?.bottom
+      ?? (group ? rect.top + (panelLayout.getGroupTop(group) + panelLayout.getGroupHeight(group)) * rect.height : top)
+  }
+  else if (groups.length > 0 && target.groupIndex <= 0) {
+    const firstTop = getPanelGroupClientRect(groups[0]?.id)?.top ?? rect.top
+    top = firstTop
+  }
+  else if (groups.length > 0 && target.groupIndex >= groups.length) {
+    const lastBottom = getPanelGroupClientRect(groups[groups.length - 1]?.id)?.bottom ?? rect.bottom
+    top = lastBottom
+  }
+  else if (target.groupIndex > 0) {
+    const previousGroup = groups[target.groupIndex - 1]
+    top = getPanelGroupClientRect(previousGroup?.id)?.bottom
+      ?? (previousGroup ? rect.top + (panelLayout.getGroupTop(previousGroup) + panelLayout.getGroupHeight(previousGroup)) * rect.height : rect.top)
+    const nextGroup = groups[target.groupIndex]
+    if (nextGroup) {
+      const nextTop = getPanelGroupClientRect(nextGroup.id)?.top
+        ?? rect.top + panelLayout.getGroupTop(nextGroup) * rect.height
+      top += Math.max(0, nextTop - top) / 2
+    }
+  }
+  return {
+    left: `${rect.left}px`,
+    top: `${top - 2}px`,
+    width: `${Math.max(32, rect.width)}px`,
+  }
+}
+
+function getPanelStackClientRect(side: GamePanelSide): Pick<DOMRect, 'bottom' | 'height' | 'left' | 'right' | 'top' | 'width'> {
+  const stack = document.querySelector<HTMLElement>(`.game-side-panel-stack--${side}`)
+  if (stack) return stack.getBoundingClientRect()
+
+  const style = getComputedStyle(gameRoot.value ?? document.documentElement)
+  const top = getCssPixelValue(style, '--button-top', 24)
+  const bottomInset = top
+    + getCssPixelValue(style, '--button-height', 54)
+    + getCssPixelValue(style, '--button-shadow-offset', 5)
+    + getCssPixelValue(style, '--button-content-gap', 8) * 2
+  const width = panelLayout.getSideSize(side)
+  const left = side === 'left' ? top : viewportWidth.value - top - width
+  const right = left + width
+  const bottom = viewportHeight.value - bottomInset
+  return {
+    bottom,
+    height: Math.max(0, bottom - top),
+    left,
+    right,
+    top,
+    width,
+  }
+}
+
+function getPanelSideVisualRect(side: GamePanelSide): Pick<DOMRect, 'bottom' | 'height' | 'left' | 'right' | 'top' | 'width'> {
+  const rect = getPanelStackClientRect(side)
+  const groups = panelLayout.getSideGroups(side)
+  const groupRects = groups
+    .map(group => getPanelGroupClientRect(group.id))
+    .filter((groupRect): groupRect is DOMRect => groupRect !== null)
+  if (groupRects.length === 0) return rect
+
+  const left = Math.min(rect.left, ...groupRects.map(groupRect => groupRect.left))
+  const right = Math.max(rect.right, ...groupRects.map(groupRect => groupRect.right))
+  const top = Math.min(rect.top, ...groupRects.map(groupRect => groupRect.top))
+  const bottom = Math.max(rect.bottom, ...groupRects.map(groupRect => groupRect.bottom))
+  return {
+    bottom,
+    height: Math.max(0, bottom - top),
+    left,
+    right,
+    top,
+    width: Math.max(0, right - left),
+  }
+}
+
+function getPanelGroupClientRect(groupId: string | undefined): DOMRect | null {
+  if (! groupId) return null
+  return document
+    .querySelector<HTMLElement>(`.game-side-panel-group[data-panel-group-id="${CSS.escape(groupId)}"]`)
+    ?.getBoundingClientRect() ?? null
+}
+
+function getPanelColumnEdgeDropSizePx(): number {
+  const style = getComputedStyle(gameRoot.value ?? document.documentElement)
+  return Math.max(
+    getCssPixelValue(style, '--button-content-gap', 8) * 2,
+    getCssPixelValue(style, '--button-small-border', 2) * 7,
+  )
+}
+
+function getCssPixelValue(style: CSSStyleDeclaration, name: string, fallback: number): number {
+  const value = Number.parseFloat(style.getPropertyValue(name))
+  return Number.isFinite(value) ? value : fallback
+}
+
+function isPointInPanelRect(
+  clientX: number,
+  clientY: number,
+  rect: Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>,
+): boolean {
+  return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+}
+
+function getPanelSideFromGroupId(groupId: string): GamePanelSide | null {
+  for (const side of panelSides) {
+    if (panelLayout.getSideGroups(side).some(group => group.id === groupId)) return side
+  }
+  return null
+}
+
+function parsePanelSide(value: string | undefined): GamePanelSide | null {
+  return value === 'left' || value === 'right' ? value : null
+}
+
 function stretchSidePanelGroupEdge(side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge) {
   playUISound()
-  panelLayout.addGroupStretchEdge(side, groupId, edge)
+  panelLayout.toggleGroupStretchEdge(side, groupId, edge)
   syncGameViewportInsets()
 }
 
@@ -1036,17 +1574,15 @@ function startSidePanelGroupWidthResize(side: GamePanelSide, groupId: string, ev
   if (! group) return
 
   const pointerId = event.pointerId
-  const independentMode = event.shiftKey || panelLayout.isGroupIndependentWidth(group)
   const startClientX = event.clientX
-  const startSize = independentMode
-    ? panelLayout.getGroupWidth(side, group)
-    : panelLayout.getSideSize(side)
+  const startSize = panelLayout.getGroupWidth(side, group)
   const previousHtmlCursor = document.documentElement.style.cursor
   const previousBodyCursor = document.body.style.cursor
   let stopped = false
 
   handle.setPointerCapture(pointerId)
   resizingSidePanelWidthGroupId.value = groupId
+  panelWidthSnapGuide.value = null
   document.documentElement.classList.add('game-side-panel-resizing')
   document.documentElement.style.cursor = 'ew-resize'
   document.body.style.cursor = 'ew-resize'
@@ -1057,8 +1593,8 @@ function startSidePanelGroupWidthResize(side: GamePanelSide, groupId: string, ev
       ? moveEvent.clientX - startClientX
       : startClientX - moveEvent.clientX
     const nextSize = startSize + delta
-    if (independentMode) panelLayout.setGroupWidth(side, groupId, nextSize)
-    else panelLayout.setSideSize(side, nextSize)
+    const result = panelLayout.setGroupWidth(side, groupId, nextSize, { snap: ! moveEvent.shiftKey })
+    panelWidthSnapGuide.value = result?.snapped ? { side, width: result.width } : null
     syncGameViewportInsets()
   }
 
@@ -1073,6 +1609,7 @@ function startSidePanelGroupWidthResize(side: GamePanelSide, groupId: string, ev
     window.removeEventListener('blur', stop)
     if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
     if (resizingSidePanelWidthGroupId.value === groupId) resizingSidePanelWidthGroupId.value = null
+    panelWidthSnapGuide.value = null
     document.documentElement.classList.remove('game-side-panel-resizing')
     document.documentElement.style.cursor = previousHtmlCursor
     document.body.style.cursor = previousBodyCursor
@@ -3280,8 +3817,9 @@ watch([exportFormat, exportMode], () => {
             :height="panelLayout.getGroupHeight(group)"
             :width="panelLayout.getGroupWidth(side, group)"
             :stretch="panelLayout.getGroupStretch(group)"
-            :independent-width="panelLayout.isGroupIndependentWidth(group)"
             :tabs="getPanelTabs(group)"
+            :dragging-panel-id="panelDragState?.dragging === true ? panelDragState.panelId : null"
+            :drop-target="getPanelGroupDropTarget(group.id)"
             :resizing-edge="resizingSidePanelGroup?.groupId === group.id ? resizingSidePanelGroup.edge : null"
             :resizing-width="resizingSidePanelWidthGroupId === group.id"
             :add-label="t('panel.addPanel')"
@@ -3292,6 +3830,7 @@ watch([exportFormat, exportMode], () => {
             @resize-width="startSidePanelGroupWidthResize"
             @select-panel="selectPanelTab"
             @stretch-edge="stretchSidePanelGroupEdge"
+            @tab-pointer-down="startPanelTabDrag"
           >
             <MembersPanel
               v-if="group.activePanelId === 'members'"
@@ -3369,6 +3908,28 @@ watch([exportFormat, exportMode], () => {
           </GameSidePanelGroup>
         </GameSidePanelStack>
       </template>
+
+      <div
+        v-if="panelDragState?.dragging"
+        class="panel-drag-ghost"
+        :style="panelDragGhostStyle"
+      >
+        <GameIcon :name="panelDragState.icon" />
+        <span>{{ panelDragState.label }}</span>
+      </div>
+
+      <div
+        v-if="panelSideDropTarget"
+        class="panel-drag-side-drop-slot"
+        :class="`panel-drag-side-drop-slot--${panelSideDropTarget.side}`"
+        :style="getPanelSideDropSlotStyle(panelSideDropTarget)"
+      />
+
+      <div
+        v-if="panelWidthSnapGuide"
+        class="panel-width-snap-guide"
+        :style="panelWidthSnapGuideStyle"
+      />
 
       <div
         v-if="gameStarted && secondaryMenuOpen"
@@ -4019,6 +4580,66 @@ canvas {
   inset: 0;
   z-index: var(--z-ui-floating);
   pointer-events: auto;
+}
+
+.panel-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-ui-floating);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--button-content-gap) * 0.8);
+  max-width: min(280px, calc(100vw - var(--button-top) * 2));
+  padding: calc(var(--button-content-gap) * 0.75) calc(var(--button-content-gap) * 1.35);
+  border: var(--button-small-border) solid var(--button-hover-border-color);
+  border-radius: 8px;
+  background: var(--button-fill-color);
+  color: var(--button-text-color);
+  box-shadow: var(--button-small-shadow-offset) var(--button-small-shadow-offset) 0 var(--button-shadow-color);
+  font-size: var(--button-small-font-size);
+  line-height: 1;
+  opacity: 0.92;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.panel-drag-ghost :deep(.game-icon) {
+  width: var(--button-small-icon-size);
+  height: var(--button-small-icon-size);
+  flex: 0 0 auto;
+}
+
+.panel-drag-ghost span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel-drag-side-drop-slot {
+  position: fixed;
+  z-index: var(--z-ui-handle);
+  height: 4px;
+  border-radius: 999px;
+  background: var(--button-hover-border-color);
+  box-shadow: var(--button-tiny-shadow-offset) var(--button-tiny-shadow-offset) 0 var(--button-shadow-color);
+  pointer-events: none;
+}
+
+.panel-width-snap-guide {
+  position: fixed;
+  z-index: var(--z-ui-handle);
+  width: 3px;
+  border-radius: 999px;
+  background: var(--button-hover-border-color);
+  box-shadow: var(--button-tiny-shadow-offset) var(--button-tiny-shadow-offset) 0 var(--button-shadow-color);
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+:global(.game-side-panel-dragging),
+:global(.game-side-panel-dragging *) {
+  cursor: grabbing !important;
+  user-select: none !important;
 }
 
 .game-status-stack {

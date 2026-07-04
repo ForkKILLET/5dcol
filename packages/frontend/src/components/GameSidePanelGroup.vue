@@ -11,12 +11,15 @@ export type GameSidePanelTab = {
   label: string
 }
 
+export type GameSidePanelGroupDropTarget = { index: number, kind: 'tab' }
+
 const props = defineProps<{
   addLabel: string
   closeLabel: string
+  draggingPanelId?: GamePanelId | null
+  dropTarget?: GameSidePanelGroupDropTarget | null
   group: GamePanelGroup
   height: number
-  independentWidth?: boolean
   resizingEdge?: GamePanelGroupResizeEdge | null
   resizingWidth?: boolean
   side: GamePanelSide
@@ -33,6 +36,7 @@ const emit = defineEmits<{
   resizeWidth: [side: GamePanelSide, groupId: string, event: PointerEvent]
   selectPanel: [groupId: string, panelId: GamePanelId]
   stretchEdge: [side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge]
+  tabPointerDown: [payload: { event: PointerEvent, groupId: string, panelId: GamePanelId }]
 }>()
 
 const groupStyle = computed(() => ({
@@ -40,6 +44,18 @@ const groupStyle = computed(() => ({
   '--game-side-panel-group-top': `${props.top * 100}%`,
   '--game-side-panel-group-width': `${props.width}px`,
 }))
+
+function isTabDragging(panelId: GamePanelId): boolean {
+  return props.draggingPanelId === panelId
+}
+
+function isTabDropBefore(index: number): boolean {
+  return props.dropTarget?.kind === 'tab' && props.dropTarget.index === index
+}
+
+function isTabDropAfter(index: number): boolean {
+  return props.dropTarget?.kind === 'tab' && props.dropTarget.index === index + 1 && index === props.tabs.length - 1
+}
 </script>
 
 <template>
@@ -48,20 +64,34 @@ const groupStyle = computed(() => ({
     :class="{
       [`game-side-panel-group--${side}`]: true,
       [`game-side-panel-group--stretch-${stretch}`]: true,
-      'game-side-panel-group--independent-width': independentWidth,
       'game-side-panel-group--resizing-before': resizingEdge === 'before',
       'game-side-panel-group--resizing-after': resizingEdge === 'after',
       'game-side-panel-group--resizing-width': resizingWidth,
     }"
+    :data-panel-group-id="group.id"
+    :data-panel-side="side"
     :style="groupStyle"
   >
-    <div class="game-side-panel-tabs">
+    <div
+      class="game-side-panel-tabs"
+      data-panel-tabs="true"
+      :data-panel-group-id="group.id"
+    >
       <GameTab
-        v-for="tab in tabs"
+        v-for="(tab, index) in tabs"
         :key="tab.id"
         class="game-side-panel-tab"
+        :class="{
+          'game-side-panel-tab--dragging': isTabDragging(tab.id),
+          'game-side-panel-tab--drop-after': isTabDropAfter(index),
+          'game-side-panel-tab--drop-before': isTabDropBefore(index),
+        }"
+        :data-panel-group-id="group.id"
+        :data-panel-tab-id="tab.id"
+        :data-panel-tab-index="index"
         :pressed="group.activePanelId === tab.id"
         @click="emit('selectPanel', group.id, tab.id)"
+        @pointerdown="emit('tabPointerDown', { groupId: group.id, panelId: tab.id, event: $event })"
       >
         <GameIcon :name="tab.icon" />
         <span>{{ tab.label }}</span>
@@ -113,6 +143,8 @@ const groupStyle = computed(() => ({
   --game-side-panel-resize-line-end-inset: 8px;
   --game-side-panel-resize-line-inset: 3px;
   --game-side-panel-resize-line-size: 2px;
+  --game-side-panel-resize-stretch-hint-height: 8px;
+  --game-side-panel-resize-stretch-hint-width: 16px;
 
   position: absolute;
   display: flex;
@@ -143,7 +175,41 @@ const groupStyle = computed(() => ({
 }
 
 .game-side-panel-tab {
+  position: relative;
+  cursor: pointer;
   min-width: 0;
+  touch-action: none;
+}
+
+.game-side-panel-tabs .game-side-panel-tab.is-pressed {
+  cursor: pointer;
+}
+
+.game-side-panel-tab--dragging {
+  cursor: grabbing;
+  opacity: 0.42;
+}
+
+.game-side-panel-tab--drop-before::before,
+.game-side-panel-tab--drop-after::after {
+  position: absolute;
+  top: calc(var(--button-small-border) * -1);
+  bottom: calc(var(--button-small-border) * -1);
+  z-index: 1;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--button-hover-border-color);
+  box-shadow: var(--button-tiny-shadow-offset) var(--button-tiny-shadow-offset) 0 var(--button-shadow-color);
+  content: "";
+  pointer-events: none;
+}
+
+.game-side-panel-tab--drop-before::before {
+  left: calc(var(--button-content-gap) * -0.45);
+}
+
+.game-side-panel-tab--drop-after::after {
+  right: calc(var(--button-content-gap) * -0.45);
 }
 
 .game-side-panel-tab :deep(.game-icon) {
@@ -215,17 +281,57 @@ const groupStyle = computed(() => ({
   transition: opacity 160ms ease;
 }
 
+.game-side-panel-group-resize-handle::before {
+  position: absolute;
+  left: 50%;
+  width: var(--game-side-panel-resize-stretch-hint-width);
+  height: var(--game-side-panel-resize-stretch-hint-height);
+  background-repeat: no-repeat;
+  background-size: 50% 100%, 50% 100%;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 160ms ease;
+}
+
 .game-side-panel-group-resize-handle--before::after {
   top: var(--game-side-panel-resize-line-inset);
+}
+
+.game-side-panel-group-resize-handle--before::before {
+  top: calc(var(--game-side-panel-resize-line-inset) + 1px);
+  background-image:
+    linear-gradient(to bottom right, transparent 42%, currentColor 42%, currentColor 58%, transparent 58%),
+    linear-gradient(to bottom left, transparent 42%, currentColor 42%, currentColor 58%, transparent 58%);
+  background-position: left top, right top;
 }
 
 .game-side-panel-group-resize-handle--after::after {
   bottom: var(--game-side-panel-resize-line-inset);
 }
 
+.game-side-panel-group-resize-handle--after::before {
+  bottom: calc(var(--game-side-panel-resize-line-inset) + 1px);
+  background-image:
+    linear-gradient(to top right, transparent 42%, currentColor 42%, currentColor 58%, transparent 58%),
+    linear-gradient(to top left, transparent 42%, currentColor 42%, currentColor 58%, transparent 58%);
+  background-position: left top, right top;
+}
+
 .game-side-panel-group-resize-handle:hover::after,
 .game-side-panel-group--resizing-before .game-side-panel-group-resize-handle--before::after,
 .game-side-panel-group--resizing-after .game-side-panel-group-resize-handle--after::after {
+  opacity: 0.42;
+}
+
+.game-side-panel-group--stretch-bottom .game-side-panel-group-resize-handle--after:hover::before,
+.game-side-panel-group--stretch-top-bottom .game-side-panel-group-resize-handle--after:hover::before {
+  opacity: 0.42;
+}
+
+.game-side-panel-group--stretch-top .game-side-panel-group-resize-handle--before:hover::before,
+.game-side-panel-group--stretch-top-bottom .game-side-panel-group-resize-handle--before:hover::before {
   opacity: 0.42;
 }
 
@@ -254,8 +360,6 @@ const groupStyle = computed(() => ({
 
 .game-side-panel-group:has(.game-side-panel-group-width-resize-handle:hover) .game-side-panel-group-content > :deep(.game-panel)::after,
 .game-side-panel-group:has(.game-side-panel-group-width-resize-handle:hover) .game-side-panel-group-content > :deep(.record-panel)::after,
-.game-side-panel-group--independent-width .game-side-panel-group-content > :deep(.game-panel)::after,
-.game-side-panel-group--independent-width .game-side-panel-group-content > :deep(.record-panel)::after,
 .game-side-panel-group--resizing-width .game-side-panel-group-content > :deep(.game-panel)::after,
 .game-side-panel-group--resizing-width .game-side-panel-group-content > :deep(.record-panel)::after {
   opacity: 0.42;
