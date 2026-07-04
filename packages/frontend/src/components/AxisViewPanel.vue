@@ -152,7 +152,7 @@ function drawSnapshot(
         w: layout.cellSize,
         h: layout.cellSize,
       }
-      const light = (rowIndex + columnIndex) % 2 === 0
+      const light = isAxisViewRowLight(snapshot.fixedCoord, rowIndex)
       const base = getAxisViewColumnBoardFill(column, visibleColumns, playerFilter.value, colors)
       ctx.fillStyle = light ? base.light : base.dark
       fillCanvasRect(ctx, cellRect)
@@ -240,6 +240,14 @@ function getAxisViewCanvasLayout(
 function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRect) {
   const overdraw = 0.35
   ctx.fillRect(x - overdraw, y - overdraw, w + overdraw * 2, h + overdraw * 2)
+}
+
+function isAxisViewRowLight(fixedCoord: number, rowIndex: number): boolean {
+  return (fixedCoord + getAxisViewRowCoord(rowIndex)) % 2 === 0
+}
+
+function getAxisViewRowCoord(rowIndex: number): number {
+  return 7 - rowIndex
 }
 
 function getAxisViewColors(element: HTMLElement) {
