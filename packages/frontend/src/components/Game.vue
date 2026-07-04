@@ -3321,6 +3321,9 @@ watch([exportFormat, exportMode], () => {
             <AxisViewPanel
               v-else-if="group.activePanelId === 'axisView'"
               :game="game"
+              :black-label="t('axisView.black')"
+              :white-label="t('axisView.white')"
+              :both-label="t('axisView.both')"
               :empty-text="t('panel.axisViewEmpty')"
               :mode-x-t-label="t('axisView.xt')"
               :mode-y-t-label="t('axisView.yt')"

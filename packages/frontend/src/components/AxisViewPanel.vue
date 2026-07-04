@@ -8,6 +8,7 @@ import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
 import GamePanel from './GamePanel.vue'
 import GameTab from './GameTab.vue'
+import GameToggle from './GameToggle.vue'
 
 interface CanvasRect {
   h: number
@@ -21,11 +22,21 @@ interface AxisViewHitItem {
   rect: CanvasRect
 }
 
+type AxisViewPlayerFilter = 'black' | 'both' | 'white'
+
+interface VisibleAxisViewColumn {
+  column: GameAxisViewBoardColumn
+  sourceIndex: number
+}
+
 const props = defineProps<{
+  blackLabel: string
+  bothLabel: string
   emptyText: string
   game: Game | null
   modeXTLabel: string
   modeYTLabel: string
+  whiteLabel: string
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +47,7 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const hoveredBoardKey = ref<string | null>(null)
 const fixedCoord = ref(0)
 const mode = ref<GameAxisViewMode>('yt')
+const playerFilter = ref<AxisViewPlayerFilter>('both')
 
 let frameId: number | null = null
 let lastHitItems: AxisViewHitItem[] = []
@@ -94,16 +106,21 @@ function drawSnapshot(
   height: number,
   colors: ReturnType<typeof getAxisViewColors>,
 ) {
-  const layout = getAxisViewCanvasLayout(width, height, snapshot.columns.length, snapshot.rowLabels.length)
+  const visibleColumns = getVisibleAxisViewColumns(snapshot, playerFilter.value)
+  if (visibleColumns.length === 0) return
+
+  const layout = getAxisViewCanvasLayout(width, height, visibleColumns.length, snapshot.rowLabels.length)
   const hoverKey = hoveredBoardKey.value
+  const visibleColumnIndexes = new Map<number, number>()
 
   ctx.save()
   ctx.font = `${Math.max(10, layout.cellSize * 0.22)}px serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
-  for (let columnIndex = 0; columnIndex < snapshot.columns.length; columnIndex++) {
-    const column = snapshot.columns[columnIndex]!
+  for (let columnIndex = 0; columnIndex < visibleColumns.length; columnIndex++) {
+    const { column, sourceIndex } = visibleColumns[columnIndex]!
+    visibleColumnIndexes.set(sourceIndex, columnIndex)
     const columnX = layout.gridX + columnIndex * layout.cellSize
     const columnRect: CanvasRect = {
       x: columnX,
@@ -141,13 +158,17 @@ function drawSnapshot(
 
     ctx.fillStyle = colors.labelText
     ctx.globalAlpha = 0.78
-    ctx.fillText(column.label, columnX + layout.cellSize / 2, layout.labelY)
+    ctx.fillText(
+      column.label,
+      columnX + layout.cellSize / 2,
+      columnIndex % 2 === 0 ? layout.topLabelY : layout.bottomLabelY,
+    )
     ctx.globalAlpha = 1
   }
 
   ctx.lineWidth = 1
   ctx.strokeStyle = colors.gridStroke
-  drawGridLines(ctx, layout, snapshot.columns.length, snapshot.rowLabels.length)
+  drawGridLines(ctx, layout, visibleColumns.length, snapshot.rowLabels.length)
 
   ctx.fillStyle = colors.labelText
   ctx.globalAlpha = 0.78
@@ -156,7 +177,7 @@ function drawSnapshot(
   }
   ctx.globalAlpha = 1
 
-  drawPieces(ctx, snapshot, layout, colors)
+  drawPieces(ctx, snapshot, layout, colors, visibleColumnIndexes)
   ctx.restore()
 }
 
@@ -185,15 +206,19 @@ function drawPieces(
   snapshot: GameAxisViewSnapshot,
   layout: ReturnType<typeof getAxisViewCanvasLayout>,
   colors: ReturnType<typeof getAxisViewColors>,
+  visibleColumnIndexes: Map<number, number>,
 ) {
   ctx.font = `${layout.cellSize * 0.68}px serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
   for (const pieceCell of snapshot.pieces) {
+    const visibleColumnIndex = visibleColumnIndexes.get(pieceCell.columnIndex)
+    if (visibleColumnIndex === undefined) continue
+
     const glyph = getPieceGlyph(pieceCell.piece)
     if (! glyph) continue
-    const x = layout.gridX + (pieceCell.columnIndex + 0.5) * layout.cellSize
+    const x = layout.gridX + (visibleColumnIndex + 0.5) * layout.cellSize
     const y = layout.gridY + (pieceCell.rowIndex + 0.52) * layout.cellSize
     const isWhite = pieceCell.player === Player.W
 
@@ -208,7 +233,7 @@ function drawPieces(
 function getAxisViewCanvasLayout(width: number, height: number, columnCount: number, rowCount: number) {
   const left = 26
   const right = 8
-  const top = 8
+  const top = 26
   const bottom = 28
   const cellSize = Math.max(12, Math.min(
     (width - left - right) / Math.max(1, columnCount),
@@ -222,8 +247,9 @@ function getAxisViewCanvasLayout(width: number, height: number, columnCount: num
     gridW,
     gridX: Math.max(left, left + (width - left - right - gridW) / 2),
     gridY: Math.max(top, top + (height - top - bottom - gridH) / 2),
-    labelY: Math.max(top, top + (height - top - bottom - gridH) / 2) + gridH + bottom * 0.52,
+    bottomLabelY: Math.max(top, top + (height - top - bottom - gridH) / 2) + gridH + bottom * 0.52,
     rowLabelX: Math.max(10, left * 0.48),
+    topLabelY: Math.max(10, Math.max(top, top + (height - top - bottom - gridH) / 2) - top * 0.48),
   }
 }
 
@@ -274,32 +300,39 @@ function withAlpha(color: string, alpha: number): string {
 function getPieceGlyph(piece: Piece): string {
   switch (piece) {
     case Piece.PW:
-      return '♙'
-    case Piece.RW:
-      return '♖'
-    case Piece.NW:
-      return '♘'
-    case Piece.BW:
-      return '♗'
-    case Piece.QW:
-      return '♕'
-    case Piece.KW:
-      return '♔'
     case Piece.PB:
       return '♟'
+    case Piece.RW:
     case Piece.RB:
       return '♜'
+    case Piece.NW:
     case Piece.NB:
       return '♞'
+    case Piece.BW:
     case Piece.BB:
       return '♝'
+    case Piece.QW:
     case Piece.QB:
       return '♛'
+    case Piece.KW:
     case Piece.KB:
       return '♚'
     default:
       return ''
   }
+}
+
+function getVisibleAxisViewColumns(
+  snapshot: GameAxisViewSnapshot,
+  filter: AxisViewPlayerFilter,
+): VisibleAxisViewColumn[] {
+  return snapshot.columns
+    .map((column, sourceIndex) => ({ column, sourceIndex }))
+    .filter(({ column }) => (
+      filter === 'both'
+      || (filter === 'white' && column.player === Player.W)
+      || (filter === 'black' && column.player === Player.B)
+    ))
 }
 
 function handleModeClick(nextMode: GameAxisViewMode) {
@@ -365,6 +398,32 @@ function getBoardKey({ l, m }: Pick<GameAxisViewBoardColumn, 'l' | 'm'>): string
           {{ modeXTLabel }}
         </GameTab>
       </div>
+      <div class="axis-view-player-filter">
+        <GameToggle
+          v-model="playerFilter"
+          type="radio"
+          size="small"
+          value="black"
+        >
+          {{ blackLabel }}
+        </GameToggle>
+        <GameToggle
+          v-model="playerFilter"
+          type="radio"
+          size="small"
+          value="white"
+        >
+          {{ whiteLabel }}
+        </GameToggle>
+        <GameToggle
+          v-model="playerFilter"
+          type="radio"
+          size="small"
+          value="both"
+        >
+          {{ bothLabel }}
+        </GameToggle>
+      </div>
       <div class="axis-view-axis-control">
         <GameButton
           size="tiny"
@@ -413,6 +472,7 @@ function getBoardKey({ l, m }: Pick<GameAxisViewBoardColumn, 'l' | 'm'>): string
 .axis-view-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--button-content-gap);
   min-width: 0;
 }
@@ -429,6 +489,17 @@ function getBoardKey({ l, m }: Pick<GameAxisViewBoardColumn, 'l' | 'm'>): string
   padding: 0 8px;
   border-width: var(--button-tiny-border);
   font-size: var(--button-tiny-font-size);
+}
+
+.axis-view-player-filter {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--button-content-gap) * 0.8);
+  min-width: 0;
+}
+
+.axis-view-player-filter :deep(.game-toggle) {
+  font-size: 14px;
 }
 
 .axis-view-axis-control {

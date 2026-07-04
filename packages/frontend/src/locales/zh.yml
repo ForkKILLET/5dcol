@@ -42,6 +42,9 @@ panel.minimapEmpty: "暂无棋盘。"
 
 axisView.yt: "YT"
 axisView.xt: "XT"
+axisView.black: "黑"
+axisView.white: "白"
+axisView.both: "全部"
 
 main.start: "开始"
 main.resume: "继续"

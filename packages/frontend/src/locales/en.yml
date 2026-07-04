@@ -42,6 +42,9 @@ panel.minimapEmpty: "No boards yet."
 
 axisView.yt: "YT"
 axisView.xt: "XT"
+axisView.black: "Black"
+axisView.white: "White"
+axisView.both: "Both"
 
 main.start: "Start"
 main.resume: "Resume"
