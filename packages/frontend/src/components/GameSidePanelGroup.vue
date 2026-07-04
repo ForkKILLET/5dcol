@@ -96,11 +96,11 @@ const groupStyle = computed(() => ({
         class="game-side-panel-group-resize-handle game-side-panel-group-resize-handle--after"
         @pointerdown.stop.prevent="emit('resizeEdge', side, group.id, 'after', $event)"
       ></div>
+      <div
+        class="game-side-panel-group-width-resize-handle"
+        @pointerdown.stop.prevent="emit('resizeWidth', side, group.id, $event)"
+      ></div>
     </div>
-    <div
-      class="game-side-panel-group-width-resize-handle"
-      @pointerdown.stop.prevent="emit('resizeWidth', side, group.id, $event)"
-    ></div>
   </section>
 </template>
 
