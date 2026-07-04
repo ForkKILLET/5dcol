@@ -39,7 +39,6 @@ interface AxisViewCanvasLayout {
   gridY: number
   rowLabelX: number
   topLabelY: number
-  turnGap: number
 }
 
 const props = defineProps<{
@@ -151,14 +150,9 @@ function drawSnapshot(
         h: layout.cellSize,
       }
       const light = (rowIndex + columnIndex) % 2 === 0
-      const base = column.player === Player.W ? colors.boardWhiteFill : colors.boardBlackFill
+      const base = getAxisViewColumnBoardFill(column, visibleColumns, playerFilter.value, colors)
       ctx.fillStyle = light ? base.light : base.dark
       fillCanvasRect(ctx, cellRect)
-    }
-
-    if (column.active) {
-      ctx.fillStyle = colors.activeFill
-      fillCanvasRect(ctx, columnRect)
     }
 
     if (column.focused || getBoardKey(column) === hoverKey) {
@@ -227,19 +221,15 @@ function getAxisViewCanvasLayout(
   const top = 26
   const bottom = 28
   const columnCount = visibleColumns.length
-  const turnGapCount = getAxisViewTurnGapCount(visibleColumns)
-  const turnGapRatio = 0.14
   const cellSize = Math.max(12, Math.min(
-    (width - left - right) / Math.max(1, columnCount + turnGapCount * turnGapRatio),
+    (width - left - right) / Math.max(1, columnCount),
     (height - top - bottom) / Math.max(1, rowCount),
   ))
-  const turnGap = Math.max(2, cellSize * turnGapRatio)
   const gridW = cellSize * columnCount
-    + turnGap * turnGapCount
   const gridH = cellSize * rowCount
   const gridX = Math.max(left, left + (width - left - right - gridW) / 2)
   const gridY = Math.max(top, top + (height - top - bottom - gridH) / 2)
-  const columnXs = getAxisViewColumnXs(visibleColumns, gridX, cellSize, turnGap)
+  const columnXs = getAxisViewColumnXs(visibleColumns, gridX, cellSize)
   return {
     cellSize,
     columnXs,
@@ -250,28 +240,26 @@ function getAxisViewCanvasLayout(
     bottomLabelY: gridY + gridH + bottom * 0.52,
     rowLabelX: Math.max(10, left * 0.48),
     topLabelY: Math.max(10, gridY - top * 0.48),
-    turnGap,
   }
 }
 
 function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRect) {
-  ctx.fillRect(x, y, w, h)
+  const overdraw = 0.35
+  ctx.fillRect(x - overdraw, y - overdraw, w + overdraw * 2, h + overdraw * 2)
 }
 
 function getAxisViewColors(element: HTMLElement) {
   const style = getComputedStyle(element)
-  const participant = getCssColor(style, '--record-participant-color', Color4.toRgbaString(Colors.PurpleDark))
   return {
-    activeFill: withAlpha(participant, 0.16),
     blackPieceFill: 'rgba(11, 11, 11, 1)',
     blackPieceStroke: 'rgba(244, 245, 237, 0.72)',
-    boardBlackFill: {
-      dark: Color4.toRgbaString(Colors.BoardBlack),
-      light: Color4.toRgbaString(Colors.BoardWhite),
-    },
-    boardWhiteFill: {
+    dimBoardFill: {
       dark: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.8),
       light: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.9),
+    },
+    originalBoardFill: {
+      dark: Color4.toRgbaString(Colors.BoardBlack),
+      light: Color4.toRgbaString(Colors.BoardWhite),
     },
     columnHighlightFill: withAlpha(Color4.toRgbaString(Colors.BoardHighlightWhite), 0.58),
     labelText: getCssColor(style, '--button-text-color', 'rgba(244, 245, 237, 1)'),
@@ -328,41 +316,41 @@ function getVisibleAxisViewColumns(
     ))
 }
 
-function getAxisViewTurnGapCount(visibleColumns: VisibleAxisViewColumn[]): number {
-  let count = 0
-  for (let index = 1; index < visibleColumns.length; index++) {
-    if (shouldAddTurnGapBefore(visibleColumns, index)) count++
-  }
-  return count
-}
-
 function getAxisViewColumnXs(
   visibleColumns: VisibleAxisViewColumn[],
   gridX: number,
   cellSize: number,
-  turnGap: number,
 ): number[] {
   const columnXs: number[] = []
   let x = gridX
   for (let index = 0; index < visibleColumns.length; index++) {
-    if (index > 0 && shouldAddTurnGapBefore(visibleColumns, index)) x += turnGap
     columnXs.push(x)
     x += cellSize
   }
   return columnXs
 }
 
-function shouldAddTurnGapBefore(visibleColumns: VisibleAxisViewColumn[], index: number): boolean {
-  const previous = visibleColumns[index - 1]?.column
-  const current = visibleColumns[index]?.column
-  if (! previous || ! current) return false
-  return getAxisViewTurnGroup(previous) !== getAxisViewTurnGroup(current)
+function getAxisViewColumnBoardFill(
+  column: GameAxisViewBoardColumn,
+  visibleColumns: VisibleAxisViewColumn[],
+  filter: AxisViewPlayerFilter,
+  colors: ReturnType<typeof getAxisViewColors>,
+) {
+  if (filter !== 'both') return colors.originalBoardFill
+
+  const activePlayers = getActiveAxisViewPlayers(visibleColumns)
+  if (activePlayers.size === 0) return colors.originalBoardFill
+  return activePlayers.has(column.player)
+    ? colors.originalBoardFill
+    : colors.dimBoardFill
 }
 
-function getAxisViewTurnGroup(column: GameAxisViewBoardColumn): number {
-  return column.player === Player.W
-    ? column.m / 2
-    : (column.m - 1) / 2
+function getActiveAxisViewPlayers(visibleColumns: VisibleAxisViewColumn[]): Set<Player> {
+  const players = new Set<Player>()
+  for (const { column } of visibleColumns) {
+    if (column.active) players.add(column.player)
+  }
+  return players
 }
 
 function handleModeClick(nextMode: GameAxisViewMode) {
