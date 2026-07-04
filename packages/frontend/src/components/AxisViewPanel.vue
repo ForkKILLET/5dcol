@@ -136,22 +136,11 @@ function drawSnapshot(
   for (let columnIndex = 0; columnIndex < visibleColumns.length; columnIndex++) {
     const { column, sourceIndex } = visibleColumns[columnIndex]!
     visibleColumnIndexes.set(sourceIndex, columnIndex)
-    const columnX = layout.columnXs[columnIndex]!
-    const columnRect: CanvasRect = {
-      x: columnX,
-      y: layout.gridY,
-      w: layout.cellSize,
-      h: layout.gridH,
-    }
+    const columnRect = getAxisViewColumnRect(layout, columnIndex, snapshot.rowLabels.length)
     lastHitItems.push({ column, rect: columnRect })
 
     for (let rowIndex = 0; rowIndex < snapshot.rowLabels.length; rowIndex++) {
-      const cellRect = {
-        x: columnX,
-        y: layout.gridY + rowIndex * layout.cellSize,
-        w: layout.cellSize,
-        h: layout.cellSize,
-      }
+      const cellRect = getAxisViewCellRect(layout, columnIndex, rowIndex)
       const light = isAxisViewRowLight(snapshot.fixedCoord, rowIndex)
       const base = getAxisViewColumnBoardFill(column, visibleColumns, playerFilter.value, colors)
       ctx.fillStyle = light ? base.light : base.dark
@@ -167,7 +156,7 @@ function drawSnapshot(
     ctx.globalAlpha = 0.78
     ctx.fillText(
       column.label,
-      columnX + layout.cellSize / 2,
+      columnRect.x + columnRect.w / 2,
       columnIndex % 2 === 0 ? layout.topLabelY : layout.bottomLabelY,
     )
     ctx.globalAlpha = 1
@@ -197,9 +186,10 @@ function drawPieces(
     const image = getPieceImage(pieceCell.piece)
     if (! isPieceImageReady(image)) continue
 
+    const cellRect = getAxisViewCellRect(layout, visibleColumnIndex, pieceCell.rowIndex)
     const size = layout.cellSize * 0.88
-    const x = layout.columnXs[visibleColumnIndex]! + (layout.cellSize - size) / 2
-    const y = layout.gridY + pieceCell.rowIndex * layout.cellSize + (layout.cellSize - size) / 2
+    const x = cellRect.x + (cellRect.w - size) / 2
+    const y = cellRect.y + (cellRect.h - size) / 2
     ctx.drawImage(image, x, y, size, size)
   }
 }
@@ -238,8 +228,49 @@ function getAxisViewCanvasLayout(
 }
 
 function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRect) {
-  const overdraw = 0.35
-  ctx.fillRect(x - overdraw, y - overdraw, w + overdraw * 2, h + overdraw * 2)
+  ctx.fillRect(x, y, w, h)
+}
+
+function getAxisViewCellRect(
+  layout: AxisViewCanvasLayout,
+  columnIndex: number,
+  rowIndex: number,
+): CanvasRect {
+  const x0 = getAxisViewColumnEdge(layout, columnIndex)
+  const x1 = getAxisViewColumnEdge(layout, columnIndex + 1)
+  const y0 = getAxisViewRowEdge(layout, rowIndex)
+  const y1 = getAxisViewRowEdge(layout, rowIndex + 1)
+  return {
+    x: x0,
+    y: y0,
+    w: Math.max(1, x1 - x0),
+    h: Math.max(1, y1 - y0),
+  }
+}
+
+function getAxisViewColumnRect(
+  layout: AxisViewCanvasLayout,
+  columnIndex: number,
+  rowCount: number,
+): CanvasRect {
+  const x0 = getAxisViewColumnEdge(layout, columnIndex)
+  const x1 = getAxisViewColumnEdge(layout, columnIndex + 1)
+  const y0 = getAxisViewRowEdge(layout, 0)
+  const y1 = getAxisViewRowEdge(layout, rowCount)
+  return {
+    x: x0,
+    y: y0,
+    w: Math.max(1, x1 - x0),
+    h: Math.max(1, y1 - y0),
+  }
+}
+
+function getAxisViewColumnEdge(layout: AxisViewCanvasLayout, index: number): number {
+  return Math.round(layout.gridX + index * layout.cellSize)
+}
+
+function getAxisViewRowEdge(layout: AxisViewCanvasLayout, index: number): number {
+  return Math.round(layout.gridY + index * layout.cellSize)
 }
 
 function isAxisViewRowLight(fixedCoord: number, rowIndex: number): boolean {
