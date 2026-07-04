@@ -142,6 +142,35 @@ export interface GameMinimapSnapshot {
   viewport: Rect
 }
 
+export type GameAxisViewMode = 'xt' | 'yt'
+
+export interface GameAxisViewBoardColumn {
+  active: boolean
+  focused: boolean
+  label: string
+  l: number
+  m: number
+  player: Player
+}
+
+export interface GameAxisViewPieceCell {
+  columnIndex: number
+  l: number
+  m: number
+  piece: Piece
+  player: Player | null
+  rowIndex: number
+}
+
+export interface GameAxisViewSnapshot {
+  columns: GameAxisViewBoardColumn[]
+  fixedCoord: number
+  l: number
+  mode: GameAxisViewMode
+  pieces: GameAxisViewPieceCell[]
+  rowLabels: string[]
+}
+
 interface PointerState {
   screen: Vec2
   activePointerId: number | null
@@ -1496,6 +1525,65 @@ export class Game extends Disposable(Empty) {
     }
   }
 
+  public getAxisViewSnapshot(
+    mode: GameAxisViewMode,
+    fixedCoord: number,
+  ): GameAxisViewSnapshot | null {
+    const focusedBoard = this.getValidFocusedBoard()
+    const lineEntry = this.getAxisViewLineEntry(focusedBoard?.l)
+    if (! lineEntry) return null
+
+    const [l, line] = lineEntry
+    const latestM = Line.getLatestBoardIndex(line)
+    const status = Multiverse.getTimelineStatus(this.multiverse, this.player)
+    const activeLines = new Set([...status.mandatory, ...status.optional])
+    const axis = clampBoardAxisCoord(fixedCoord)
+    const rowCoords = getAxisViewRowCoords()
+    const columns: GameAxisViewBoardColumn[] = []
+    const pieces: GameAxisViewPieceCell[] = []
+
+    for (const [m, board] of Line.getBoardEntries(line)) {
+      if (! board) continue
+
+      const columnIndex = columns.length
+      const boardPlayer = this.getBoardPlayer(m)
+      columns.push({
+        active: latestM === m && activeLines.has(l),
+        focused: focusedBoard?.l === l && focusedBoard.m === m,
+        label: getAxisViewColumnLabel(m, boardPlayer),
+        l,
+        m,
+        player: boardPlayer,
+      })
+
+      for (let rowIndex = 0; rowIndex < rowCoords.length; rowIndex++) {
+        const coord = getAxisViewSpacelikeCoord(mode, axis, rowCoords[rowIndex]!)
+        const piece = Board.getPiece(coord, board)
+        if (piece === Piece.E) continue
+
+        pieces.push({
+          columnIndex,
+          l,
+          m,
+          piece,
+          player: Pieces.getPlayer(piece),
+          rowIndex,
+        })
+      }
+    }
+
+    if (columns.length === 0) return null
+
+    return {
+      columns,
+      fixedCoord: axis,
+      l,
+      mode,
+      pieces,
+      rowLabels: getAxisViewRowLabels(mode, rowCoords),
+    }
+  }
+
   private getViewportWorldRect(): Rect {
     const [[x, y], [w, h]] = this.layout.getViewportScreenRect()
     const topLeft = this.renderer.screenToWorld([x, y])
@@ -1505,6 +1593,19 @@ export class Game extends Disposable(Empty) {
     const x1 = Math.max(topLeft[0], bottomRight[0])
     const y1 = Math.max(topLeft[1], bottomRight[1])
     return [[x0, y0], [x1 - x0, y1 - y0]]
+  }
+
+  private getAxisViewLineEntry(preferredL: number | null | undefined): readonly [number, Line] | null {
+    if (preferredL !== null && preferredL !== undefined) {
+      const line = Multiverse.getLine(this.multiverse, preferredL)
+      if (line && Line.getLatestBoardIndex(line) !== null) return [preferredL, line] as const
+    }
+
+    for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
+      if (! line || Line.getLatestBoardIndex(line) === null) continue
+      return [l, line] as const
+    }
+    return null
   }
 
   private applyWorkspaceState(
@@ -4560,4 +4661,38 @@ export class Game extends Disposable(Empty) {
       alpha: PIECE_GHOST_ALPHA,
     })
   }
+}
+
+const AXIS_VIEW_FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
+
+function clampBoardAxisCoord(value: number): number {
+  if (! Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(7, Math.round(value)))
+}
+
+function getAxisViewRowCoords(): number[] {
+  return [7, 6, 5, 4, 3, 2, 1, 0]
+}
+
+function getAxisViewRowLabels(mode: GameAxisViewMode, rowCoords: number[]): string[] {
+  return rowCoords.map(coord => (
+    mode === 'yt'
+      ? `${coord + 1}`
+      : AXIS_VIEW_FILE_LABELS[coord] ?? `${coord + 1}`
+  ))
+}
+
+function getAxisViewSpacelikeCoord(
+  mode: GameAxisViewMode,
+  fixedCoord: number,
+  rowCoord: number,
+): CoordSpacelike {
+  return mode === 'yt'
+    ? { x: fixedCoord, y: rowCoord }
+    : { x: rowCoord, y: fixedCoord }
+}
+
+function getAxisViewColumnLabel(m: number, player: Player): string {
+  const playerLabel = player === Player.W ? 'w' : 'b'
+  return `T${Coord.turn(m, player)}${playerLabel}`
 }

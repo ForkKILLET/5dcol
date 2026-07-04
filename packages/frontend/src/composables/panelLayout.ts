@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { Sizes } from '@engine/constant'
 import { useStorageRef } from './storage'
 
-export type GamePanelId = 'chat' | 'clock' | 'members' | 'minimap' | 'record'
+export type GamePanelId = 'axisView' | 'chat' | 'clock' | 'members' | 'minimap' | 'record'
 export type GamePanelSide = 'left' | 'right'
 
 export interface GamePanelGroup {
@@ -55,7 +55,7 @@ const LEFT_PANEL_DEFAULT_SIZE = 360
 const DEFAULT_GROUP_PREFIX = 'panel-group'
 const MIN_GROUP_HEIGHT = 132
 
-const GamePanelIdSchema = z.enum(['chat', 'clock', 'members', 'minimap', 'record'])
+const GamePanelIdSchema = z.enum(['axisView', 'chat', 'clock', 'members', 'minimap', 'record'])
 const GamePanelGroupSchema = z.object({
   activePanelId: GamePanelIdSchema,
   fitContent: z.boolean().optional(),
@@ -79,7 +79,7 @@ const StoredPanelLayoutSchema = z.object({
 
 type StoredPanelLayout = z.infer<typeof StoredPanelLayoutSchema>
 
-const ALL_SIDE_PANEL_IDS: GamePanelId[] = ['record', 'minimap', 'members', 'chat', 'clock']
+const ALL_SIDE_PANEL_IDS: GamePanelId[] = ['record', 'axisView', 'minimap', 'members', 'chat', 'clock']
 const PANEL_SIDES: GamePanelSide[] = ['left', 'right']
 const DEFAULT_LAYOUT: StoredPanelLayout = {
   version: PANEL_LAYOUT_STORAGE_VERSION,

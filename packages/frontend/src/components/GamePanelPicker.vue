@@ -5,7 +5,7 @@ import GameIcon from './GameIcon.vue'
 import GamePanel from './GamePanel.vue'
 
 export type GamePanelPickerItem = {
-  icon: 'chat' | 'clock' | 'members' | 'minimap' | 'record'
+  icon: 'axis-view' | 'chat' | 'clock' | 'members' | 'minimap' | 'record'
   id: GamePanelId
   label: string
 }

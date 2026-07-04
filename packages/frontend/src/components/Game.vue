@@ -63,6 +63,7 @@ import { normalizeOnlineServerAddress } from '@/composables/online'
 import { usePanelLayout, type GamePanelGroup, type GamePanelGroupResizeEdge, type GamePanelId, type GamePanelSide } from '@/composables/panelLayout'
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
+import AxisViewPanel from './AxisViewPanel.vue'
 import ChatPanel from './ChatPanel.vue'
 import ClockPanel from './ClockPanel.vue'
 import GameButton from './GameButton.vue'
@@ -900,6 +901,8 @@ function toggleClockPanel() {
 
 function getPanelLabel(id: GamePanelId): string {
   switch (id) {
+    case 'axisView':
+      return t('button.axisView')
     case 'record':
       return t('button.record')
     case 'minimap':
@@ -915,6 +918,8 @@ function getPanelLabel(id: GamePanelId): string {
 
 function getPanelIcon(id: GamePanelId): GamePanelPickerItem['icon'] {
   switch (id) {
+    case 'axisView':
+      return 'axis-view'
     case 'members':
       return 'members'
     case 'chat':
@@ -3256,6 +3261,14 @@ watch([exportFormat, exportMode], () => {
             <ClockPanel
               v-else-if="group.activePanelId === 'clock'"
               :rows="clockRows"
+            />
+            <AxisViewPanel
+              v-else-if="group.activePanelId === 'axisView'"
+              :game="game"
+              :empty-text="t('panel.axisViewEmpty')"
+              :mode-x-t-label="t('axisView.xt')"
+              :mode-y-t-label="t('axisView.yt')"
+              @focus-board="focusMinimapBoard"
             />
             <MinimapPanel
               v-else-if="group.activePanelId === 'minimap'"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'minimap' | 'panels' | 'plus' | 'record' | 'x'
+  name: 'axis-view' | 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'minimap' | 'panels' | 'plus' | 'record' | 'x'
 }>()
 </script>
 
@@ -150,6 +150,21 @@ defineProps<{
         height="2.6"
         rx=".5"
       />
+    </template>
+    <template v-else-if="name === 'axis-view'">
+      <rect
+        x="5"
+        y="5"
+        width="14"
+        height="14"
+        rx="1.2"
+      />
+      <path d="M5 9h14" />
+      <path d="M5 13h14" />
+      <path d="M9 5v14" />
+      <path d="M13 5v14" />
+      <path d="M7 17h10" />
+      <path d="M17 7v10" />
     </template>
     <template v-else-if="name === 'members'">
       <circle
