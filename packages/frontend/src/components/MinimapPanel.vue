@@ -218,10 +218,7 @@ function drawViewportEdge(
     : position >= canvasSide
       ? canvasSide - inset
       : position
-  const dashed = position <= 0
-    || position >= canvasSide
-    || rangeStart <= 0
-    || rangeEnd >= canvasRange
+  const dashed = position <= 0 || position >= canvasSide
 
   ctx.save()
   ctx.setLineDash(dashed ? [5, 4] : [])
