@@ -60,7 +60,6 @@ const panelStyle = computed(() => ({
 .game-side-panel-stack :deep(.record-panel) {
   position: relative;
   min-width: 0;
-  height: 100%;
 }
 
 .game-side-panel-stack :deep(.record-panel) {

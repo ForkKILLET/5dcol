@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { GamePanelGroup, GamePanelGroupResizeEdge, GamePanelId, GamePanelSide } from '@/composables/panelLayout'
+import type { GamePanelGroup, GamePanelGroupResizeEdge, GamePanelId, GamePanelSide, GamePanelStretch } from '@/composables/panelLayout'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
 import GameTab from './GameTab.vue'
@@ -14,13 +14,13 @@ export type GameSidePanelTab = {
 const props = defineProps<{
   addLabel: string
   closeLabel: string
-  fitContent?: boolean
   group: GamePanelGroup
   height: number
   independentWidth?: boolean
   resizingEdge?: GamePanelGroupResizeEdge | null
   resizingWidth?: boolean
   side: GamePanelSide
+  stretch: GamePanelStretch
   tabs: GameSidePanelTab[]
   top: number
   width: number
@@ -32,6 +32,7 @@ const emit = defineEmits<{
   resizeEdge: [side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge, event: PointerEvent]
   resizeWidth: [side: GamePanelSide, groupId: string, event: PointerEvent]
   selectPanel: [groupId: string, panelId: GamePanelId]
+  stretchEdge: [side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge]
 }>()
 
 const groupStyle = computed(() => ({
@@ -46,7 +47,7 @@ const groupStyle = computed(() => ({
     class="game-side-panel-group"
     :class="{
       [`game-side-panel-group--${side}`]: true,
-      'game-side-panel-group--fit-content': fitContent,
+      [`game-side-panel-group--stretch-${stretch}`]: true,
       'game-side-panel-group--independent-width': independentWidth,
       'game-side-panel-group--resizing-before': resizingEdge === 'before',
       'game-side-panel-group--resizing-after': resizingEdge === 'after',
@@ -91,10 +92,12 @@ const groupStyle = computed(() => ({
       <div
         class="game-side-panel-group-resize-handle game-side-panel-group-resize-handle--before"
         @pointerdown.stop.prevent="emit('resizeEdge', side, group.id, 'before', $event)"
+        @dblclick.stop.prevent="emit('stretchEdge', side, group.id, 'before')"
       ></div>
       <div
         class="game-side-panel-group-resize-handle game-side-panel-group-resize-handle--after"
         @pointerdown.stop.prevent="emit('resizeEdge', side, group.id, 'after', $event)"
+        @dblclick.stop.prevent="emit('stretchEdge', side, group.id, 'after')"
       ></div>
       <div
         class="game-side-panel-group-width-resize-handle"
@@ -127,11 +130,6 @@ const groupStyle = computed(() => ({
 
 .game-side-panel-group--right {
   right: 0;
-}
-
-.game-side-panel-group--fit-content {
-  height: auto;
-  max-height: calc(100% - var(--game-side-panel-group-top));
 }
 
 .game-side-panel-tabs {
@@ -179,21 +177,12 @@ const groupStyle = computed(() => ({
   min-height: 0;
 }
 
-.game-side-panel-group--fit-content .game-side-panel-group-content {
-  flex: 0 1 auto;
-}
-
 .game-side-panel-group-content > :deep(.game-panel),
 .game-side-panel-group-content > :deep(.record-panel) {
   position: relative;
   flex: 1 1 auto;
+  height: 100%;
   min-height: 0;
-}
-
-.game-side-panel-group--fit-content .game-side-panel-group-content > :deep(.game-panel),
-.game-side-panel-group--fit-content .game-side-panel-group-content > :deep(.record-panel) {
-  height: auto;
-  max-height: 100%;
 }
 
 .game-side-panel-group-resize-handle {

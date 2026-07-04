@@ -987,6 +987,12 @@ function selectPanelTab(groupId: string, panelId: GamePanelId) {
   panelLayout.setGroupActivePanel(groupId, panelId)
 }
 
+function stretchSidePanelGroupEdge(side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge) {
+  playUISound()
+  panelLayout.addGroupStretchEdge(side, groupId, edge)
+  syncGameViewportInsets()
+}
+
 function closePanel(panelId: GamePanelId) {
   playUISound()
   if (panelId === 'clock') gameSettings.showClock = false
@@ -3272,7 +3278,7 @@ watch([exportFormat, exportMode], () => {
             :top="panelLayout.getGroupTop(group)"
             :height="panelLayout.getGroupHeight(group)"
             :width="panelLayout.getGroupWidth(side, group)"
-            :fit-content="panelLayout.isGroupFitContent(group)"
+            :stretch="panelLayout.getGroupStretch(group)"
             :independent-width="panelLayout.isGroupIndependentWidth(group)"
             :tabs="getPanelTabs(group)"
             :resizing-edge="resizingSidePanelGroup?.groupId === group.id ? resizingSidePanelGroup.edge : null"
@@ -3284,6 +3290,7 @@ watch([exportFormat, exportMode], () => {
             @resize-edge="startSidePanelGroupResize"
             @resize-width="startSidePanelGroupWidthResize"
             @select-panel="selectPanelTab"
+            @stretch-edge="stretchSidePanelGroupEdge"
           >
             <MembersPanel
               v-if="group.activePanelId === 'members'"
