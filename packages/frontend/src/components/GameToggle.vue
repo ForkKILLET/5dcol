@@ -137,6 +137,10 @@ function toggle() {
   border-radius: 6px;
 }
 
+.game-toggle--small.game-toggle--radio .game-toggle-mark {
+  border-radius: 50%;
+}
+
 .game-toggle-label {
   transform: translateY(var(--ui-text-y));
 }

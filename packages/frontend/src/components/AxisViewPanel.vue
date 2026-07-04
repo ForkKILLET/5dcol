@@ -29,6 +29,19 @@ interface VisibleAxisViewColumn {
   sourceIndex: number
 }
 
+interface AxisViewCanvasLayout {
+  bottomLabelY: number
+  cellSize: number
+  columnXs: number[]
+  gridH: number
+  gridW: number
+  gridX: number
+  gridY: number
+  rowLabelX: number
+  topLabelY: number
+  turnGap: number
+}
+
 const props = defineProps<{
   blackLabel: string
   bothLabel: string
@@ -109,7 +122,7 @@ function drawSnapshot(
   const visibleColumns = getVisibleAxisViewColumns(snapshot, playerFilter.value)
   if (visibleColumns.length === 0) return
 
-  const layout = getAxisViewCanvasLayout(width, height, visibleColumns.length, snapshot.rowLabels.length)
+  const layout = getAxisViewCanvasLayout(width, height, visibleColumns, snapshot.rowLabels.length)
   const hoverKey = hoveredBoardKey.value
   const visibleColumnIndexes = new Map<number, number>()
 
@@ -121,7 +134,7 @@ function drawSnapshot(
   for (let columnIndex = 0; columnIndex < visibleColumns.length; columnIndex++) {
     const { column, sourceIndex } = visibleColumns[columnIndex]!
     visibleColumnIndexes.set(sourceIndex, columnIndex)
-    const columnX = layout.gridX + columnIndex * layout.cellSize
+    const columnX = layout.columnXs[columnIndex]!
     const columnRect: CanvasRect = {
       x: columnX,
       y: layout.gridY,
@@ -148,13 +161,10 @@ function drawSnapshot(
       fillCanvasRect(ctx, columnRect)
     }
 
-    ctx.lineWidth = column.focused || getBoardKey(column) === hoverKey ? 2 : 1
-    ctx.strokeStyle = column.focused
-      ? colors.focusStroke
-      : getBoardKey(column) === hoverKey
-        ? colors.hoverStroke
-        : colors.gridStroke
-    strokeCanvasRect(ctx, columnRect)
+    if (column.focused || getBoardKey(column) === hoverKey) {
+      ctx.fillStyle = colors.columnHighlightFill
+      fillCanvasRect(ctx, columnRect)
+    }
 
     ctx.fillStyle = colors.labelText
     ctx.globalAlpha = 0.78
@@ -165,10 +175,6 @@ function drawSnapshot(
     )
     ctx.globalAlpha = 1
   }
-
-  ctx.lineWidth = 1
-  ctx.strokeStyle = colors.gridStroke
-  drawGridLines(ctx, layout, visibleColumns.length, snapshot.rowLabels.length)
 
   ctx.fillStyle = colors.labelText
   ctx.globalAlpha = 0.78
@@ -181,34 +187,14 @@ function drawSnapshot(
   ctx.restore()
 }
 
-function drawGridLines(
-  ctx: CanvasRenderingContext2D,
-  layout: ReturnType<typeof getAxisViewCanvasLayout>,
-  columnCount: number,
-  rowCount: number,
-) {
-  ctx.beginPath()
-  for (let columnIndex = 0; columnIndex <= columnCount; columnIndex++) {
-    const x = layout.gridX + columnIndex * layout.cellSize
-    ctx.moveTo(x, layout.gridY)
-    ctx.lineTo(x, layout.gridY + layout.gridH)
-  }
-  for (let rowIndex = 0; rowIndex <= rowCount; rowIndex++) {
-    const y = layout.gridY + rowIndex * layout.cellSize
-    ctx.moveTo(layout.gridX, y)
-    ctx.lineTo(layout.gridX + layout.gridW, y)
-  }
-  ctx.stroke()
-}
-
 function drawPieces(
   ctx: CanvasRenderingContext2D,
   snapshot: GameAxisViewSnapshot,
-  layout: ReturnType<typeof getAxisViewCanvasLayout>,
+  layout: AxisViewCanvasLayout,
   colors: ReturnType<typeof getAxisViewColors>,
   visibleColumnIndexes: Map<number, number>,
 ) {
-  ctx.font = `${layout.cellSize * 0.68}px serif`
+  ctx.font = `${layout.cellSize * 0.78}px serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
@@ -218,7 +204,7 @@ function drawPieces(
 
     const glyph = getPieceGlyph(pieceCell.piece)
     if (! glyph) continue
-    const x = layout.gridX + (visibleColumnIndex + 0.5) * layout.cellSize
+    const x = layout.columnXs[visibleColumnIndex]! + layout.cellSize / 2
     const y = layout.gridY + (pieceCell.rowIndex + 0.52) * layout.cellSize
     const isWhite = pieceCell.player === Player.W
 
@@ -230,26 +216,41 @@ function drawPieces(
   }
 }
 
-function getAxisViewCanvasLayout(width: number, height: number, columnCount: number, rowCount: number) {
+function getAxisViewCanvasLayout(
+  width: number,
+  height: number,
+  visibleColumns: VisibleAxisViewColumn[],
+  rowCount: number,
+): AxisViewCanvasLayout {
   const left = 26
   const right = 8
   const top = 26
   const bottom = 28
+  const columnCount = visibleColumns.length
+  const turnGapCount = getAxisViewTurnGapCount(visibleColumns)
+  const turnGapRatio = 0.14
   const cellSize = Math.max(12, Math.min(
-    (width - left - right) / Math.max(1, columnCount),
+    (width - left - right) / Math.max(1, columnCount + turnGapCount * turnGapRatio),
     (height - top - bottom) / Math.max(1, rowCount),
   ))
+  const turnGap = Math.max(2, cellSize * turnGapRatio)
   const gridW = cellSize * columnCount
+    + turnGap * turnGapCount
   const gridH = cellSize * rowCount
+  const gridX = Math.max(left, left + (width - left - right - gridW) / 2)
+  const gridY = Math.max(top, top + (height - top - bottom - gridH) / 2)
+  const columnXs = getAxisViewColumnXs(visibleColumns, gridX, cellSize, turnGap)
   return {
     cellSize,
+    columnXs,
     gridH,
     gridW,
-    gridX: Math.max(left, left + (width - left - right - gridW) / 2),
-    gridY: Math.max(top, top + (height - top - bottom - gridH) / 2),
-    bottomLabelY: Math.max(top, top + (height - top - bottom - gridH) / 2) + gridH + bottom * 0.52,
+    gridX,
+    gridY,
+    bottomLabelY: gridY + gridH + bottom * 0.52,
     rowLabelX: Math.max(10, left * 0.48),
-    topLabelY: Math.max(10, Math.max(top, top + (height - top - bottom - gridH) / 2) - top * 0.48),
+    topLabelY: Math.max(10, gridY - top * 0.48),
+    turnGap,
   }
 }
 
@@ -257,15 +258,9 @@ function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRec
   ctx.fillRect(x, y, w, h)
 }
 
-function strokeCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRect) {
-  ctx.strokeRect(x, y, w, h)
-}
-
 function getAxisViewColors(element: HTMLElement) {
   const style = getComputedStyle(element)
   const participant = getCssColor(style, '--record-participant-color', Color4.toRgbaString(Colors.PurpleDark))
-  const hover = getCssColor(style, '--button-hover-border-color', 'rgba(152, 180, 149, 1)')
-  const border = getCssColor(style, '--button-border-color', 'rgba(39, 39, 39, 1)')
   return {
     activeFill: withAlpha(participant, 0.16),
     blackPieceFill: 'rgba(11, 11, 11, 1)',
@@ -278,9 +273,7 @@ function getAxisViewColors(element: HTMLElement) {
       dark: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.8),
       light: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.9),
     },
-    focusStroke: participant,
-    gridStroke: withAlpha(border, 0.72),
-    hoverStroke: hover,
+    columnHighlightFill: withAlpha(Color4.toRgbaString(Colors.BoardHighlightWhite), 0.58),
     labelText: getCssColor(style, '--button-text-color', 'rgba(244, 245, 237, 1)'),
     whitePieceFill: 'rgba(244, 245, 237, 1)',
     whitePieceStroke: 'rgba(11, 11, 11, 0.8)',
@@ -333,6 +326,43 @@ function getVisibleAxisViewColumns(
       || (filter === 'white' && column.player === Player.W)
       || (filter === 'black' && column.player === Player.B)
     ))
+}
+
+function getAxisViewTurnGapCount(visibleColumns: VisibleAxisViewColumn[]): number {
+  let count = 0
+  for (let index = 1; index < visibleColumns.length; index++) {
+    if (shouldAddTurnGapBefore(visibleColumns, index)) count++
+  }
+  return count
+}
+
+function getAxisViewColumnXs(
+  visibleColumns: VisibleAxisViewColumn[],
+  gridX: number,
+  cellSize: number,
+  turnGap: number,
+): number[] {
+  const columnXs: number[] = []
+  let x = gridX
+  for (let index = 0; index < visibleColumns.length; index++) {
+    if (index > 0 && shouldAddTurnGapBefore(visibleColumns, index)) x += turnGap
+    columnXs.push(x)
+    x += cellSize
+  }
+  return columnXs
+}
+
+function shouldAddTurnGapBefore(visibleColumns: VisibleAxisViewColumn[], index: number): boolean {
+  const previous = visibleColumns[index - 1]?.column
+  const current = visibleColumns[index]?.column
+  if (! previous || ! current) return false
+  return getAxisViewTurnGroup(previous) !== getAxisViewTurnGroup(current)
+}
+
+function getAxisViewTurnGroup(column: GameAxisViewBoardColumn): number {
+  return column.player === Player.W
+    ? column.m / 2
+    : (column.m - 1) / 2
 }
 
 function handleModeClick(nextMode: GameAxisViewMode) {
