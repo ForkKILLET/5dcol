@@ -2,8 +2,10 @@
 import { Piece, Player } from '@5dcol/core'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Game, GameAxisViewBoardColumn, GameAxisViewMode, GameAxisViewSnapshot } from '@engine/game'
+import { getAssetUrl } from '@engine/assets'
 import { Color4 } from '@engine/basic'
 import { Colors } from '@engine/constant'
+import { PIECE_TO_TEXTURE_ID, TEXTURE_ID_TO_NAME } from '@engine/texture'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
 import GamePanel from './GamePanel.vue'
@@ -63,6 +65,7 @@ const playerFilter = ref<AxisViewPlayerFilter>('both')
 
 let frameId: number | null = null
 let lastHitItems: AxisViewHitItem[] = []
+const pieceImageCache = new Map<Piece, HTMLImageElement>()
 
 const axisLabel = computed(() => (
   mode.value === 'yt'
@@ -177,7 +180,7 @@ function drawSnapshot(
   }
   ctx.globalAlpha = 1
 
-  drawPieces(ctx, snapshot, layout, colors, visibleColumnIndexes)
+  drawPieces(ctx, snapshot, layout, visibleColumnIndexes)
   ctx.restore()
 }
 
@@ -185,28 +188,19 @@ function drawPieces(
   ctx: CanvasRenderingContext2D,
   snapshot: GameAxisViewSnapshot,
   layout: AxisViewCanvasLayout,
-  colors: ReturnType<typeof getAxisViewColors>,
   visibleColumnIndexes: Map<number, number>,
 ) {
-  ctx.font = `${layout.cellSize * 0.78}px serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-
   for (const pieceCell of snapshot.pieces) {
     const visibleColumnIndex = visibleColumnIndexes.get(pieceCell.columnIndex)
     if (visibleColumnIndex === undefined) continue
 
-    const glyph = getPieceGlyph(pieceCell.piece)
-    if (! glyph) continue
-    const x = layout.columnXs[visibleColumnIndex]! + layout.cellSize / 2
-    const y = layout.gridY + (pieceCell.rowIndex + 0.52) * layout.cellSize
-    const isWhite = pieceCell.player === Player.W
+    const image = getPieceImage(pieceCell.piece)
+    if (! isPieceImageReady(image)) continue
 
-    ctx.lineWidth = Math.max(1.2, layout.cellSize * 0.035)
-    ctx.strokeStyle = isWhite ? colors.whitePieceStroke : colors.blackPieceStroke
-    ctx.fillStyle = isWhite ? colors.whitePieceFill : colors.blackPieceFill
-    ctx.strokeText(glyph, x, y)
-    ctx.fillText(glyph, x, y)
+    const size = layout.cellSize * 0.88
+    const x = layout.columnXs[visibleColumnIndex]! + (layout.cellSize - size) / 2
+    const y = layout.gridY + pieceCell.rowIndex * layout.cellSize + (layout.cellSize - size) / 2
+    ctx.drawImage(image, x, y, size, size)
   }
 }
 
@@ -251,8 +245,6 @@ function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRec
 function getAxisViewColors(element: HTMLElement) {
   const style = getComputedStyle(element)
   return {
-    blackPieceFill: 'rgba(11, 11, 11, 1)',
-    blackPieceStroke: 'rgba(244, 245, 237, 0.72)',
     dimBoardFill: {
       dark: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.8),
       light: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.9),
@@ -263,8 +255,6 @@ function getAxisViewColors(element: HTMLElement) {
     },
     columnHighlightFill: withAlpha(Color4.toRgbaString(Colors.BoardHighlightWhite), 0.58),
     labelText: getCssColor(style, '--button-text-color', 'rgba(244, 245, 237, 1)'),
-    whitePieceFill: 'rgba(244, 245, 237, 1)',
-    whitePieceStroke: 'rgba(11, 11, 11, 0.8)',
   }
 }
 
@@ -278,29 +268,24 @@ function withAlpha(color: string, alpha: number): string {
   return `rgba(${numbers[0]}, ${numbers[1]}, ${numbers[2]}, ${alpha})`
 }
 
-function getPieceGlyph(piece: Piece): string {
-  switch (piece) {
-    case Piece.PW:
-    case Piece.PB:
-      return '♟'
-    case Piece.RW:
-    case Piece.RB:
-      return '♜'
-    case Piece.NW:
-    case Piece.NB:
-      return '♞'
-    case Piece.BW:
-    case Piece.BB:
-      return '♝'
-    case Piece.QW:
-    case Piece.QB:
-      return '♛'
-    case Piece.KW:
-    case Piece.KB:
-      return '♚'
-    default:
-      return ''
-  }
+function getPieceImage(piece: Piece): HTMLImageElement | null {
+  const cached = pieceImageCache.get(piece)
+  if (cached) return cached
+
+  const textureId = PIECE_TO_TEXTURE_ID.get(piece)
+  const textureName = textureId === undefined ? undefined : TEXTURE_ID_TO_NAME.get(textureId)
+  if (! textureName) return null
+
+  const image = new Image()
+  image.decoding = 'async'
+  image.addEventListener('load', draw, { once: true })
+  image.src = getAssetUrl(`assets/textures/${textureName}`)
+  pieceImageCache.set(piece, image)
+  return image
+}
+
+function isPieceImageReady(image: HTMLImageElement | null): image is HTMLImageElement {
+  return image !== null && image.complete && image.naturalWidth > 0
 }
 
 function getVisibleAxisViewColumns(
