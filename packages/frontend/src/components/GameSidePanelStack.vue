@@ -45,7 +45,7 @@ const panelStyle = computed(() => ({
   flex-direction: column;
   width: min(var(--game-side-panel-width), calc(100vw - var(--button-top) * 2));
   min-height: 0;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .game-side-panel-stack--left {
