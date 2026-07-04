@@ -17,22 +17,27 @@ const props = defineProps<{
   fitContent?: boolean
   group: GamePanelGroup
   height: number
+  independentWidth?: boolean
   resizingEdge?: GamePanelGroupResizeEdge | null
+  resizingWidth?: boolean
   side: GamePanelSide
   tabs: GameSidePanelTab[]
   top: number
+  width: number
 }>()
 
 const emit = defineEmits<{
   addPanel: [groupId: string]
   closePanel: [panelId: GamePanelId]
   resizeEdge: [side: GamePanelSide, groupId: string, edge: GamePanelGroupResizeEdge, event: PointerEvent]
+  resizeWidth: [side: GamePanelSide, groupId: string, event: PointerEvent]
   selectPanel: [groupId: string, panelId: GamePanelId]
 }>()
 
 const groupStyle = computed(() => ({
   '--game-side-panel-group-height': `${props.height * 100}%`,
   '--game-side-panel-group-top': `${props.top * 100}%`,
+  '--game-side-panel-group-width': `${props.width}px`,
 }))
 </script>
 
@@ -40,9 +45,12 @@ const groupStyle = computed(() => ({
   <section
     class="game-side-panel-group"
     :class="{
+      [`game-side-panel-group--${side}`]: true,
       'game-side-panel-group--fit-content': fitContent,
+      'game-side-panel-group--independent-width': independentWidth,
       'game-side-panel-group--resizing-before': resizingEdge === 'before',
       'game-side-panel-group--resizing-after': resizingEdge === 'after',
+      'game-side-panel-group--resizing-width': resizingWidth,
     }"
     :style="groupStyle"
   >
@@ -89,6 +97,10 @@ const groupStyle = computed(() => ({
         @pointerdown.stop.prevent="emit('resizeEdge', side, group.id, 'after', $event)"
       ></div>
     </div>
+    <div
+      class="game-side-panel-group-width-resize-handle"
+      @pointerdown.stop.prevent="emit('resizeWidth', side, group.id, $event)"
+    ></div>
   </section>
 </template>
 
@@ -105,9 +117,16 @@ const groupStyle = computed(() => ({
   height: var(--game-side-panel-group-height);
   min-height: 0;
   pointer-events: auto;
-  right: 0;
-  left: 0;
   top: var(--game-side-panel-group-top);
+  width: min(var(--game-side-panel-group-width), calc(100vw - var(--button-top) * 2));
+}
+
+.game-side-panel-group--left {
+  left: 0;
+}
+
+.game-side-panel-group--right {
+  right: 0;
 }
 
 .game-side-panel-group--fit-content {
@@ -166,6 +185,7 @@ const groupStyle = computed(() => ({
 
 .game-side-panel-group-content > :deep(.game-panel),
 .game-side-panel-group-content > :deep(.record-panel) {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -218,5 +238,55 @@ const groupStyle = computed(() => ({
 .game-side-panel-group--resizing-before .game-side-panel-group-resize-handle--before::after,
 .game-side-panel-group--resizing-after .game-side-panel-group-resize-handle--after::after {
   opacity: 0.42;
+}
+
+.game-side-panel-group-content > :deep(.game-panel)::after,
+.game-side-panel-group-content > :deep(.record-panel)::after {
+  position: absolute;
+  top: var(--game-side-panel-resize-line-end-inset);
+  bottom: var(--game-side-panel-resize-line-end-inset);
+  width: var(--game-side-panel-resize-line-size);
+  background: currentColor;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.game-side-panel-group--left .game-side-panel-group-content > :deep(.game-panel)::after,
+.game-side-panel-group--left .game-side-panel-group-content > :deep(.record-panel)::after {
+  right: var(--game-side-panel-resize-line-inset);
+}
+
+.game-side-panel-group--right .game-side-panel-group-content > :deep(.game-panel)::after,
+.game-side-panel-group--right .game-side-panel-group-content > :deep(.record-panel)::after {
+  left: var(--game-side-panel-resize-line-inset);
+}
+
+.game-side-panel-group:has(.game-side-panel-group-width-resize-handle:hover) .game-side-panel-group-content > :deep(.game-panel)::after,
+.game-side-panel-group:has(.game-side-panel-group-width-resize-handle:hover) .game-side-panel-group-content > :deep(.record-panel)::after,
+.game-side-panel-group--independent-width .game-side-panel-group-content > :deep(.game-panel)::after,
+.game-side-panel-group--independent-width .game-side-panel-group-content > :deep(.record-panel)::after,
+.game-side-panel-group--resizing-width .game-side-panel-group-content > :deep(.game-panel)::after,
+.game-side-panel-group--resizing-width .game-side-panel-group-content > :deep(.record-panel)::after {
+  opacity: 0.42;
+}
+
+.game-side-panel-group-width-resize-handle {
+  position: absolute;
+  z-index: var(--z-ui-handle);
+  top: 0;
+  bottom: 0;
+  width: var(--game-side-panel-resize-hit-size);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.game-side-panel-group--left .game-side-panel-group-width-resize-handle {
+  right: 0;
+}
+
+.game-side-panel-group--right .game-side-panel-group-width-resize-handle {
+  left: 0;
 }
 </style>

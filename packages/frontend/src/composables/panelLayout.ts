@@ -13,6 +13,7 @@ export interface GamePanelGroup {
   id: string
   panelIds: GamePanelId[]
   top: number
+  width?: number
 }
 
 export interface GamePanelColumn {
@@ -54,6 +55,7 @@ export const PANEL_LAYOUT_STORAGE_VERSION = 2
 const LEFT_PANEL_DEFAULT_SIZE = 360
 const DEFAULT_GROUP_PREFIX = 'panel-group'
 const MIN_GROUP_HEIGHT = 132
+const GROUP_WIDTH_SNAP_PX = 12
 
 const GamePanelIdSchema = z.enum(['axisView', 'chat', 'clock', 'members', 'minimap', 'record'])
 const GamePanelGroupSchema = z.object({
@@ -63,6 +65,7 @@ const GamePanelGroupSchema = z.object({
   id: z.string(),
   panelIds: z.array(GamePanelIdSchema),
   top: z.number().refine(Number.isFinite).catch(Number.NaN),
+  width: z.number().refine(Number.isFinite).optional().catch(undefined),
 })
 const GamePanelColumnSchema = z.object({
   groups: z.array(GamePanelGroupSchema),
@@ -245,9 +248,20 @@ export function usePanelLayout({
   }
 
   function setSideSize(side: GamePanelSide, size: number) {
-    const minSize = getSideMinSize(side)
-    const maxWidth = Math.max(minSize, viewportWidth.value - Sizes.ButtonTop * 2)
-    layout.value.columns[side].size = Math.min(Math.max(size, minSize), maxWidth)
+    layout.value.columns[side].size = clampPanelWidth(side, size, viewportWidth.value)
+  }
+
+  function setGroupWidth(side: GamePanelSide, groupId: string, size: number) {
+    const group = findGroupInSide(side, groupId)
+    if (! group) return
+
+    const columnWidth = layout.value.columns[side].size
+    const width = clampPanelWidth(side, size, viewportWidth.value)
+    if (Math.abs(width - columnWidth) <= GROUP_WIDTH_SNAP_PX) {
+      delete group.width
+      return
+    }
+    group.width = width
   }
 
   function setOnlineStudyDefaultPanels() {
@@ -275,12 +289,20 @@ export function usePanelLayout({
     return layout.value.columns[side].size
   }
 
+  function getGroupWidth(side: GamePanelSide, group: GamePanelGroup): number {
+    return clampPanelWidth(side, group.width ?? layout.value.columns[side].size, viewportWidth.value)
+  }
+
   function getGroupHeight(group: GamePanelGroup): number {
     return group.height
   }
 
   function isGroupFitContent(group: GamePanelGroup): boolean {
     return group.fitContent === true
+  }
+
+  function isGroupIndependentWidth(group: GamePanelGroup): boolean {
+    return Number.isFinite(group.width)
   }
 
   function getGroupTop(group: GamePanelGroup): number {
@@ -346,7 +368,7 @@ export function usePanelLayout({
     ))
     if (groups.length === 0) return 0
 
-    const width = layout.value.columns[side].size
+    const width = groups.reduce((max, group) => Math.max(max, getGroupWidth(side, group)), layout.value.columns[side].size)
     return Math.min(width, Math.max(0, viewportWidth.value - Sizes.ButtonTop * 2))
       + Sizes.ButtonTop
       + Sizes.ButtonShadowOffset
@@ -419,12 +441,14 @@ export function usePanelLayout({
     getGroupPanels,
     getGroupResizeSnapshot,
     getGroupTop,
+    getGroupWidth,
     getPanelSize,
     getSideGroups,
     getSideSize,
     hiddenPanelIds,
     isPanelAvailable,
     isGroupFitContent,
+    isGroupIndependentWidth,
     isPanelOpen,
     isPanelVisible,
     layout,
@@ -432,6 +456,7 @@ export function usePanelLayout({
     setOnlineStudyDefaultPanels,
     setPanelOpen,
     setPanelSize,
+    setGroupWidth,
     setSideSize,
     resizeGroupEdge,
     togglePanel,
@@ -452,6 +477,12 @@ function getSideMinSize(side: GamePanelSide): number {
   return side === 'right'
     ? getMinPanelSize('record')
     : Math.max(getMinPanelSize('members'), getMinPanelSize('chat'))
+}
+
+function clampPanelWidth(side: GamePanelSide, size: number, viewportWidth: number): number {
+  const minSize = getSideMinSize(side)
+  const maxWidth = Math.max(minSize, viewportWidth - Sizes.ButtonTop * 2)
+  return Math.min(Math.max(size, minSize), maxWidth)
 }
 
 function normalizeStoredPanelLayout(layout: StoredPanelLayout): StoredPanelLayout {
@@ -487,6 +518,7 @@ function normalizeGroup(group: GamePanelGroup): GamePanelGroup | null {
     height: Math.max(0.001, group.height),
     panelIds,
     top: Number.isFinite(group.top) ? group.top : Number.NaN,
+    width: Number.isFinite(group.width) ? group.width : undefined,
   }
 }
 

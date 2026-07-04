@@ -193,6 +193,7 @@ const panelLayout = usePanelLayout({
 const panelPickerOpen = ref(false)
 const panelPickerGroupId = ref<string | null>(null)
 const resizingSidePanelGroup = ref<{ edge: GamePanelGroupResizeEdge; groupId: string } | null>(null)
+const resizingSidePanelWidthGroupId = ref<string | null>(null)
 const recordPanelOpen = computed({
   get: () => panelLayout.isPanelOpen('record'),
   set: (open: boolean) => panelLayout.setPanelOpen('record', open),
@@ -1015,13 +1016,67 @@ function getPanelStackBottom(_side: GamePanelSide): string {
   return 'calc(var(--button-top) + var(--button-height) + var(--button-shadow-offset) + var(--button-content-gap) * 2)'
 }
 
-function getPanelStackMinSize(side: GamePanelSide): number {
-  return side === 'right' ? Sizes.RecordPanelMinWidth : 260
-}
+function startSidePanelGroupWidthResize(side: GamePanelSide, groupId: string, event: PointerEvent) {
+  if (event.button !== 0) return
+  const handle = event.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : event.target instanceof HTMLElement
+      ? event.target
+      : null
+  if (! handle) return
 
-function updateSidePanelWidth(side: GamePanelSide, width: number) {
-  panelLayout.setSideSize(side, width)
-  syncGameViewportInsets()
+  const group = panelLayout.getSideGroups(side).find(item => item.id === groupId)
+  if (! group) return
+
+  const pointerId = event.pointerId
+  const independentMode = event.shiftKey || panelLayout.isGroupIndependentWidth(group)
+  const startClientX = event.clientX
+  const startSize = independentMode
+    ? panelLayout.getGroupWidth(side, group)
+    : panelLayout.getSideSize(side)
+  const previousHtmlCursor = document.documentElement.style.cursor
+  const previousBodyCursor = document.body.style.cursor
+  let stopped = false
+
+  handle.setPointerCapture(pointerId)
+  resizingSidePanelWidthGroupId.value = groupId
+  document.documentElement.classList.add('game-side-panel-resizing')
+  document.documentElement.style.cursor = 'ew-resize'
+  document.body.style.cursor = 'ew-resize'
+
+  const move = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId !== pointerId) return
+    const delta = side === 'left'
+      ? moveEvent.clientX - startClientX
+      : startClientX - moveEvent.clientX
+    const nextSize = startSize + delta
+    if (independentMode) panelLayout.setGroupWidth(side, groupId, nextSize)
+    else panelLayout.setSideSize(side, nextSize)
+    syncGameViewportInsets()
+  }
+
+  const stop = (stopEvent: PointerEvent | Event) => {
+    if ('pointerId' in stopEvent && stopEvent.pointerId !== pointerId) return
+    if (stopped) return
+    stopped = true
+    handle.removeEventListener('pointermove', move)
+    handle.removeEventListener('pointerup', stop)
+    handle.removeEventListener('pointercancel', stop)
+    handle.removeEventListener('lostpointercapture', stop)
+    window.removeEventListener('blur', stop)
+    if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
+    if (resizingSidePanelWidthGroupId.value === groupId) resizingSidePanelWidthGroupId.value = null
+    document.documentElement.classList.remove('game-side-panel-resizing')
+    document.documentElement.style.cursor = previousHtmlCursor
+    document.body.style.cursor = previousBodyCursor
+  }
+
+  handle.addEventListener('pointermove', move)
+  handle.addEventListener('pointerup', stop)
+  handle.addEventListener('pointercancel', stop)
+  handle.addEventListener('lostpointercapture', stop)
+  window.addEventListener('blur', stop)
+  move(event)
 }
 
 function ensureClockPanelOpenIfNeeded() {
@@ -3206,11 +3261,8 @@ watch([exportFormat, exportMode], () => {
           :side="side"
           :style="menuButtonStyle"
           :size="panelLayout.getSideSize(side)"
-          :min-size="getPanelStackMinSize(side)"
-          :max-size="Math.max(getPanelStackMinSize(side), viewportWidth - Sizes.ButtonTop * 2)"
           :top="getPanelStackTop(side)"
           :bottom="getPanelStackBottom(side)"
-          @resize-panel="updateSidePanelWidth(side, $event)"
         >
           <GameSidePanelGroup
             v-for="group in panelLayout.getSideGroups(side)"
@@ -3219,14 +3271,18 @@ watch([exportFormat, exportMode], () => {
             :group="group"
             :top="panelLayout.getGroupTop(group)"
             :height="panelLayout.getGroupHeight(group)"
+            :width="panelLayout.getGroupWidth(side, group)"
             :fit-content="panelLayout.isGroupFitContent(group)"
+            :independent-width="panelLayout.isGroupIndependentWidth(group)"
             :tabs="getPanelTabs(group)"
             :resizing-edge="resizingSidePanelGroup?.groupId === group.id ? resizingSidePanelGroup.edge : null"
+            :resizing-width="resizingSidePanelWidthGroupId === group.id"
             :add-label="t('panel.addPanel')"
             :close-label="t('panel.closePanel')"
             @add-panel="openPanelPicker"
             @close-panel="closePanel"
             @resize-edge="startSidePanelGroupResize"
+            @resize-width="startSidePanelGroupWidthResize"
             @select-panel="selectPanelTab"
           >
             <MembersPanel
