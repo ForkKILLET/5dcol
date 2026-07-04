@@ -3,7 +3,7 @@ import { Player } from '@5dcol/core'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Game, GameMinimapBoard, GameMinimapSnapshot } from '@engine/game'
 import { Color4, type Rect, type Vec2 } from '@engine/basic'
-import { Colors } from '@engine/constant'
+import { Animations, ButtonColors, Colors } from '@engine/constant'
 import GamePanel from './GamePanel.vue'
 
 interface CanvasRect {
@@ -127,14 +127,13 @@ function drawBoards(
       fillCanvasRect(ctx, rect)
     }
 
-    ctx.lineWidth = board.focused || board.active || key === hoverKey ? 2 : 1
-    ctx.strokeStyle = board.focused
-      ? colors.focusStroke
-      : key === hoverKey
-        ? colors.hoverStroke
-        : board.active
-          ? colors.activeStroke
-          : colors.boardStroke
+    if (board.focused || key === hoverKey) {
+      ctx.fillStyle = board.player === Player.W ? colors.boardHighlightWhiteFill : colors.boardHighlightBlackFill
+      fillCanvasRect(ctx, rect)
+    }
+
+    ctx.lineWidth = board.active || board.focused ? 2 : 1
+    ctx.strokeStyle = board.active ? colors.activeStroke : board.focused ? colors.focusStroke : colors.boardStroke
     strokeCanvasRect(ctx, rect)
   }
 }
@@ -298,17 +297,29 @@ function getMinimapColors(element: HTMLElement) {
   const style = getComputedStyle(element)
   const participant = getCssColor(style, '--record-participant-color', 'rgba(132, 93, 156, 1)')
   const active = getCssColor(style, '--game-status-color', participant)
+  const focus = getCssColor(
+    style,
+    '--button-hover-border-color',
+    Color4.toRgbaString(ButtonColors.GreenWhite.border),
+  )
   return {
     activeStroke: active,
+    focusStroke: focus,
     boardBlackFill: Color4.toRgbaString(Colors.BoardBlack),
+    boardHighlightBlackFill: withAlpha(
+      Color4.toRgbaString(ButtonColors.GreenBlack.fill),
+      Animations.BoardFocusMaskAlpha,
+    ),
+    boardHighlightWhiteFill: withAlpha(
+      Color4.toRgbaString(ButtonColors.GreenWhite.fill),
+      Animations.BoardFocusMaskAlpha,
+    ),
     boardWhiteFill: Color4.toRgbaString(Colors.BoardWhite),
     boardStroke: withAlpha(getCssColor(style, '--button-border-color', 'rgba(39, 39, 39, 1)'), 0.6),
-    focusStroke: participant,
     gridBlackFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.36),
     gridWhiteFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.36),
-    hoverStroke: getCssColor(style, '--button-hover-border-color', 'rgba(152, 180, 149, 1)'),
     mandatoryFill: withAlpha(active, 0.18),
-    viewportStroke: participant,
+    viewportStroke: focus,
   }
 }
 
