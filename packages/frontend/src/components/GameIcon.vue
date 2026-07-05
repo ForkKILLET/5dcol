@@ -123,48 +123,25 @@ defineProps<{
     </template>
     <template v-else-if="name === 'minimap'">
       <rect
-        x="4.5"
-        y="5.5"
-        width="15"
-        height="13"
+        x="4"
+        y="6"
+        width="16"
+        height="12"
         rx="1.5"
       />
       <rect
-        x="7"
-        y="8"
-        width="3"
-        height="2.4"
-        rx=".5"
-      />
-      <rect
-        x="13"
-        y="8.2"
-        width="4"
-        height="3"
-        rx=".5"
-      />
-      <rect
-        x="8.5"
-        y="13.4"
-        width="4"
-        height="2.6"
+        x="12.5"
+        y="10"
+        width="4.5"
+        height="4"
         rx=".5"
       />
     </template>
     <template v-else-if="name === 'axis-view'">
-      <rect
-        x="5"
-        y="5"
-        width="14"
-        height="14"
-        rx="1.2"
-      />
-      <path d="M5 9h14" />
-      <path d="M5 13h14" />
-      <path d="M9 5v14" />
-      <path d="M13 5v14" />
-      <path d="M7 17h10" />
-      <path d="M17 7v10" />
+      <path d="M5 17h14" />
+      <path d="M15 13l4 4-4 4" />
+      <path d="M7 19V5" />
+      <path d="M3 9l4-4 4 4" />
     </template>
     <template v-else-if="name === 'members'">
       <circle
