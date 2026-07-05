@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { GamePanelGroup, GamePanelGroupResizeEdge, GamePanelId, GamePanelSide, GamePanelStretch } from '@/composables/panelLayout'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
@@ -44,6 +44,60 @@ const groupStyle = computed(() => ({
   '--game-side-panel-group-top': `${props.top * 100}%`,
   '--game-side-panel-group-width': `${props.width}px`,
 }))
+const tabStripElement = ref<HTMLElement | null>(null)
+const tabStripOverflow = ref({
+  end: false,
+  start: false,
+})
+
+let tabStripResizeObserver: ResizeObserver | null = null
+let tabStripSmoothScrollLeft: number | null = null
+
+function updateTabStripOverflow() {
+  const element = tabStripElement.value
+  if (! element) {
+    tabStripOverflow.value = { end: false, start: false }
+    return
+  }
+  const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth)
+  const scrollLeft = Math.max(0, Math.min(maxScrollLeft, element.scrollLeft))
+  if (tabStripSmoothScrollLeft !== null && Math.abs(scrollLeft - tabStripSmoothScrollLeft) <= 1) {
+    tabStripSmoothScrollLeft = null
+  }
+  tabStripOverflow.value = {
+    end: scrollLeft < maxScrollLeft - 1,
+    start: scrollLeft > 1,
+  }
+}
+
+function getWheelDeltaPx(event: WheelEvent, element: HTMLElement): number {
+  const rawDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+    ? event.deltaX
+    : event.deltaY
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return rawDelta * 16
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return rawDelta * element.clientWidth
+  return rawDelta
+}
+
+function scrollTabStrip(event: WheelEvent) {
+  const element = tabStripElement.value
+  if (! element) return
+  const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth)
+  if (maxScrollLeft <= 0) return
+
+  event.preventDefault()
+  event.stopPropagation()
+  const scrollLeft = Math.max(0, Math.min(maxScrollLeft, element.scrollLeft))
+  const startScrollLeft = tabStripSmoothScrollLeft ?? scrollLeft
+  const nextScrollLeft = Math.max(0, Math.min(maxScrollLeft, startScrollLeft + getWheelDeltaPx(event, element)))
+  if (nextScrollLeft === startScrollLeft) return
+  tabStripSmoothScrollLeft = nextScrollLeft
+  element.scrollTo({
+    behavior: 'smooth',
+    left: nextScrollLeft,
+  })
+  updateTabStripOverflow()
+}
 
 function isTabDragging(panelId: GamePanelId): boolean {
   return props.draggingPanelId === panelId
@@ -56,6 +110,24 @@ function isTabDropBefore(index: number): boolean {
 function isTabDropAfter(index: number): boolean {
   return props.dropTarget?.kind === 'tab' && props.dropTarget.index === index + 1 && index === props.tabs.length - 1
 }
+
+onMounted(() => {
+  tabStripResizeObserver = new ResizeObserver(updateTabStripOverflow)
+  if (tabStripElement.value) {
+    tabStripResizeObserver.observe(tabStripElement.value)
+  }
+  updateTabStripOverflow()
+})
+
+onBeforeUnmount(() => {
+  tabStripResizeObserver?.disconnect()
+  tabStripResizeObserver = null
+})
+
+watch(
+  () => [props.group.activePanelId, props.tabs.length, props.width],
+  () => nextTick(updateTabStripOverflow),
+)
 </script>
 
 <template>
@@ -74,28 +146,41 @@ function isTabDropAfter(index: number): boolean {
   >
     <div
       class="game-side-panel-tabs"
-      data-panel-tabs="true"
       :data-panel-group-id="group.id"
     >
-      <GameTab
-        v-for="(tab, index) in tabs"
-        :key="tab.id"
-        class="game-side-panel-tab"
+      <div
+        ref="tabStripElement"
+        class="game-side-panel-tab-strip"
         :class="{
-          'game-side-panel-tab--dragging': isTabDragging(tab.id),
-          'game-side-panel-tab--drop-after': isTabDropAfter(index),
-          'game-side-panel-tab--drop-before': isTabDropBefore(index),
+          'game-side-panel-tab-strip--overflow-end': tabStripOverflow.end,
+          'game-side-panel-tab-strip--overflow-start': tabStripOverflow.start,
         }"
+        data-panel-tabs="true"
         :data-panel-group-id="group.id"
-        :data-panel-tab-id="tab.id"
-        :data-panel-tab-index="index"
-        :pressed="group.activePanelId === tab.id"
-        @click="emit('selectPanel', group.id, tab.id)"
-        @pointerdown="emit('tabPointerDown', { groupId: group.id, panelId: tab.id, event: $event })"
+        @scroll.passive="updateTabStripOverflow"
+        @wheel="scrollTabStrip"
       >
-        <GameIcon :name="tab.icon" />
-        <span>{{ tab.label }}</span>
-      </GameTab>
+        <GameTab
+          v-for="(tab, index) in tabs"
+          :key="tab.id"
+          class="game-side-panel-tab"
+          :class="{
+            'game-side-panel-tab--dragging': isTabDragging(tab.id),
+            'game-side-panel-tab--drop-after': isTabDropAfter(index),
+            'game-side-panel-tab--drop-before': isTabDropBefore(index),
+          }"
+          :data-panel-group-id="group.id"
+          :data-panel-tab-id="tab.id"
+          :data-panel-tab-index="index"
+          :pressed="group.activePanelId === tab.id"
+          :title="tab.label"
+          @click="emit('selectPanel', group.id, tab.id)"
+          @pointerdown="emit('tabPointerDown', { groupId: group.id, panelId: tab.id, event: $event })"
+        >
+          <GameIcon :name="tab.icon" />
+          <span>{{ tab.label }}</span>
+        </GameTab>
+      </div>
       <div class="game-side-panel-tab-actions">
         <GameButton
           size="tiny"
@@ -147,6 +232,7 @@ function isTabDropAfter(index: number): boolean {
   --game-side-panel-resize-stretch-hint-width: 16px;
 
   position: absolute;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   height: var(--game-side-panel-group-height);
@@ -172,6 +258,72 @@ function isTabDropAfter(index: number): boolean {
   gap: calc(var(--button-content-gap) * 0.75);
   min-width: 0;
   padding: 0 0 calc(var(--button-content-gap) * 0.6);
+}
+
+.game-side-panel-tab-strip {
+  --game-side-panel-tab-fade-size: 18px;
+
+  display: flex;
+  flex: 1 1 auto;
+  gap: calc(var(--button-content-gap) * 0.75);
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 0 var(--small-button-shadow-offset) var(--small-button-shadow-offset) 0;
+}
+
+.game-side-panel-tab-strip--overflow-start {
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      black var(--game-side-panel-tab-fade-size)
+    );
+  mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      black var(--game-side-panel-tab-fade-size)
+    );
+}
+
+.game-side-panel-tab-strip--overflow-end {
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      black calc(100% - var(--game-side-panel-tab-fade-size)),
+      transparent
+    );
+  mask-image:
+    linear-gradient(
+      to right,
+      black calc(100% - var(--game-side-panel-tab-fade-size)),
+      transparent
+    );
+}
+
+.game-side-panel-tab-strip--overflow-start.game-side-panel-tab-strip--overflow-end {
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      black var(--game-side-panel-tab-fade-size),
+      black calc(100% - var(--game-side-panel-tab-fade-size)),
+      transparent
+    );
+  mask-image:
+    linear-gradient(
+      to right,
+      transparent,
+      black var(--game-side-panel-tab-fade-size),
+      black calc(100% - var(--game-side-panel-tab-fade-size)),
+      transparent
+    );
+}
+
+.game-side-panel-tab-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .game-side-panel-tab {
@@ -225,6 +377,7 @@ function isTabDropAfter(index: number): boolean {
 
 .game-side-panel-tab-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: calc(var(--button-content-gap) * 0.5);
   margin-left: auto;
@@ -234,6 +387,25 @@ function isTabDropAfter(index: number): boolean {
 .game-side-panel-tab-actions :deep(.game-button) {
   width: var(--button-tiny-height);
   min-width: var(--button-tiny-height);
+}
+
+@container (max-width: 420px) {
+  .game-side-panel-tab:not(.is-pressed) {
+    width: 40px;
+    min-width: 40px;
+    gap: 0;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .game-side-panel-tab:not(.is-pressed) span {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 }
 
 .game-side-panel-group-content {
