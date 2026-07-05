@@ -1,6 +1,7 @@
 import { computed, type Ref } from 'vue'
 import { z } from 'zod'
-import { FiveDPGN, Multiverse } from '@5dcol/core'
+import { Multiverse } from '@5dcol/core'
+import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import {
   RecordCursorSchema,
   StudyDocumentSchema,

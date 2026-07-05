@@ -11,6 +11,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(dirname, 'src'),
+      '@5dcol/core/fiveDPGN': path.resolve(dirname, '../core/src/fiveDPGN.ts'),
       '@5dcol/core': path.resolve(dirname, '../core/src'),
       '@5dcol/shared': path.resolve(dirname, '../shared/src'),
       '@5dcol/shared/protocol': path.resolve(dirname, '../shared/src/protocol.ts'),

@@ -1,4 +1,5 @@
-import { Action, FiveDPGN, type Coord, type Multiverse } from '@5dcol/core'
+import { Action, type Coord, type Multiverse } from '@5dcol/core'
+import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import {
   StudyDocumentSchema,
   StoredRecordAnnotationSchema,

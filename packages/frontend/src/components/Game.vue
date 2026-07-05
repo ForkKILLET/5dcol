@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, useTemplateRef, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
-import { FiveDPGN, Player } from '@5dcol/core'
+import { Player } from '@5dcol/core'
+import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import type { Action } from '@5dcol/core'
 import {
   type ChatMessage,

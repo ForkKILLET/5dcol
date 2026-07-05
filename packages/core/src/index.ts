@@ -2,12 +2,12 @@ import { create } from 'mutative'
 
 // Constants
 
-export const enum Player {
+export enum Player {
   W = 0,
   B = 1,
 }
 
-export const enum Piece {
+export enum Piece {
   E   = 0x00,
 
   PW  = 0x01,
@@ -16,6 +16,12 @@ export const enum Piece {
   BW  = 0x04,
   QW  = 0x05,
   KW  = 0x06,
+  UW  = 0x07,
+  DW  = 0x08,
+  SW  = 0x09,
+  WW  = 0x0a,
+  CW  = 0x0b,
+  YW  = 0x0c,
   
   PB  = 0x10,
   RB  = 0x12,
@@ -23,6 +29,12 @@ export const enum Piece {
   BB  = 0x14,
   QB  = 0x15,
   KB  = 0x16,
+  UB  = 0x17,
+  DB  = 0x18,
+  SB  = 0x19,
+  WB  = 0x1a,
+  CB  = 0x1b,
+  YB  = 0x1c,
 }
 
 // Hierarchy
@@ -357,11 +369,19 @@ export namespace Pieces {
 
   export const isRoyal = (piece: Piece): boolean => (
     piece === Piece.KW || piece === Piece.KB
+    || piece === Piece.YW || piece === Piece.YB
+  )
+
+  export const isPawnlike = (piece: Piece): boolean => (
+    piece === Piece.PW || piece === Piece.PB
+    || piece === Piece.WW || piece === Piece.WB
   )
 
   export const promotePawn = (piece: Piece, to: CoordSpacelike): Piece => {
     if (piece === Piece.PW && to.y === 0) return Piece.QW
     if (piece === Piece.PB && to.y === 7) return Piece.QB
+    if (piece === Piece.WW && to.y === 0) return Piece.QW
+    if (piece === Piece.WB && to.y === 7) return Piece.QB
     return piece
   }
 }
@@ -525,57 +545,74 @@ export namespace Board {
     const addStep = (dx: number, dy: number) => {
       addTarget(targets, board, player, { x: from.x + dx, y: from.y + dy })
     }
+    const addPawnTargets = (
+      direction: number,
+      startRank: number,
+      opponent: Player,
+    ) => {
+      const forward = { x: from.x, y: from.y + direction }
+      if (Coord.isInBoard(forward) && Board.getPiece(forward, board) === Piece.E) {
+        targets.push(forward)
+        const doubleForward = { x: from.x, y: from.y + direction * 2 }
+        if (
+          from.y === startRank
+          && Coord.isInBoard(doubleForward)
+          && Board.getPiece(doubleForward, board) === Piece.E
+        ) {
+          targets.push(doubleForward)
+        }
+      }
+      for (const dx of [-1, 1]) {
+        const target = { x: from.x + dx, y: from.y + direction }
+        if (! Coord.isInBoard(target)) continue
+        if (Pieces.getPlayer(Board.getPiece(target, board)) === opponent) targets.push(target)
+      }
+      addEnPassantTarget(targets, board, from, player, context)
+    }
+    const addBrawnCaptureTargets = () => {
+      for (const [dx, dy] of [
+        [1, 1], [1, -1], [-1, 1], [-1, -1],
+      ] as const) {
+        const target = { x: from.x + dx, y: from.y + dy }
+        if (! Coord.isInBoard(target)) continue
+        if (Pieces.getPlayer(Board.getPiece(target, board)) === Players.opponent(player)) {
+          if (! targets.some(existing => Coord.isSameSpace(existing, target))) targets.push(target)
+        }
+      }
+    }
 
     switch (piece) {
-      case Piece.PW: {
-        const forward = { x: from.x, y: from.y - 1 }
-        if (Coord.isInBoard(forward) && Board.getPiece(forward, board) === Piece.E) {
-          targets.push(forward)
-          const doubleForward = { x: from.x, y: from.y - 2 }
-          if (
-            from.y === 6
-            && Coord.isInBoard(doubleForward)
-            && Board.getPiece(doubleForward, board) === Piece.E
-          ) {
-            targets.push(doubleForward)
-          }
-        }
-        for (const dx of [-1, 1]) {
-          const target = { x: from.x + dx, y: from.y - 1 }
-          if (! Coord.isInBoard(target)) continue
-          if (Pieces.getPlayer(Board.getPiece(target, board)) === Player.B) targets.push(target)
-        }
-        addEnPassantTarget(targets, board, from, player, context)
+      case Piece.WW:
+        addBrawnCaptureTargets()
+        addPawnTargets(-1, 6, Player.B)
         break
-      }
-      case Piece.PB: {
-        const forward = { x: from.x, y: from.y + 1 }
-        if (Coord.isInBoard(forward) && Board.getPiece(forward, board) === Piece.E) {
-          targets.push(forward)
-          const doubleForward = { x: from.x, y: from.y + 2 }
-          if (
-            from.y === 1
-            && Coord.isInBoard(doubleForward)
-            && Board.getPiece(doubleForward, board) === Piece.E
-          ) {
-            targets.push(doubleForward)
-          }
-        }
-        for (const dx of [-1, 1]) {
-          const target = { x: from.x + dx, y: from.y + 1 }
-          if (! Coord.isInBoard(target)) continue
-          if (Pieces.getPlayer(Board.getPiece(target, board)) === Player.W) targets.push(target)
-        }
-        addEnPassantTarget(targets, board, from, player, context)
+      case Piece.WB:
+        addBrawnCaptureTargets()
+        addPawnTargets(1, 1, Player.W)
         break
-      }
+      case Piece.PW:
+        addPawnTargets(-1, 6, Player.B)
+        break
+      case Piece.PB:
+        addPawnTargets(1, 1, Player.W)
+        break
       case Piece.RW:
       case Piece.RB:
+      case Piece.SW:
+      case Piece.SB:
         addSlidingTargets(targets, board, player, from, [
           { x: 1, y: 0 },
           { x: -1, y: 0 },
           { x: 0, y: 1 },
           { x: 0, y: -1 },
+        ])
+        if (piece === Piece.RW || piece === Piece.RB) break
+        // Princess also moves diagonally.
+        addSlidingTargets(targets, board, player, from, [
+          { x: 1, y: 1 },
+          { x: 1, y: -1 },
+          { x: -1, y: 1 },
+          { x: -1, y: -1 },
         ])
         break
       case Piece.NW:
@@ -596,6 +633,8 @@ export namespace Board {
         break
       case Piece.QW:
       case Piece.QB:
+      case Piece.YW:
+      case Piece.YB:
         addSlidingTargets(targets, board, player, from, [
           { x: 1, y: 0 },
           { x: -1, y: 0 },
@@ -609,11 +648,13 @@ export namespace Board {
         break
       case Piece.KW:
       case Piece.KB:
+      case Piece.CW:
+      case Piece.CB:
         for (const [dx, dy] of [
           [1, 0], [-1, 0], [0, 1], [0, -1],
           [1, 1], [1, -1], [-1, 1], [-1, -1],
         ] as const) addStep(dx, dy)
-        addCastlingTargets(targets, board, piece)
+        if (piece === Piece.KW || piece === Piece.KB) addCastlingTargets(targets, board, piece)
         break
     }
 
@@ -630,12 +671,16 @@ export namespace Board {
     const attackerBishop = attacker === Player.W ? Piece.BW : Piece.BB
     const attackerRook = attacker === Player.W ? Piece.RW : Piece.RB
     const attackerQueen = attacker === Player.W ? Piece.QW : Piece.QB
+    const attackerPrincess = attacker === Player.W ? Piece.SW : Piece.SB
+    const attackerBrawn = attacker === Player.W ? Piece.WW : Piece.WB
+    const attackerCommonKing = attacker === Player.W ? Piece.CW : Piece.CB
+    const attackerRoyalQueen = attacker === Player.W ? Piece.YW : Piece.YB
     const attackerKing = attacker === Player.W ? Piece.KW : Piece.KB
 
     const pawnY = square.y - getPawnDirection(attacker)
     for (const dx of [-1, 1]) {
       const pawn = { x: square.x + dx, y: pawnY }
-      if (Coord.isInBoard(pawn) && Board.getPiece(pawn, board) === attackerPawn) return true
+      if (Coord.isInBoard(pawn) && [attackerPawn, attackerBrawn].includes(Board.getPiece(pawn, board))) return true
     }
 
     for (const [dx, dy] of [
@@ -651,7 +696,14 @@ export namespace Board {
       [1, 1], [1, -1], [-1, 1], [-1, -1],
     ] as const) {
       const king = { x: square.x + dx, y: square.y + dy }
-      if (Coord.isInBoard(king) && Board.getPiece(king, board) === attackerKing) return true
+      if (Coord.isInBoard(king) && [attackerKing, attackerCommonKing].includes(Board.getPiece(king, board))) return true
+    }
+
+    for (const [dx, dy] of [
+      [1, 1], [1, -1], [-1, 1], [-1, -1],
+    ] as const) {
+      const brawn = { x: square.x + dx, y: square.y + dy }
+      if (Coord.isInBoard(brawn) && Board.getPiece(brawn, board) === attackerBrawn) return true
     }
 
     if (hasPhysicalSlidingAttack(board, square, [
@@ -659,7 +711,7 @@ export namespace Board {
       { x: -1, y: 0 },
       { x: 0, y: 1 },
       { x: 0, y: -1 },
-    ], attackerRook, attackerQueen)) {
+    ], [attackerRook, attackerQueen, attackerPrincess, attackerRoyalQueen])) {
       return true
     }
 
@@ -668,18 +720,18 @@ export namespace Board {
       { x: 1, y: -1 },
       { x: -1, y: 1 },
       { x: -1, y: -1 },
-    ], attackerBishop, attackerQueen)
+    ], [attackerBishop, attackerQueen, attackerPrincess, attackerRoyalQueen])
   }
 
   export const hasPhysicalCheck = (
     board: Board,
     player: Player,
   ): boolean => {
-    const king = player === Player.W ? Piece.KW : Piece.KB
     const attacker = Players.opponent(player)
 
     for (const [x, y] of Coord.spacelikes()) {
-      if (Board.getPiece({ x, y }, board) !== king) continue
+      const piece = Board.getPiece({ x, y }, board)
+      if (Pieces.getPlayer(piece) !== player || ! Pieces.isRoyal(piece)) continue
       if (Board.isSquareUnderAttack(board, { x, y }, attacker)) return true
     }
 
@@ -690,8 +742,7 @@ export namespace Board {
     board: Board,
     square: CoordSpacelike,
     directions: CoordSpacelike[],
-    slider: Piece,
-    queen: Piece,
+    attackers: readonly Piece[],
   ): boolean => {
     for (const direction of directions) {
       for (
@@ -701,7 +752,7 @@ export namespace Board {
       ) {
         const piece = Board.getPiece(current, board)
         if (piece === Piece.E) continue
-        if (piece === slider || piece === queen) return true
+        if (attackers.includes(piece)) return true
         break
       }
     }
@@ -724,8 +775,8 @@ export namespace Board {
       if (! Coord.isInBoard(capturedPos)) continue
 
       const capturedPawn = Board.getPiece(capturedPos, board)
-      if (player === Player.W && capturedPawn !== Piece.PB) continue
-      if (player === Player.B && capturedPawn !== Piece.PW) continue
+      if (Pieces.getPlayer(capturedPawn) !== Players.opponent(player)) continue
+      if (! Pieces.isPawnlike(capturedPawn)) continue
 
       const capturedFrom = {
         x: capturedPos.x,
@@ -897,6 +948,8 @@ export namespace Multiverse {
     switch (piece) {
       case Piece.KW:
       case Piece.KB:
+      case Piece.CW:
+      case Piece.CB:
         addKing5DTargets(targets, multiverse, from, player)
         break
       case Piece.RW:
@@ -908,8 +961,25 @@ export namespace Multiverse {
         addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_DIAGONAL_DIRECTIONS)
         addCompoundSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS, XY_ORTHOGONAL_DIRECTIONS)
         break
+      case Piece.UW:
+      case Piece.UB:
+        addCompoundSlidingTargets(targets, multiverse, from, player, TL_DIAGONAL_DIRECTIONS, XY_ORTHOGONAL_DIRECTIONS)
+        addCompoundSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS, XY_DIAGONAL_DIRECTIONS)
+        break
+      case Piece.DW:
+      case Piece.DB:
+        addCompoundSlidingTargets(targets, multiverse, from, player, TL_DIAGONAL_DIRECTIONS, XY_DIAGONAL_DIRECTIONS)
+        break
+      case Piece.SW:
+      case Piece.SB:
+        addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS)
+        addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_DIAGONAL_DIRECTIONS)
+        addCompoundSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS, XY_ORTHOGONAL_DIRECTIONS)
+        break
       case Piece.QW:
       case Piece.QB:
+      case Piece.YW:
+      case Piece.YB:
         addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_ORTHOGONAL_DIRECTIONS)
         addPureTimelineSlidingTargets(targets, multiverse, from, player, TL_DIAGONAL_DIRECTIONS)
         addCompoundSlidingTargets(targets, multiverse, from, player, TL_BOTH_DIRECTIONS, XY_BOTH_DIRECTIONS)
@@ -920,6 +990,11 @@ export namespace Multiverse {
         break
       case Piece.PW:
       case Piece.PB:
+        addPawn5DTargets(targets, multiverse, from, player)
+        break
+      case Piece.WW:
+      case Piece.WB:
+        addBrawn5DTargets(targets, multiverse, from, player)
         addPawn5DTargets(targets, multiverse, from, player)
         break
     }
@@ -1139,6 +1214,28 @@ export namespace Multiverse {
     }
   }
 
+  const addBrawn5DTargets = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+  ): void => {
+    for (const tl of TL_DIAGONAL_DIRECTIONS) {
+      addCaptureStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: tl.t, l: tl.l })
+    }
+
+    for (const tl of TL_ORTHOGONAL_DIRECTIONS) {
+      for (const xy of XY_ORTHOGONAL_DIRECTIONS) {
+        addCaptureStepTarget(targets, multiverse, from, player, {
+          x: xy.x,
+          y: xy.y,
+          t: tl.t,
+          l: tl.l,
+        })
+      }
+    }
+  }
+
   const addPureTimelineSlidingTargets = (
     targets: Coord[],
     multiverse: Multiverse,
@@ -1179,6 +1276,31 @@ export namespace Multiverse {
           if (! canContinue) break
         }
       }
+    }
+  }
+
+  const addCaptureStepTarget = (
+    targets: Coord[],
+    multiverse: Multiverse,
+    from: Coord,
+    player: Player,
+    delta: Coord4Delta,
+  ): void => {
+    const target = {
+      x: from.x + delta.x,
+      y: from.y + delta.y,
+      t: from.t + delta.t,
+      l: from.l + delta.l,
+    }
+    if (! Coord.isInBoard(target)) return
+
+    const board = Multiverse.getBoard(multiverse, target, player)
+    if (! board) return
+
+    if (Pieces.getPlayer(Board.getPiece(target, board)) !== Players.opponent(player)) return
+
+    if (! targets.some(existing => Coord.isSameBoard(existing, target) && Coord.isSameSpace(existing, target))) {
+      targets.push(target)
     }
   }
 
@@ -1321,14 +1443,14 @@ export namespace Multiverse {
     from: CoordSpacelike,
     to: CoordSpacelike,
   ): void => {
-    if (piece !== Piece.PW && piece !== Piece.PB) return
+    if (! Pieces.isPawnlike(piece)) return
     if (Math.abs(to.x - from.x) !== 1) return
     if (Board.getPiece(to, board) !== Piece.E) return
 
     const capturedPos = { x: to.x, y: from.y }
     const capturedPiece = Board.getPiece(capturedPos, board)
-    if (piece === Piece.PW && capturedPiece !== Piece.PB) return
-    if (piece === Piece.PB && capturedPiece !== Piece.PW) return
+    if (Pieces.getPlayer(capturedPiece) !== Players.opponent(Pieces.getPlayer(piece)!)) return
+    if (! Pieces.isPawnlike(capturedPiece)) return
     Board.setPiece(capturedPos, board, Piece.E)
   }
 
@@ -2014,14 +2136,14 @@ const applyPhysicalEnPassantCapture = (
   from: CoordSpacelike,
   to: CoordSpacelike,
 ): void => {
-  if (piece !== Piece.PW && piece !== Piece.PB) return
+  if (! Pieces.isPawnlike(piece)) return
   if (Math.abs(to.x - from.x) !== 1) return
   if (Board.getPiece(to, board) !== Piece.E) return
 
   const capturedPos = { x: to.x, y: from.y }
   const capturedPiece = Board.getPiece(capturedPos, board)
-  if (piece === Piece.PW && capturedPiece !== Piece.PB) return
-  if (piece === Piece.PB && capturedPiece !== Piece.PW) return
+  if (Pieces.getPlayer(capturedPiece) !== Players.opponent(Pieces.getPlayer(piece)!)) return
+  if (! Pieces.isPawnlike(capturedPiece)) return
   Board.setPiece(capturedPos, board, Piece.E)
 }
 
@@ -2086,7 +2208,11 @@ const getMovePath = (
 const isSlidingPiece = (piece: Piece): boolean => (
   piece === Piece.RW || piece === Piece.RB
   || piece === Piece.BW || piece === Piece.BB
+  || piece === Piece.UW || piece === Piece.UB
+  || piece === Piece.DW || piece === Piece.DB
+  || piece === Piece.SW || piece === Piece.SB
   || piece === Piece.QW || piece === Piece.QB
+  || piece === Piece.YW || piece === Piece.YB
 )
 
 const hasSlidingPieceWithType = (
@@ -2097,9 +2223,12 @@ const hasSlidingPieceWithType = (
 ): boolean => {
   const piece = Board.getPiece(square, board)
   if (Pieces.getPlayer(piece) !== player) return false
-  if (piece === Piece.QW || piece === Piece.QB) return slidingType >= 1 && slidingType <= 4
+  if (piece === Piece.QW || piece === Piece.QB || piece === Piece.YW || piece === Piece.YB) return slidingType >= 1 && slidingType <= 4
   if (piece === Piece.RW || piece === Piece.RB) return slidingType === 1
   if (piece === Piece.BW || piece === Piece.BB) return slidingType === 2
+  if (piece === Piece.UW || piece === Piece.UB) return slidingType === 3
+  if (piece === Piece.DW || piece === Piece.DB) return slidingType === 4
+  if (piece === Piece.SW || piece === Piece.SB) return slidingType === 1 || slidingType === 2
   return false
 }
 
@@ -2566,5 +2695,3 @@ export namespace GameState {
 
   const formatCoord = ({ l, t, x, y }: Coord): string => `(${l}T${t})${String.fromCharCode(97 + x)}${8 - y}`
 }
-
-export * as FiveDPGN from './fiveDPGN.js'

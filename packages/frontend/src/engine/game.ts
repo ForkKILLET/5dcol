@@ -1,4 +1,5 @@
-import { Action, Board, Player, Players as CorePlayers, Coord, FiveDPGN, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
+import { Action, Board, Player, Players as CorePlayers, Coord, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
+import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import type { StudyCommand, StudyDocument, StudyPatch, StudyPosition } from '@5dcol/shared/protocol'
 import { Disposable, Effect, Empty } from '@/utils'
 import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@engine/basic'

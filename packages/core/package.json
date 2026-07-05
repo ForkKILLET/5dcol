@@ -8,6 +8,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./fiveDPGN": {
+      "types": "./dist/fiveDPGN.d.ts",
+      "import": "./dist/fiveDPGN.js",
+      "require": "./dist/fiveDPGN.cjs"
     }
   },
   "main": "./dist/index.cjs",

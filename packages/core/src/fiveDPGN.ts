@@ -28,17 +28,29 @@ const STANDARD_NAG_GLYPHS = new Map<number, string>([
 const STANDARD_GLYPH_NAGS = new Map([...STANDARD_NAG_GLYPHS.entries()].map(([nag, glyph]) => [glyph, nag]))
 const CUSTOM_GLYPH_NAG_START = 140
 const RESULT_SYMBOLS = ['1-0', '0-1', '1/2-1/2', '*']
-const PIECE_SYMBOLS: Partial<Record<number, string>> = {
-  [0x02]: 'R',
-  [0x03]: 'N',
-  [0x04]: 'B',
-  [0x05]: 'Q',
-  [0x06]: 'K',
-  [0x12]: 'R',
-  [0x13]: 'N',
-  [0x14]: 'B',
-  [0x15]: 'Q',
-  [0x16]: 'K',
+const PIECE_SYMBOLS: Partial<Record<Piece, string>> = {
+  [Piece.RW]: 'R',
+  [Piece.NW]: 'N',
+  [Piece.BW]: 'B',
+  [Piece.QW]: 'Q',
+  [Piece.KW]: 'K',
+  [Piece.UW]: 'U',
+  [Piece.DW]: 'D',
+  [Piece.SW]: 'S',
+  [Piece.WW]: 'W',
+  [Piece.CW]: 'C',
+  [Piece.YW]: 'Y',
+  [Piece.RB]: 'R',
+  [Piece.NB]: 'N',
+  [Piece.BB]: 'B',
+  [Piece.QB]: 'Q',
+  [Piece.KB]: 'K',
+  [Piece.UB]: 'U',
+  [Piece.DB]: 'D',
+  [Piece.SB]: 'S',
+  [Piece.WB]: 'W',
+  [Piece.CB]: 'C',
+  [Piece.YB]: 'Y',
 }
 
 export interface ExportOptions {
@@ -1448,6 +1460,24 @@ const getPieceName = (piece: Piece): string | null => {
     case Piece.KW:
     case Piece.KB:
       return 'K'
+    case Piece.UW:
+    case Piece.UB:
+      return 'U'
+    case Piece.DW:
+    case Piece.DB:
+      return 'D'
+    case Piece.SW:
+    case Piece.SB:
+      return 'S'
+    case Piece.WW:
+    case Piece.WB:
+      return 'W'
+    case Piece.CW:
+    case Piece.CB:
+      return 'C'
+    case Piece.YW:
+    case Piece.YB:
+      return 'Y'
     default:
       return null
   }
@@ -1622,12 +1652,24 @@ const fenCharToPiece = (char: string): Piece | null => {
     case 'B': return Piece.BW
     case 'Q': return Piece.QW
     case 'K': return Piece.KW
+    case 'U': return Piece.UW
+    case 'D': return Piece.DW
+    case 'S': return Piece.SW
+    case 'W': return Piece.WW
+    case 'C': return Piece.CW
+    case 'Y': return Piece.YW
     case 'p': return Piece.PB
     case 'r': return Piece.RB
     case 'n': return Piece.NB
     case 'b': return Piece.BB
     case 'q': return Piece.QB
     case 'k': return Piece.KB
+    case 'u': return Piece.UB
+    case 'd': return Piece.DB
+    case 's': return Piece.SB
+    case 'w': return Piece.WB
+    case 'c': return Piece.CB
+    case 'y': return Piece.YB
     default: return null
   }
 }
@@ -1640,12 +1682,24 @@ const pieceToFenChar = (piece: Piece): string => {
     case Piece.BW: return 'B'
     case Piece.QW: return 'Q'
     case Piece.KW: return 'K'
+    case Piece.UW: return 'U'
+    case Piece.DW: return 'D'
+    case Piece.SW: return 'S'
+    case Piece.WW: return 'W'
+    case Piece.CW: return 'C'
+    case Piece.YW: return 'Y'
     case Piece.PB: return 'p'
     case Piece.RB: return 'r'
     case Piece.NB: return 'n'
     case Piece.BB: return 'b'
     case Piece.QB: return 'q'
     case Piece.KB: return 'k'
+    case Piece.UB: return 'u'
+    case Piece.DB: return 'd'
+    case Piece.SB: return 's'
+    case Piece.WB: return 'w'
+    case Piece.CB: return 'c'
+    case Piece.YB: return 'y'
     default:
       throw new Error(`Unsupported 5DFEN piece ${piece}`)
   }
@@ -2359,12 +2413,14 @@ const isCaptureMove = (
   if (Pieces.getPlayer(targetPiece) === Players.opponent(player)) return true
 
   if (! Coord.isSameBoard(from, to)) return false
-  if (piece !== Piece.PW && piece !== Piece.PB) return false
+  if (! Pieces.isPawnlike(piece)) return false
   if (Math.abs(to.x - from.x) !== 1) return false
 
   const sourceBoard = Multiverse.getBoard(multiverse, from, player)
   if (! sourceBoard) return false
-  return Pieces.getPlayer(Board.getPiece({ x: to.x, y: from.y }, sourceBoard)) === Players.opponent(player)
+  const capturedPiece = Board.getPiece({ x: to.x, y: from.y }, sourceBoard)
+  return Pieces.getPlayer(capturedPiece) === Players.opponent(player)
+    && Pieces.isPawnlike(capturedPiece)
 }
 
 const isBranchingMove = (multiverse: Multiverse, { from, to }: Move, player: Player): boolean => {

@@ -1,6 +1,7 @@
 import { computed, type Ref } from 'vue'
 import { z } from 'zod'
-import { FiveDPGN, type Action, type Multiverse } from '@5dcol/core'
+import type { Action, Multiverse } from '@5dcol/core'
+import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type StoredGameState } from '@engine/gameState'
 import { RecordDocument } from '@engine/recordTree'
 import { readStorageJson, removeStorageValue, useStorageRef } from './storage'

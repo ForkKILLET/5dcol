@@ -1,4 +1,5 @@
-import { Coord, FiveDPGN, Player, type Action, type Move, type Multiverse } from '@5dcol/core'
+import { Coord, Player, type Action, type Move, type Multiverse } from '@5dcol/core'
+import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import { type RecordDocument, type RecordLine } from '@engine/recordTree'
 
 export interface GameRecordAction {

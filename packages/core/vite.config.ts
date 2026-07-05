@@ -6,9 +6,12 @@ const dirname = import.meta.dirname
 export default defineConfig({
   build: {
     lib: {
-      entry: path.resolve(dirname, 'src/index.ts'),
+      entry: {
+        index: path.resolve(dirname, 'src/index.ts'),
+        fiveDPGN: path.resolve(dirname, 'src/fiveDPGN.ts'),
+      },
       formats: ['es', 'cjs'],
-      fileName: (format) => (format === 'es' ? 'index.js' : 'index.cjs'),
+      fileName: (format, entryName) => (format === 'es' ? `${entryName}.js` : `${entryName}.cjs`),
     },
   },
 })
