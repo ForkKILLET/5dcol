@@ -9,9 +9,3 @@ services:
     restart: unless-stopped
     environment:
       - PORT=5161
-    networks:
-      - caddy_network
-
-networks:
-  caddy_network:
-    external: true

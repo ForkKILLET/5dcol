@@ -24,8 +24,8 @@ jobs:
 
       - name: Build
         run: |
-          pnpm i --no-frozen-lockfile
-          pnpm -r build
+          pnpm install --no-frozen-lockfile
+          pnpm -F @5dcol/frontend build
 
       - name: Deploy to GitHub Pages
         uses: crazy-max/ghaction-github-pages@v4
