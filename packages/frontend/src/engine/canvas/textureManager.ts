@@ -90,17 +90,68 @@ export namespace SVGParser {
     return { fill, stroke, strokeWidth, lineCap, lineJoin, fillRule }
   }
 
-  export const parseElement = (el: Element, style: SVGPathStyle): Path2DStyled[] => {
+  export const parseTransform = (str: string | null): DOMMatrix | undefined => {
+    if (! str) return undefined
+
+    let matched = false
+    let matrix = new DOMMatrix()
+    for (const match of str.matchAll(/([a-zA-Z]+)\(([^)]*)\)/g)) {
+      matched = true
+      const [, name, argsText] = match
+      const args = argsText.trim().split(/[\s,]+/).filter(Boolean).map(Number)
+      if (args.some(arg => Number.isNaN(arg) || ! Number.isFinite(arg))) {
+        throw Error(`invalid transform: "${str}"`)
+      }
+
+      switch (name) {
+        case 'matrix':
+          if (args.length !== 6) throw Error(`invalid matrix transform: "${str}"`)
+          matrix = matrix.multiply(new DOMMatrix(args))
+          break
+        case 'translate':
+          if (args.length < 1 || args.length > 2) throw Error(`invalid translate transform: "${str}"`)
+          matrix = matrix.multiply(new DOMMatrix().translate(args[0], args[1] ?? 0))
+          break
+        case 'scale':
+          if (args.length < 1 || args.length > 2) throw Error(`invalid scale transform: "${str}"`)
+          matrix = matrix.multiply(new DOMMatrix().scale(args[0], args[1] ?? args[0]))
+          break
+        default:
+          throw Error(`unsupported SVG transform: "${name}"`)
+      }
+    }
+
+    if (! matched) throw Error(`invalid transform: "${str}"`)
+    return matrix
+  }
+
+  const parseTransformThis = (el: Element, transform: DOMMatrix): DOMMatrix => {
+    const transformThis = parseTransform(el.getAttribute('transform'))
+    return transformThis ? transform.multiply(transformThis) : transform
+  }
+
+  const applyTransform = (path: Path2D, transform: DOMMatrix): Path2D => {
+    if (transform.isIdentity) return path
+    const transformedPath = new Path2D()
+    transformedPath.addPath(path, transform)
+    return transformedPath
+  }
+
+  export const parseElement = (
+    el: Element,
+    style: SVGPathStyle,
+    transform: DOMMatrix = new DOMMatrix(),
+  ): Path2DStyled[] => {
     switch (el.tagName) {
       case 'g':
       case 'svg':
-        return parseGroup(el, style)
+        return parseGroup(el, style, transform)
       case 'path':
-        return [parsePath(el, style)]
+        return [parsePath(el, style, transform)]
       case 'circle':
-        return [parseCircle(el, style)]
+        return [parseCircle(el, style, transform)]
       case 'ellipse':
-        return [parseEllipse(el, style)]
+        return [parseEllipse(el, style, transform)]
       default:
         if (! IGNORED_TAGS.has(el.tagName)) {
           console.warn(`Unsupported SVG element ignored: <${el.tagName}>`)
@@ -109,19 +160,29 @@ export namespace SVGParser {
     }
   }
 
-  export const parseGroup = (el: Element, style: SVGPathStyle): Path2DStyled[] => {
+  export const parseGroup = (
+    el: Element,
+    style: SVGPathStyle,
+    transform: DOMMatrix,
+  ): Path2DStyled[] => {
     const styleThis = parseStyle(el, style)
+    const transformThis = parseTransformThis(el, transform)
     return Array
       .from(el.children)
-      .flatMap(child => parseElement(child, styleThis))
+      .flatMap(child => parseElement(child, styleThis, transformThis))
   }
 
-  export const parsePath = (el: Element, style: SVGPathStyle): Path2DStyled => {
+  export const parsePath = (
+    el: Element,
+    style: SVGPathStyle,
+    transform: DOMMatrix,
+  ): Path2DStyled => {
     const dAttr = el.getAttribute('d')
     if (! dAttr) throw Error('invalid path: missing d attribute')
     const path = new Path2D(dAttr)
     const styleThis = parseStyle(el, style)
-    return { path, ...styleThis }
+    const transformThis = parseTransformThis(el, transform)
+    return { path: applyTransform(path, transformThis), ...styleThis }
   }
 
   const parseFiniteNumber = (str: string | null, name: string): number => {
@@ -130,7 +191,11 @@ export namespace SVGParser {
     return num
   }
 
-  export const parseCircle = (el: Element, style: SVGPathStyle): Path2DStyled => {
+  export const parseCircle = (
+    el: Element,
+    style: SVGPathStyle,
+    transform: DOMMatrix,
+  ): Path2DStyled => {
     const cx = parseFiniteNumber(el.getAttribute('cx'), 'cx')
     const cy = parseFiniteNumber(el.getAttribute('cy'), 'cy')
     const r = parseFiniteNumber(el.getAttribute('r'), 'r')
@@ -140,10 +205,15 @@ export namespace SVGParser {
     path.arc(cx, cy, r, 0, Math.PI * 2)
 
     const styleThis = parseStyle(el, style)
-    return { path, ...styleThis }
+    const transformThis = parseTransformThis(el, transform)
+    return { path: applyTransform(path, transformThis), ...styleThis }
   }
 
-  export const parseEllipse = (el: Element, style: SVGPathStyle): Path2DStyled => {
+  export const parseEllipse = (
+    el: Element,
+    style: SVGPathStyle,
+    transform: DOMMatrix,
+  ): Path2DStyled => {
     const cx = parseFiniteNumber(el.getAttribute('cx'), 'cx')
     const cy = parseFiniteNumber(el.getAttribute('cy'), 'cy')
     const rx = parseFiniteNumber(el.getAttribute('rx'), 'rx')
@@ -155,7 +225,8 @@ export namespace SVGParser {
     path.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
 
     const styleThis = parseStyle(el, style)
-    return { path, ...styleThis }
+    const transformThis = parseTransformThis(el, transform)
+    return { path: applyTransform(path, transformThis), ...styleThis }
   }
 }
 
