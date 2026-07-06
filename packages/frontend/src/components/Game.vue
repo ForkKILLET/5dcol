@@ -25,7 +25,7 @@ import {
 
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
-import { Game, type GameExportFormat, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveFocusTarget, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
+import { Game, type GameAxisViewFocusTarget, type GameExportFormat, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveFocusTarget, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
 import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, type GameWorkspaceState } from '@engine/gameState'
 import { Logger, type GameMessage } from '@engine/logger'
@@ -1539,13 +1539,13 @@ function closePanel(panelId: GamePanelId) {
   syncGameViewportInsets()
 }
 
-function focusMinimapBoard(board: { l: number, m: number }) {
+function focusMinimapBoard(board: { axisFocus?: GameAxisViewFocusTarget, l: number, m: number }) {
   if (! gameStarted.value) return
   playUISound()
   if (activeOnlineStudy.value && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()) {
     setOnlineStudyFollowUser(null)
   }
-  game?.focusBoard(board.l, board.m)
+  game?.focusBoard(board.l, board.m, board.axisFocus ? { axisFocus: board.axisFocus } : {})
 }
 
 function prepareRecordPanelOpen() {

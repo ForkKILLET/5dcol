@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Piece, Player } from '@5dcol/core'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Game, GameAxisViewBoardColumn, GameAxisViewMode, GameAxisViewSnapshot } from '@engine/game'
+import type { Game, GameAxisViewBoardColumn, GameAxisViewFocusTarget, GameAxisViewMode, GameAxisViewSnapshot } from '@engine/game'
 import { getAssetUrl } from '@engine/assets'
 import { Color4 } from '@engine/basic'
 import { Colors } from '@engine/constant'
@@ -21,6 +21,7 @@ interface CanvasRect {
 
 interface AxisViewHitItem {
   column: GameAxisViewBoardColumn
+  focusTarget: GameAxisViewFocusTarget
   rect: CanvasRect
 }
 
@@ -54,7 +55,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  focusBoard: [board: { l: number, m: number }]
+  focusBoard: [board: { axisFocus?: GameAxisViewFocusTarget, l: number, m: number }]
 }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -141,7 +142,7 @@ function drawSnapshot(
     const { column, sourceIndex } = visibleColumns[columnIndex]!
     visibleColumnIndexes.set(sourceIndex, columnIndex)
     const columnRect = getAxisViewColumnRect(layout, columnIndex, snapshot.rowLabels.length)
-    lastHitItems.push({ column, rect: columnRect })
+    lastHitItems.push({ column, focusTarget: snapshot.focusTarget, rect: columnRect })
 
     for (let rowIndex = 0; rowIndex < snapshot.rowLabels.length; rowIndex++) {
       const cellRect = getAxisViewCellRect(layout, columnIndex, rowIndex)
@@ -278,15 +279,8 @@ function getAxisViewRowEdge(layout: AxisViewCanvasLayout, index: number): number
 }
 
 function isAxisViewRowLight(snapshot: GameAxisViewSnapshot, rowIndex: number): boolean {
-  const rowCoord = getAxisViewRowCoord(snapshot, rowIndex)
-  return (snapshot.fixedCoord + rowCoord) % 2 === 0
-}
-
-function getAxisViewRowCoord(snapshot: GameAxisViewSnapshot, rowIndex: number): number {
-  const size = snapshot.mode === 'yt'
-    ? snapshot.boardSize.height
-    : snapshot.boardSize.width
-  return Math.max(0, size - rowIndex - 1)
+  const rowCoord = snapshot.rowCoords[rowIndex] ?? 0
+  return (snapshot.focusTarget.coord + rowCoord) % 2 === 0
 }
 
 function getAxisViewColors(element: HTMLElement) {
@@ -398,8 +392,8 @@ function getAxisViewFileLabel(file: number): string {
 }
 
 function handlePointerMove(event: PointerEvent) {
-  const column = getColumnAtEvent(event)
-  hoveredBoardKey.value = column ? getBoardKey(column) : null
+  const item = getHitItemAtEvent(event)
+  hoveredBoardKey.value = item ? getBoardKey(item.column) : null
 }
 
 function handlePointerLeave() {
@@ -407,12 +401,16 @@ function handlePointerLeave() {
 }
 
 function handleClick(event: MouseEvent) {
-  const column = getColumnAtEvent(event)
-  if (! column) return
-  emit('focusBoard', { l: column.l, m: column.m })
+  const item = getHitItemAtEvent(event)
+  if (! item) return
+  emit('focusBoard', {
+    axisFocus: item.focusTarget,
+    l: item.column.l,
+    m: item.column.m,
+  })
 }
 
-function getColumnAtEvent(event: MouseEvent | PointerEvent): GameAxisViewBoardColumn | null {
+function getHitItemAtEvent(event: MouseEvent | PointerEvent): AxisViewHitItem | null {
   const canvasElement = canvas.value
   if (! canvasElement) return null
   const rect = canvasElement.getBoundingClientRect()
@@ -421,7 +419,7 @@ function getColumnAtEvent(event: MouseEvent | PointerEvent): GameAxisViewBoardCo
 
   for (let index = lastHitItems.length - 1; index >= 0; index--) {
     const item = lastHitItems[index]!
-    if (isPointInCanvasRect(x, y, item.rect)) return item.column
+    if (isPointInCanvasRect(x, y, item.rect)) return item
   }
   return null
 }

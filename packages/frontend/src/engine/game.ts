@@ -145,6 +145,11 @@ export interface GameMinimapSnapshot {
 
 export type GameAxisViewMode = 'xt' | 'yt'
 
+export interface GameAxisViewFocusTarget {
+  coord: number
+  type: 'file' | 'rank'
+}
+
 export interface GameAxisViewBoardColumn {
   active: boolean
   focused: boolean
@@ -166,12 +171,15 @@ export interface GameAxisViewPieceCell {
 export interface GameAxisViewSnapshot {
   boardSize: BoardSize
   columns: GameAxisViewBoardColumn[]
+  focusTarget: GameAxisViewFocusTarget
   fixedCoord: number
   l: number
   maxFixedCoord: number
   mode: GameAxisViewMode
   pieces: GameAxisViewPieceCell[]
+  rowCoords: number[]
   rowLabels: string[]
+  viewPlayer: Player
 }
 
 interface PointerState {
@@ -217,6 +225,7 @@ interface ViewportMoveOptions {
   cancelMotion?: boolean
 }
 interface ViewportFocusOptions {
+  axisFocus?: GameAxisViewFocusTarget
   smooth?: boolean
 }
 interface PieceSelection {
@@ -253,6 +262,7 @@ interface MoveAnimation {
   travelHitPlayed: boolean
 }
 interface BoardFocusPulse {
+  axisFocus?: GameAxisViewFocusTarget
   l: number
   m: number
   startedAt: number
@@ -1478,6 +1488,7 @@ export class Game extends Disposable(Empty) {
     const motion = this.focusRect(this.layout.getBoardRect(l, m), options)
     this.focusedBoard = { l, m }
     this.boardFocusPulse = {
+      ...(options.axisFocus ? { axisFocus: options.axisFocus } : {}),
       l,
       m,
       startedAt: performance.now(),
@@ -1562,7 +1573,8 @@ export class Game extends Disposable(Empty) {
     const boardSize = getLineBoardSize(line)
     const maxFixedCoord = getAxisViewFixedCoordMax(mode, boardSize)
     const axis = clampBoardAxisCoord(fixedCoord, maxFixedCoord)
-    const rowCoords = getAxisViewRowCoords(mode, boardSize)
+    const fixedBoardCoord = getAxisViewFixedBoardCoord(mode, axis, boardSize, this.viewPlayer)
+    const rowCoords = getAxisViewRowCoords(mode, boardSize, this.viewPlayer)
     const columns: GameAxisViewBoardColumn[] = []
     const pieces: GameAxisViewPieceCell[] = []
 
@@ -1581,7 +1593,7 @@ export class Game extends Disposable(Empty) {
       })
 
       for (let rowIndex = 0; rowIndex < rowCoords.length; rowIndex++) {
-        const coord = getAxisViewSpacelikeCoord(mode, axis, rowCoords[rowIndex]!)
+        const coord = getAxisViewSpacelikeCoord(mode, fixedBoardCoord, rowCoords[rowIndex]!)
         const piece = Board.getPiece(coord, board)
         if (piece === Piece.E) continue
 
@@ -1601,12 +1613,18 @@ export class Game extends Disposable(Empty) {
     return {
       boardSize,
       columns,
+      focusTarget: {
+        coord: fixedBoardCoord,
+        type: mode === 'yt' ? 'file' : 'rank',
+      },
       fixedCoord: axis,
       l,
       maxFixedCoord,
       mode,
       pieces,
-      rowLabels: getAxisViewRowLabels(mode, rowCoords),
+      rowCoords,
+      rowLabels: getAxisViewRowLabels(mode, rowCoords, boardSize, this.viewPlayer),
+      viewPlayer: this.viewPlayer,
     }
   }
 
@@ -4454,16 +4472,36 @@ export class Game extends Disposable(Empty) {
     if (focusPulse <= 0) return
 
     const focusPreset = boardPlayer === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
+    const mask = this.getBoardFocusMaskRect(pos, metrics)
     this.renderer.submit({
       type: RenderItemType.Quad,
       layer: RenderLayer.MoveHighlight,
       order: -1,
-      mat: Mat3.transform(pos, metrics.contentSize),
+      mat: Mat3.transform(mask.pos, mask.size),
       color: Color4.withAlpha(
         focusPreset.fill,
         alpha * focusPulse * Animations.BoardFocusMaskAlpha,
       ),
     })
+  }
+
+  private getBoardFocusMaskRect(pos: Vec2, metrics: BoardRenderMetrics): { pos: Vec2, size: Vec2 } {
+    const axisFocus = this.boardFocusPulse?.axisFocus
+    if (! axisFocus) return { pos, size: metrics.contentSize }
+
+    if (axisFocus.type === 'file') {
+      const squarePos = this.getSquarePos(pos[0], pos[1], { x: axisFocus.coord, y: 0 }, metrics)
+      return {
+        pos: [squarePos[0], pos[1]],
+        size: [metrics.squareSize, metrics.contentSize[1]],
+      }
+    }
+
+    const squarePos = this.getSquarePos(pos[0], pos[1], { x: 0, y: axisFocus.coord }, metrics)
+    return {
+      pos: [pos[0], squarePos[1]],
+      size: [metrics.contentSize[0], metrics.squareSize],
+    }
   }
 
   private renderCheckBadge(l: number, m: number, boardPos: Vec2, alpha: number, boardContentSize?: Vec2) {
@@ -4873,15 +4911,36 @@ function getAxisViewFixedCoordMax(mode: GameAxisViewMode, { width, height }: Boa
   return Math.max(0, (mode === 'yt' ? width : height) - 1)
 }
 
-function getAxisViewRowCoords(mode: GameAxisViewMode, { width, height }: BoardSize): number[] {
-  const count = mode === 'yt' ? height : width
-  return Array.from({ length: count }, (_, index) => count - index - 1)
+function getAxisViewFixedBoardCoord(
+  mode: GameAxisViewMode,
+  displayCoord: number,
+  { width, height }: BoardSize,
+  viewPlayer: Player,
+): number {
+  if (mode === 'yt') return viewPlayer === Player.W ? displayCoord : width - displayCoord - 1
+  return viewPlayer === Player.W ? height - displayCoord - 1 : displayCoord
 }
 
-function getAxisViewRowLabels(mode: GameAxisViewMode, rowCoords: number[]): string[] {
+function getAxisViewRowCoords(
+  mode: GameAxisViewMode,
+  { width, height }: BoardSize,
+  viewPlayer: Player,
+): number[] {
+  const count = mode === 'yt' ? height : width
+  return Array.from({ length: count }, (_, index) => (
+    viewPlayer === Player.W ? index : count - index - 1
+  ))
+}
+
+function getAxisViewRowLabels(
+  mode: GameAxisViewMode,
+  rowCoords: number[],
+  { height }: BoardSize,
+  viewPlayer: Player,
+): string[] {
   return rowCoords.map(coord => (
     mode === 'yt'
-      ? `${coord + 1}`
+      ? `${viewPlayer === Player.W ? height - coord : coord + 1}`
       : AXIS_VIEW_FILE_LABELS[coord] ?? `${coord + 1}`
   ))
 }
