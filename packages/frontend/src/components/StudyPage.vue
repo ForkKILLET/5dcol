@@ -15,12 +15,11 @@ import {
 import { useLocalStudies } from '@/composables/study'
 import GameButton from './GameButton.vue'
 import GameListItem from './GameListItem.vue'
-import GameListItemMenu from './GameListItemMenu.vue'
 import GamePanel from './GamePanel.vue'
 import GameTab from './GameTab.vue'
-import GameTextInput from './GameTextInput.vue'
 import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
 import OnlineServerItem from './OnlineServerItem.vue'
+import RoomManagePanel from './RoomManagePanel.vue'
 import StudyCreatePanel from './StudyCreatePanel.vue'
 
 const props = defineProps<{
@@ -77,9 +76,8 @@ const {
 
 const sortedSummaries = computed(() => summaries.value)
 const activeTab = ref<'local' | 'online'>('local')
-const editingStudyId = ref<string | null>(null)
-const editingStudyTitle = ref('')
-const openStudyActionMenuId = ref<string | null>(null)
+const managingStudyId = ref<string | null>(null)
+const managingStudyTitle = ref('')
 const studyCreateTarget = ref<StudyCreateTarget | null>(null)
 const studyCreateName = ref('')
 const studyCreatePrivate = ref(true)
@@ -98,6 +96,11 @@ const onlineStudyCreateServer = computed(() => {
     ? studyServers.find(server => server.id === target.serverId) ?? null
     : null
 })
+const managedStudy = computed(() => (
+  managingStudyId.value === null
+    ? null
+    : sortedSummaries.value.find(study => study.id === managingStudyId.value) ?? null
+))
 const pageTitle = computed(() => {
   if (activeTab.value === 'local') return t('study.localTitle')
   return t('study.onlineTitle')
@@ -108,8 +111,7 @@ watch([
   activeTab,
 ], ([isActive, tab]) => {
   if (! isActive) {
-    cancelRenameStudy()
-    openStudyActionMenuId.value = null
+    closeStudyManagePanel({ sound: false })
     closeStudyCreatePanel({ sound: false })
     stopStudyServerRefresh()
     return
@@ -120,6 +122,7 @@ watch([
     startStudyServerRefresh()
   }
   else {
+    closeStudyManagePanel({ sound: false })
     closeStudyCreatePanel({ sound: false })
     stopStudyServerRefresh()
   }
@@ -136,8 +139,7 @@ onUnmounted(() => {
 function selectTab(tab: 'local' | 'online') {
   if (activeTab.value === tab) return
   emit('uiSound')
-  cancelRenameStudy()
-  openStudyActionMenuId.value = null
+  closeStudyManagePanel({ sound: false })
   closeStudyCreatePanel({ sound: false })
   activeTab.value = tab
 }
@@ -271,8 +273,7 @@ function openLocalStudyCreatePanel(source: StudySourceKind = 'empty') {
 
 function openStudyCreatePanel(target: StudyCreateTarget, source: StudySourceKind = 'empty') {
   emit('uiSound')
-  cancelRenameStudy()
-  openStudyActionMenuId.value = null
+  closeStudyManagePanel({ sound: false })
   studyCreateTarget.value = target
   studyCreateName.value = ''
   studyCreatePrivate.value = true
@@ -280,6 +281,20 @@ function openStudyCreatePanel(target: StudyCreateTarget, source: StudySourceKind
   studyCreateImportText.value = ''
   studyCreateImportDocument.value = null
   studyCreateImportError.value = ''
+}
+
+function openStudyManagePanel(id: string, title: string) {
+  emit('uiSound')
+  closeStudyCreatePanel({ sound: false })
+  managingStudyId.value = id
+  managingStudyTitle.value = title
+}
+
+function closeStudyManagePanel(options: { sound?: boolean } = {}) {
+  if (! managingStudyId.value) return
+  if (options.sound !== false) emit('uiSound')
+  managingStudyId.value = null
+  managingStudyTitle.value = ''
 }
 
 function closeStudyCreatePanel(options: { sound?: boolean } = {}) {
@@ -422,62 +437,38 @@ function getStudyVisibilityMeta(study: StudyRoom) {
 }
 
 function openStudy(id: string) {
-  if (editingStudyId.value) return
+  if (managingStudyId.value) return
   const study = getStudy(id)
   if (! study) return
   emit('uiSound')
-  openStudyActionMenuId.value = null
   emit('openStudy', study, { kind: 'local' })
 }
 
-function removeStudy(id: string) {
-  emit('uiSound')
-  if (editingStudyId.value === id) cancelRenameStudy()
-  openStudyActionMenuId.value = null
-  deleteStudy(id)
-  emit('deleteLocalStudy', id)
-}
-
-function beginRenameStudy(id: string, title: string) {
-  emit('uiSound')
-  openStudyActionMenuId.value = null
-  editingStudyId.value = id
-  editingStudyTitle.value = title
-}
-
-function saveRenameStudy() {
-  const id = editingStudyId.value
+function removeManagedStudy() {
+  const id = managingStudyId.value
   if (! id) return
 
   emit('uiSound')
-  renameStudy(id, editingStudyTitle.value)
-  cancelRenameStudy()
+  deleteStudy(id)
+  emit('deleteLocalStudy', id)
+  closeStudyManagePanel({ sound: false })
 }
 
-function cancelRenameStudy() {
-  editingStudyId.value = null
-  editingStudyTitle.value = ''
-}
+function saveManagedStudy() {
+  const id = managingStudyId.value
+  if (! id) return
 
-function clickCancelRenameStudy() {
   emit('uiSound')
-  cancelRenameStudy()
+  renameStudy(id, managingStudyTitle.value)
+  closeStudyManagePanel({ sound: false })
 }
 
 function close() {
   emit('uiSound')
-  openStudyActionMenuId.value = null
+  closeStudyManagePanel({ sound: false })
   closeStudyCreatePanel({ sound: false })
   stopStudyServerRefresh()
   emit('close')
-}
-
-function isStudyActionMenuOpen(id: string) {
-  return openStudyActionMenuId.value === id
-}
-
-function setStudyActionMenuOpen(id: string, open: boolean) {
-  openStudyActionMenuId.value = open ? id : null
 }
 
 function createStudyServerState(entry: OnlineServerEntry): StudyServerState {
@@ -562,7 +553,7 @@ function syncStudyServerRegistry() {
       </div>
 
       <OnlinePanelToolbar
-        v-if="activeTab === 'online' && !studyCreateTarget"
+        v-if="activeTab === 'online' && !studyCreateTarget && !managingStudyId"
         v-model:nickname="studyNickname"
         class="study-online-toolbar"
         :show-back="false"
@@ -571,7 +562,7 @@ function syncStudyServerRegistry() {
       />
 
       <div
-        v-if="activeTab === 'local' && !studyCreateTarget"
+        v-if="activeTab === 'local' && !studyCreateTarget && !managingStudyId"
         class="study-local-toolbar"
       >
         <GameButton
@@ -606,6 +597,26 @@ function syncStudyServerRegistry() {
         @back="closeStudyCreatePanel"
         @create="createStudyFromCreatePanel"
       />
+      <RoomManagePanel
+        v-else-if="activeTab === 'local' && managedStudy"
+        v-model:name="managingStudyTitle"
+        :title="t('study.manageLocalTitle')"
+        :meta="t('study.meta', {
+          actions: managedStudy.actionCount,
+          annotations: managedStudy.annotationCount,
+          date: new Date(managedStudy.updatedAt).toLocaleDateString(),
+        })"
+        :name-label="t('study.studyName')"
+        :name-placeholder="t('study.namePlaceholder')"
+        :danger-title="t('room.dangerZone')"
+        :delete-label="t('button.delete')"
+        :delete-confirm-label="t('room.confirmDelete')"
+        :back-label="t('button.back')"
+        :save-label="t('button.save')"
+        @back="closeStudyManagePanel"
+        @save="saveManagedStudy"
+        @delete="removeManagedStudy"
+      />
       <div
         v-else-if="activeTab === 'local'"
         class="study-list"
@@ -625,15 +636,7 @@ function syncStudyServerRegistry() {
         >
           <GameListItem>
             <template #title>
-              <span v-if="editingStudyId !== study.id">{{ study.title }}</span>
-              <GameTextInput
-                v-else
-                v-model="editingStudyTitle"
-                :placeholder="t('study.namePlaceholder')"
-                spellcheck="false"
-                @keydown.enter.prevent="saveRenameStudy"
-                @keydown.esc.prevent="cancelRenameStudy"
-              />
+              <span>{{ study.title }}</span>
             </template>
             <template #meta>
               <span>
@@ -645,35 +648,18 @@ function syncStudyServerRegistry() {
               </span>
             </template>
             <template #actions>
-              <template v-if="editingStudyId === study.id">
-                <GameButton
-                  size="small"
-                  @click="saveRenameStudy"
-                >
-                  <span>{{ t('button.save') }}</span>
-                </GameButton>
-                <GameButton
-                  size="small"
-                  @click="clickCancelRenameStudy"
-                >
-                  <span>{{ t('button.cancel') }}</span>
-                </GameButton>
-              </template>
-              <template v-else>
-                <GameListItemMenu
-                  :open="isStudyActionMenuOpen(study.id)"
-                  @update:open="setStudyActionMenuOpen(study.id, $event)"
-                  @ui-sound="emit('uiSound')"
-                  @rename="beginRenameStudy(study.id, study.title)"
-                  @delete="removeStudy(study.id)"
-                />
-                <GameButton
-                  size="small"
-                  @click="openStudy(study.id)"
-                >
-                  <span>{{ t('button.open') }}</span>
-                </GameButton>
-              </template>
+              <GameButton
+                size="small"
+                @click="openStudyManagePanel(study.id, study.title)"
+              >
+                <span>{{ t('button.manage') }}</span>
+              </GameButton>
+              <GameButton
+                size="small"
+                @click="openStudy(study.id)"
+              >
+                <span>{{ t('button.open') }}</span>
+              </GameButton>
             </template>
           </GameListItem>
         </GamePanel>

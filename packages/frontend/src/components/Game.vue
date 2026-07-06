@@ -644,6 +644,11 @@ function getPresetButtonStyle(
     fill: Color4.toRgbaString(disabledPreset.fill),
     text: Color4.toRgbaString(disabledPreset.text),
   }
+  const dangerColors = {
+    border: Color4.toRgbaString(ButtonColors.Red.border),
+    fill: Color4.toRgbaString(ButtonColors.Red.fill),
+    text: Color4.toRgbaString(ButtonColors.Red.text),
+  }
 
   return {
     '--button-border-color': colors.border,
@@ -658,6 +663,12 @@ function getPresetButtonStyle(
     '--button-disabled-border-color': disabledColors.border,
     '--button-disabled-fill-color': disabledColors.fill,
     '--button-disabled-text-color': disabledColors.text,
+    '--button-danger-border-color': dangerColors.border,
+    '--button-danger-fill-color': dangerColors.fill,
+    '--button-danger-text-color': dangerColors.text,
+    '--button-danger-hover-border-color': hoverColors.border,
+    '--button-danger-hover-fill-color': hoverColors.fill,
+    '--button-danger-hover-text-color': hoverColors.text,
   }
 }
 

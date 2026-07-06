@@ -6,12 +6,11 @@ import { useMatch } from '@/composables/match'
 import { useLocalVersus, type LocalVersusSummary, type VersusImportedSource } from '@/composables/localVersus'
 import GameButton from './GameButton.vue'
 import GameListItem from './GameListItem.vue'
-import GameListItemMenu from './GameListItemMenu.vue'
 import GamePanel from './GamePanel.vue'
 import GameTab from './GameTab.vue'
-import GameTextInput from './GameTextInput.vue'
 import MatchPanel from './MatchPanel.vue'
 import OnlinePanelToolbar from './OnlinePanelToolbar.vue'
+import RoomManagePanel from './RoomManagePanel.vue'
 import VersusCreatePanel from './VersusCreatePanel.vue'
 import type { VersusSourceKind } from './VersusSourcePicker.vue'
 
@@ -68,9 +67,8 @@ const {
 
 const sortedLocalGames = computed(() => localGameSummaries.value)
 const activeTab = ref<'local' | 'online'>('local')
-const editingLocalGameId = ref<string | null>(null)
-const editingLocalGameTitle = ref('')
-const openLocalGameActionMenuId = ref<string | null>(null)
+const managingLocalGameId = ref<string | null>(null)
+const managingLocalGameTitle = ref('')
 const localCreateOpen = ref(false)
 const localCreateName = ref('')
 const localCreateSource = ref<VersusSourceKind>('empty')
@@ -86,6 +84,11 @@ const pageTitle = computed(() => {
   if (activeTab.value === 'local') return t('versus.localTitle')
   return t('versus.onlineTitle')
 })
+const managedLocalGame = computed(() => (
+  managingLocalGameId.value === null
+    ? null
+    : sortedLocalGames.value.find(game => game.id === managingLocalGameId.value) ?? null
+))
 
 watch([
   () => props.active,
@@ -96,7 +99,7 @@ watch([
     matchPanelMode.value = 'servers'
     closeLocalCreatePanel({ sound: false })
     closeOnlineCreatePanel({ sound: false })
-    cancelRenameLocalGame()
+    closeLocalManagePanel({ sound: false })
     return
   }
 
@@ -118,7 +121,7 @@ onUnmounted(() => {
 function selectTab(tab: 'local' | 'online') {
   if (activeTab.value === tab) return
   emit('uiSound')
-  openLocalGameActionMenuId.value = null
+  closeLocalManagePanel({ sound: false })
   closeLocalCreatePanel({ sound: false })
   closeOnlineCreatePanel({ sound: false })
   activeTab.value = tab
@@ -129,8 +132,7 @@ function close() {
   matchPanelMode.value = 'servers'
   closeLocalCreatePanel({ sound: false })
   closeOnlineCreatePanel({ sound: false })
-  cancelRenameLocalGame()
-  openLocalGameActionMenuId.value = null
+  closeLocalManagePanel({ sound: false })
   emit('close')
 }
 
@@ -140,8 +142,7 @@ function createAndOpenLocalGame() {
 
 function openLocalCreatePanel(source: VersusSourceKind = 'empty') {
   emit('uiSound')
-  cancelRenameLocalGame()
-  openLocalGameActionMenuId.value = null
+  closeLocalManagePanel({ sound: false })
   localCreateOpen.value = true
   localCreateName.value = source === 'import' ? t('versus.imported') : t('versus.untitled')
   localCreateSource.value = source
@@ -198,53 +199,43 @@ function createOnlineRoomFromPanel(source: VersusImportedSource | null) {
 }
 
 function openLocalGame(id: string) {
-  if (editingLocalGameId.value) return
+  if (managingLocalGameId.value) return
   const game = getLocalGame(id)
   if (! game) return
   emit('uiSound')
-  openLocalGameActionMenuId.value = null
   emit('startLocalGame', game)
 }
 
-function removeLocalGame(id: string) {
+function openLocalManagePanel(id: string, title: string) {
   emit('uiSound')
-  if (editingLocalGameId.value === id) cancelRenameLocalGame()
-  openLocalGameActionMenuId.value = null
-  deleteLocalGame(id)
+  closeLocalCreatePanel({ sound: false })
+  managingLocalGameId.value = id
+  managingLocalGameTitle.value = title
 }
 
-function beginRenameLocalGame(id: string, title: string) {
-  emit('uiSound')
-  openLocalGameActionMenuId.value = null
-  editingLocalGameId.value = id
-  editingLocalGameTitle.value = title
+function closeLocalManagePanel({ sound = true }: { sound?: boolean } = {}) {
+  if (! managingLocalGameId.value) return
+  if (sound) emit('uiSound')
+  managingLocalGameId.value = null
+  managingLocalGameTitle.value = ''
 }
 
-function saveRenameLocalGame() {
-  const id = editingLocalGameId.value
+function saveLocalManagePanel() {
+  const id = managingLocalGameId.value
   if (! id) return
 
   emit('uiSound')
-  renameLocalGame(id, editingLocalGameTitle.value)
-  cancelRenameLocalGame()
+  renameLocalGame(id, managingLocalGameTitle.value)
+  closeLocalManagePanel({ sound: false })
 }
 
-function cancelRenameLocalGame() {
-  editingLocalGameId.value = null
-  editingLocalGameTitle.value = ''
-}
+function removeManagedLocalGame() {
+  const id = managingLocalGameId.value
+  if (! id) return
 
-function clickCancelRenameLocalGame() {
   emit('uiSound')
-  cancelRenameLocalGame()
-}
-
-function isLocalGameActionMenuOpen(id: string) {
-  return openLocalGameActionMenuId.value === id
-}
-
-function setLocalGameActionMenuOpen(id: string, open: boolean) {
-  openLocalGameActionMenuId.value = open ? id : null
+  deleteLocalGame(id)
+  closeLocalManagePanel({ sound: false })
 }
 </script>
 
@@ -297,7 +288,7 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
       />
 
       <div
-        v-if="activeTab === 'local' && !localCreateOpen"
+        v-if="activeTab === 'local' && !localCreateOpen && !managingLocalGameId"
         class="versus-local-toolbar"
       >
         <p>{{ t('versus.localDescription') }}</p>
@@ -310,7 +301,7 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
       </div>
 
     <div
-      v-if="activeTab === 'local' && !localCreateOpen"
+      v-if="activeTab === 'local' && !localCreateOpen && !managingLocalGameId"
       class="versus-local-list"
     >
       <GamePanel
@@ -329,15 +320,7 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
         >
           <GameListItem>
             <template #title>
-              <span v-if="editingLocalGameId !== localGame.id">{{ localGame.title }}</span>
-              <GameTextInput
-                v-else
-                v-model="editingLocalGameTitle"
-                :placeholder="t('versus.namePlaceholder')"
-                spellcheck="false"
-                @keydown.enter.prevent="saveRenameLocalGame"
-                @keydown.esc.prevent="cancelRenameLocalGame"
-              />
+              <span>{{ localGame.title }}</span>
             </template>
             <template #meta>
               <span>
@@ -349,40 +332,44 @@ function setLocalGameActionMenuOpen(id: string, open: boolean) {
               </span>
             </template>
             <template #actions>
-              <template v-if="editingLocalGameId === localGame.id">
-                <GameButton
-                  size="small"
-                  @click="saveRenameLocalGame"
-                >
-                  <span>{{ t('button.save') }}</span>
-                </GameButton>
-                <GameButton
-                  size="small"
-                  @click="clickCancelRenameLocalGame"
-                >
-                  <span>{{ t('button.cancel') }}</span>
-                </GameButton>
-              </template>
-              <template v-else>
-                <GameListItemMenu
-                  :open="isLocalGameActionMenuOpen(localGame.id)"
-                  @update:open="setLocalGameActionMenuOpen(localGame.id, $event)"
-                  @ui-sound="emit('uiSound')"
-                  @rename="beginRenameLocalGame(localGame.id, localGame.title)"
-                  @delete="removeLocalGame(localGame.id)"
-                />
-                <GameButton
-                  size="small"
-                  @click="openLocalGame(localGame.id)"
-                >
-                  <span>{{ t('button.open') }}</span>
-                </GameButton>
-              </template>
+              <GameButton
+                size="small"
+                @click="openLocalManagePanel(localGame.id, localGame.title)"
+              >
+                <span>{{ t('button.manage') }}</span>
+              </GameButton>
+              <GameButton
+                size="small"
+                @click="openLocalGame(localGame.id)"
+              >
+                <span>{{ t('button.open') }}</span>
+              </GameButton>
             </template>
           </GameListItem>
         </GamePanel>
       </template>
     </div>
+
+    <RoomManagePanel
+      v-else-if="activeTab === 'local' && managedLocalGame"
+      v-model:name="managingLocalGameTitle"
+      :title="t('versus.manageLocalTitle')"
+      :meta="t('versus.meta', {
+        actions: managedLocalGame.actionCount,
+        annotations: managedLocalGame.annotationCount,
+        date: new Date(managedLocalGame.updatedAt).toLocaleDateString(),
+      })"
+      :name-label="t('versus.gameName')"
+      :name-placeholder="t('versus.namePlaceholder')"
+      :danger-title="t('room.dangerZone')"
+      :delete-label="t('button.delete')"
+      :delete-confirm-label="t('room.confirmDelete')"
+      :back-label="t('button.back')"
+      :save-label="t('button.save')"
+      @back="closeLocalManagePanel"
+      @save="saveLocalManagePanel"
+      @delete="removeManagedLocalGame"
+    />
 
     <VersusCreatePanel
       v-else-if="activeTab === 'local'"
