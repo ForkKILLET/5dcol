@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { Piece, Player } from '@5dcol/core'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Game, GameAxisViewBoardColumn, GameAxisViewFocusTarget, GameAxisViewMode, GameAxisViewPieceCell, GameAxisViewSnapshot, GameAxisViewTargetCell } from '@engine/game'
 import { getAssetUrl } from '@engine/assets'
 import { Color4 } from '@engine/basic'
 import { Colors } from '@engine/constant'
+import type { GameAxisViewState } from '@engine/gameState'
 import { PIECE_TO_TEXTURE_ID, TEXTURE_ID_TO_NAME } from '@engine/texture'
 import GameButton from './GameButton.vue'
 import GameIcon from './GameIcon.vue'
@@ -87,6 +88,8 @@ onBeforeUnmount(() => {
   frameId = null
 })
 
+watch(() => props.game, syncAxisViewStateFromGame, { immediate: true })
+
 function loop() {
   draw()
   frameId = requestAnimationFrame(loop)
@@ -112,11 +115,15 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, width, height)
   lastHitItems = []
+  syncAxisViewStateFromGame()
 
   const snapshot = props.game?.getAxisViewSnapshot(mode.value, fixedCoord.value, hoveredPieceKey.value)
   if (! snapshot || snapshot.columns.length === 0) return
   if (snapshot.maxFixedCoord !== maxFixedCoord.value) maxFixedCoord.value = snapshot.maxFixedCoord
-  if (snapshot.fixedCoord !== fixedCoord.value) fixedCoord.value = snapshot.fixedCoord
+  if (snapshot.fixedCoord !== fixedCoord.value) {
+    fixedCoord.value = snapshot.fixedCoord
+    updateAxisViewState({ fixedCoord: snapshot.fixedCoord })
+  }
 
   drawSnapshot(ctx, snapshot, width, height, getAxisViewColors(canvasElement))
 }
@@ -473,12 +480,30 @@ function getActiveAxisViewPlayers(visibleColumns: VisibleAxisViewColumn[]): Set<
   return players
 }
 
+function syncAxisViewStateFromGame() {
+  const state = props.game?.getAxisViewState()
+  if (! state) return
+  mode.value = state.mode
+  fixedCoord.value = state.fixedCoord
+}
+
+function updateAxisViewState(state: Partial<GameAxisViewState>) {
+  props.game?.setAxisViewState({
+    fixedCoord: fixedCoord.value,
+    mode: mode.value,
+    ...state,
+  })
+}
+
 function handleModeClick(nextMode: GameAxisViewMode) {
   mode.value = nextMode
+  updateAxisViewState({ mode: nextMode })
 }
 
 function stepFixedCoord(delta: number) {
-  fixedCoord.value = Math.max(0, Math.min(maxFixedCoord.value, fixedCoord.value + delta))
+  const nextFixedCoord = Math.max(0, Math.min(maxFixedCoord.value, fixedCoord.value + delta))
+  fixedCoord.value = nextFixedCoord
+  updateAxisViewState({ fixedCoord: nextFixedCoord })
 }
 
 function getAxisViewFileLabel(file: number): string {

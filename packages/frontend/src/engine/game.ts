@@ -7,7 +7,7 @@ import { getBoardRenderLayers } from '@engine/board'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, LabelVisibility, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { Easing } from '@engine/easing'
 import { isModifierKeyEvent, isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
-import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type GameBoardFocus, type GameWorkspaceState, type PendingMove, type StoredGameState } from '@engine/gameState'
+import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type GameAxisViewMode, type GameAxisViewState, type GameBoardFocus, type GameWorkspaceState, type PendingMove, type StoredGameState } from '@engine/gameState'
 import { GameLayout, type ViewportInsets } from '@engine/layout'
 import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
@@ -143,7 +143,7 @@ export interface GameMinimapSnapshot {
   viewport: Rect
 }
 
-export type GameAxisViewMode = 'xt' | 'yt'
+export type { GameAxisViewMode } from '@engine/gameState'
 
 export interface GameAxisViewFocusTarget {
   coord: number
@@ -405,6 +405,7 @@ export class Game extends Disposable(Empty) {
   private fiveDPGNOptions: FiveDPGN.ExportOptions = {}
   private squareMarkerDisplayMode: SquareMarkerDisplayMode = 'highlight'
   private focusedBoard: GameBoardFocus | null = null
+  private axisViewState: GameAxisViewState = createDefaultAxisViewState()
   private restoredWorkspace: GameWorkspaceState | null = null
 
   private animationFrame: number | null = null
@@ -1493,6 +1494,10 @@ export class Game extends Disposable(Empty) {
   public focusBoard(l: number, m: number, options: ViewportFocusOptions = {}) {
     const motion = this.focusRect(this.layout.getBoardRect(l, m), options)
     this.focusedBoard = { l, m }
+    this.axisViewState = {
+      ...this.axisViewState,
+      l,
+    }
     this.boardFocusPulse = {
       ...(options.axisFocus ? { axisFocus: options.axisFocus } : {}),
       l,
@@ -1502,6 +1507,26 @@ export class Game extends Disposable(Empty) {
       heldForMotion: false,
       releaseStartedAt: null,
     }
+    this.syncWorkspace()
+    this.persistGameState()
+  }
+
+  public getAxisViewState(): GameAxisViewState {
+    return { ...this.axisViewState }
+  }
+
+  public setAxisViewState(state: Partial<GameAxisViewState>) {
+    const next = normalizeAxisViewState({
+      ...this.axisViewState,
+      ...state,
+    })
+    if (
+      next.fixedCoord === this.axisViewState.fixedCoord
+      && next.l === this.axisViewState.l
+      && next.mode === this.axisViewState.mode
+    ) return
+
+    this.axisViewState = next
     this.syncWorkspace()
     this.persistGameState()
   }
@@ -1570,7 +1595,7 @@ export class Game extends Disposable(Empty) {
     hoveredPieceKey: string | null = null,
   ): GameAxisViewSnapshot | null {
     const focusedBoard = this.getValidFocusedBoard()
-    const lineEntry = this.getAxisViewLineEntry(focusedBoard?.l)
+    const lineEntry = this.getAxisViewLineEntry(this.axisViewState.l ?? focusedBoard?.l)
     if (! lineEntry) return null
 
     const [l, line] = lineEntry
@@ -1710,6 +1735,11 @@ export class Game extends Disposable(Empty) {
     if (! workspace) return false
 
     let restored = false
+    if (workspace.axisView) {
+      this.axisViewState = normalizeAxisViewState(workspace.axisView)
+      restored = true
+    }
+
     if (workspace.recordCursor) {
       const target = this.recordDocument.resolveCursorTarget(workspace.recordCursor)
       if (target) {
@@ -1727,7 +1757,13 @@ export class Game extends Disposable(Empty) {
 
     if (workspace.focusedBoard && this.hasBoardAt(workspace.focusedBoard)) {
       if (focusCamera) this.focusBoard(workspace.focusedBoard.l, workspace.focusedBoard.m, options)
-      else this.focusedBoard = { ...workspace.focusedBoard }
+      else {
+        this.focusedBoard = { ...workspace.focusedBoard }
+        this.axisViewState = {
+          ...this.axisViewState,
+          l: workspace.focusedBoard.l,
+        }
+      }
       return true
     }
 
@@ -1742,6 +1778,7 @@ export class Game extends Disposable(Empty) {
 
   private getWorkspaceState(): GameWorkspaceState {
     return {
+      axisView: this.getValidAxisViewState(),
       recordCursor: this.getCurrentRecordCursorTarget(),
       focusedBoard: this.getValidFocusedBoard(),
     }
@@ -1785,6 +1822,15 @@ export class Game extends Disposable(Empty) {
 
     this.focusedBoard = null
     return null
+  }
+
+  private getValidAxisViewState(): GameAxisViewState {
+    const state = this.getAxisViewState()
+    if (state.l !== null && ! Multiverse.getLine(this.multiverse, state.l)) {
+      state.l = null
+      this.axisViewState = state
+    }
+    return state
   }
 
   private hasBoardAt({ l, m }: GameBoardFocus): boolean {
@@ -4969,6 +5015,22 @@ function formatRecoveryComments(comments: readonly string[] | undefined): string
 
 function formatRecoveryGlyphs(glyphs: readonly string[] | undefined): string {
   return glyphs?.join('') ?? ''
+}
+
+function createDefaultAxisViewState(): GameAxisViewState {
+  return {
+    fixedCoord: 0,
+    l: null,
+    mode: 'yt',
+  }
+}
+
+function normalizeAxisViewState(state: GameAxisViewState): GameAxisViewState {
+  return {
+    fixedCoord: Math.max(0, Math.floor(state.fixedCoord)),
+    l: Number.isInteger(state.l) ? state.l : null,
+    mode: state.mode === 'xt' ? 'xt' : 'yt',
+  }
 }
 
 function getAxisViewFixedCoordMax(mode: GameAxisViewMode, { width, height }: BoardSize): number {

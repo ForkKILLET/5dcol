@@ -40,7 +40,16 @@ export interface GameBoardFocus {
   m: number
 }
 
+export type GameAxisViewMode = 'xt' | 'yt'
+
+export interface GameAxisViewState {
+  fixedCoord: number
+  l: number | null
+  mode: GameAxisViewMode
+}
+
 export interface GameWorkspaceState {
+  axisView?: GameAxisViewState | null
   recordCursor?: RecordCursor | null
   focusedBoard?: GameBoardFocus | null
 }
@@ -87,6 +96,7 @@ export const isGameWorkspaceState = (value: unknown): value is GameWorkspaceStat
   const workspace = value as Partial<GameWorkspaceState>
   return (workspace.recordCursor === undefined || workspace.recordCursor === null || isRecordCursorLike(workspace.recordCursor))
     && (workspace.focusedBoard === undefined || workspace.focusedBoard === null || isGameBoardFocusLike(workspace.focusedBoard))
+    && (workspace.axisView === undefined || workspace.axisView === null || isGameAxisViewStateLike(workspace.axisView))
 }
 
 const isRecordCursorLike = (value: unknown): value is RecordCursor => {
@@ -103,4 +113,13 @@ const isGameBoardFocusLike = (value: unknown): value is GameBoardFocus => {
   const focus = value as Partial<GameBoardFocus>
   return Number.isInteger(focus.l)
     && Number.isInteger(focus.m)
+}
+
+const isGameAxisViewStateLike = (value: unknown): value is GameAxisViewState => {
+  if (! value || typeof value !== 'object') return false
+  const state = value as Partial<GameAxisViewState>
+  return (state.mode === 'xt' || state.mode === 'yt')
+    && Number.isInteger(state.fixedCoord)
+    && state.fixedCoord! >= 0
+    && (state.l === null || Number.isInteger(state.l))
 }

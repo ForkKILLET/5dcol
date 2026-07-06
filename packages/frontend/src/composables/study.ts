@@ -22,6 +22,11 @@ const StoredLocalStudiesSchema = z.object({
 })
 
 const StudyWorkspaceSchema = z.object({
+  axisView: z.object({
+    fixedCoord: z.number().int().nonnegative(),
+    l: z.number().int().nullable(),
+    mode: z.enum(['xt', 'yt']),
+  }).nullable().optional(),
   recordCursor: RecordCursorSchema.nullable().optional(),
   focusedBoard: z.object({
     l: z.number().int(),
