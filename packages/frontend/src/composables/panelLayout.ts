@@ -400,6 +400,20 @@ export function usePanelLayout({
     if (location) setGroupWidth(location.side, location.group.id, size)
   }
 
+  function setPanelMinHeight(id: GamePanelId, minHeightPx: number) {
+    if (! Number.isFinite(minHeightPx) || minHeightPx <= 0) return
+
+    const location = findPanelLocation(id)
+    if (! location) return
+
+    const stackHeightPx = getPanelStackHeightPx()
+    const minHeight = clampRatio(minHeightPx / Math.max(1, stackHeightPx))
+    if (location.group.height >= minHeight - 0.0001) return
+
+    location.group.height = minHeight
+    normalizeSideGroupLayout(location.side)
+  }
+
   function setGroupWidth(
     side: GamePanelSide,
     groupId: string,
@@ -673,6 +687,7 @@ export function usePanelLayout({
     movePanelToGroup,
     movePanelToNewGroup,
     setGroupActivePanel,
+    setPanelMinHeight,
     toggleGroupStretchEdge,
     setOnlineStudyDefaultPanels,
     setPanelOpen,

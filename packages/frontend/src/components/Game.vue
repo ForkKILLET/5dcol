@@ -1007,6 +1007,13 @@ function getPanelTabs(group: GamePanelGroup): GameSidePanelTab[] {
   }))
 }
 
+function updateAxisViewPanelMinHeight(panelHeightPx: number) {
+  const groupTabHeight = Sizes.ButtonSmallHeight
+    + Sizes.SmallButtonShadowOffset
+    + Sizes.ButtonContentGap
+  panelLayout.setPanelMinHeight('axisView', panelHeightPx + groupTabHeight)
+}
+
 function openPanelPicker(groupId: string | null = null) {
   if (! gameStarted.value) return
   playUISound()
@@ -3883,6 +3890,7 @@ watch([exportFormat, exportMode], () => {
               :mode-x-t-label="t('axisView.xt')"
               :mode-y-t-label="t('axisView.yt')"
               @focus-board="focusMinimapBoard"
+              @min-height-change="updateAxisViewPanelMinHeight"
             />
             <MinimapPanel
               v-else-if="group.activePanelId === 'minimap'"

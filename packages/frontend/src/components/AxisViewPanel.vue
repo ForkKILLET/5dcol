@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Game, GameAxisViewBoardColumn, GameAxisViewFocusTarget, GameAxisViewMode, GameAxisViewPieceCell, GameAxisViewSnapshot, GameAxisViewTargetCell } from '@engine/game'
 import { getAssetUrl } from '@engine/assets'
 import { Color4 } from '@engine/basic'
-import { Colors } from '@engine/constant'
+import { Colors, Sizes } from '@engine/constant'
 import type { GameAxisViewState } from '@engine/gameState'
 import { PIECE_TO_TEXTURE_ID, TEXTURE_ID_TO_NAME } from '@engine/texture'
 import GameButton from './GameButton.vue'
@@ -58,18 +58,27 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   focusBoard: [board: { axisFocus?: GameAxisViewFocusTarget, l: number, m: number }]
+  minHeightChange: [heightPx: number]
 }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+const toolbar = ref<HTMLElement | null>(null)
 const hoveredBoardKey = ref<string | null>(null)
 const hoveredPieceKey = ref<string | null>(null)
 const fixedCoord = ref(0)
 const mode = ref<GameAxisViewMode>('yt')
 const playerFilter = ref<AxisViewPlayerFilter>('both')
 const maxFixedCoord = ref(7)
+const canvasMinHeight = ref(getAxisViewMinCanvasHeight(8))
+
+const axisViewPanelStyle = computed(() => ({
+  '--axis-view-canvas-min-height': `${canvasMinHeight.value}px`,
+}))
 
 let frameId: number | null = null
+let toolbarResizeObserver: ResizeObserver | null = null
 let lastHitItems: AxisViewHitItem[] = []
+let lastMinHeight = 0
 const pieceImageCache = new Map<Piece, HTMLImageElement>()
 
 const axisLabel = computed(() => {
@@ -81,11 +90,16 @@ const axisLabel = computed(() => {
 
 onMounted(() => {
   frameId = requestAnimationFrame(loop)
+  toolbarResizeObserver = new ResizeObserver(emitMinHeight)
+  if (toolbar.value) toolbarResizeObserver.observe(toolbar.value)
+  emitMinHeight()
 })
 
 onBeforeUnmount(() => {
   if (frameId !== null) cancelAnimationFrame(frameId)
   frameId = null
+  toolbarResizeObserver?.disconnect()
+  toolbarResizeObserver = null
   props.game?.setAxisViewHoverBoard(null)
   props.game?.setAxisViewVisible(false)
 })
@@ -130,6 +144,7 @@ function draw() {
 
   const snapshot = props.game?.getAxisViewSnapshot(mode.value, fixedCoord.value, hoveredPieceKey.value)
   if (! snapshot || snapshot.columns.length === 0) return
+  updateCanvasMinHeight(snapshot.rowLabels.length)
   if (snapshot.maxFixedCoord !== maxFixedCoord.value) maxFixedCoord.value = snapshot.maxFixedCoord
   if (snapshot.fixedCoord !== fixedCoord.value) {
     fixedCoord.value = snapshot.fixedCoord
@@ -290,6 +305,29 @@ function getAxisViewCanvasLayout(
     rowLabelX: Math.max(10, left * 0.48),
     topLabelY: Math.max(10, gridY - top * 0.48),
   }
+}
+
+function getAxisViewMinCanvasHeight(rowCount: number): number {
+  return 54 + Math.max(1, rowCount) * 22
+}
+
+function updateCanvasMinHeight(rowCount: number) {
+  const nextHeight = getAxisViewMinCanvasHeight(rowCount)
+  if (nextHeight === canvasMinHeight.value) return
+
+  canvasMinHeight.value = nextHeight
+  emitMinHeight()
+}
+
+function emitMinHeight() {
+  const toolbarHeight = toolbar.value?.getBoundingClientRect().height
+    ?? Sizes.ButtonSmallHeight + Sizes.SmallButtonShadowOffset
+  const panelChromeHeight = Sizes.ButtonContentGap * 4 + 4
+  const nextMinHeight = Math.ceil(toolbarHeight + canvasMinHeight.value + panelChromeHeight)
+  if (Math.abs(nextMinHeight - lastMinHeight) <= 1) return
+
+  lastMinHeight = nextMinHeight
+  emit('minHeightChange', nextMinHeight)
 }
 
 function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRect) {
@@ -601,8 +639,14 @@ function getPieceCellKey({ columnIndex, rowIndex }: Pick<GameAxisViewPieceCell, 
 </script>
 
 <template>
-  <GamePanel class="axis-view-panel">
-    <div class="axis-view-toolbar">
+  <GamePanel
+    class="axis-view-panel"
+    :style="axisViewPanelStyle"
+  >
+    <div
+      ref="toolbar"
+      class="axis-view-toolbar"
+    >
       <div class="axis-view-mode-tabs">
         <GameTab
           :pressed="mode === 'yt'"
@@ -742,7 +786,7 @@ function getPieceCellKey({ columnIndex, rowIndex }: Pick<GameAxisViewPieceCell, 
   flex: 1 1 auto;
   align-self: stretch;
   width: 100%;
-  min-height: 0;
+  min-height: var(--axis-view-canvas-min-height);
   border-radius: 5px;
   cursor: default;
   touch-action: none;
