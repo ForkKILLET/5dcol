@@ -371,6 +371,7 @@ export class Game extends Disposable(Empty) {
   private hoverSquare: SquareHover | null = null
   private hoverPiece: PieceSelection | null = null
   private hoverCheckWarning: { l: number, m: number } | null = null
+  private hoverAxisViewBoard: GameBoardFocus | null = null
   private pendingArrowMarkerStart: RecordMarkerSquare | null = null
   private dragArrowMarkerStart: RecordMarkerSquare | null = null
   private pendingMove: PendingMove | null = null
@@ -1529,6 +1530,20 @@ export class Game extends Disposable(Empty) {
     this.axisViewState = next
     this.syncWorkspace()
     this.persistGameState()
+  }
+
+  public setAxisViewHoverBoard(board: GameBoardFocus | null) {
+    if (
+      (board === null && this.hoverAxisViewBoard === null)
+      || (
+        board !== null
+        && this.hoverAxisViewBoard !== null
+        && board.l === this.hoverAxisViewBoard.l
+        && board.m === this.hoverAxisViewBoard.m
+      )
+    ) return
+
+    this.hoverAxisViewBoard = board ? { ...board } : null
   }
 
   public getMinimapSnapshot(): GameMinimapSnapshot {
@@ -4565,22 +4580,26 @@ export class Game extends Disposable(Empty) {
 
   private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number, metrics: BoardRenderMetrics) {
     const focusPulse = this.getBoardFocusPulseProgress(l, m)
-    if (focusPulse <= 0) return
-
     const focusPreset = boardPlayer === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
-    this.renderer.submit({
-      type: RenderItemType.Quad,
-      layer: RenderLayer.MoveHighlight,
-      order: -1,
-      mat: Mat3.transform(pos, metrics.contentSize),
-      color: Color4.withAlpha(
-        focusPreset.fill,
-        alpha * focusPulse * Animations.BoardFocusMaskAlpha,
-      ),
-    })
 
-    const axisFocusRect = this.getBoardAxisFocusRect(pos, metrics)
+    if (focusPulse > 0) {
+      this.renderer.submit({
+        type: RenderItemType.Quad,
+        layer: RenderLayer.MoveHighlight,
+        order: -1,
+        mat: Mat3.transform(pos, metrics.contentSize),
+        color: Color4.withAlpha(
+          focusPreset.fill,
+          alpha * focusPulse * Animations.BoardFocusMaskAlpha,
+        ),
+      })
+    }
+
+    const axisFocusRect = this.getBoardAxisFocusRect(l, m, pos, metrics)
     if (! axisFocusRect) return
+
+    const axisFocusAlpha = Math.max(focusPulse, axisFocusRect.persistent ? 1 : 0)
+    if (axisFocusAlpha <= 0) return
 
     this.renderer.submit({
       type: RenderItemType.RoundRect,
@@ -4590,18 +4609,19 @@ export class Game extends Disposable(Empty) {
       size: axisFocusRect.size,
       radius: 0,
       fill: null,
-      stroke: Color4.withAlpha(focusPreset.border, alpha * focusPulse),
+      stroke: Color4.withAlpha(focusPreset.border, alpha * axisFocusAlpha),
       strokeWidth: Sizes.BoardBorder,
     })
   }
 
-  private getBoardAxisFocusRect(pos: Vec2, metrics: BoardRenderMetrics): { pos: Vec2, size: Vec2 } | null {
-    const axisFocus = this.boardFocusPulse?.axisFocus
+  private getBoardAxisFocusRect(l: number, m: number, pos: Vec2, metrics: BoardRenderMetrics): { persistent: boolean, pos: Vec2, size: Vec2 } | null {
+    const axisFocus = this.getBoardAxisFocusTarget(l, m, metrics.boardSize)
     if (! axisFocus) return null
 
     if (axisFocus.type === 'file') {
       const squarePos = this.getSquarePos(pos[0], pos[1], { x: axisFocus.coord, y: 0 }, metrics)
       return {
+        persistent: axisFocus.persistent,
         pos: [squarePos[0], pos[1]],
         size: [metrics.squareSize, metrics.contentSize[1]],
       }
@@ -4609,8 +4629,47 @@ export class Game extends Disposable(Empty) {
 
     const squarePos = this.getSquarePos(pos[0], pos[1], { x: 0, y: axisFocus.coord }, metrics)
     return {
+      persistent: axisFocus.persistent,
       pos: [pos[0], squarePos[1]],
       size: [metrics.contentSize[0], metrics.squareSize],
+    }
+  }
+
+  private getBoardAxisFocusTarget(
+    l: number,
+    m: number,
+    boardSize: BoardSize,
+  ): (GameAxisViewFocusTarget & { persistent: boolean }) | null {
+    if (this.hoverAxisViewBoard?.l === l && this.hoverAxisViewBoard.m === m) {
+      return {
+        ...this.getAxisViewFocusTarget(boardSize),
+        persistent: true,
+      }
+    }
+
+    if (this.focusedBoard?.l === l && this.focusedBoard.m === m && this.axisViewState.l === l) {
+      return {
+        ...this.getAxisViewFocusTarget(boardSize),
+        persistent: true,
+      }
+    }
+
+    if (this.boardFocusPulse?.l === l && this.boardFocusPulse.m === m && this.boardFocusPulse.axisFocus) {
+      return {
+        ...this.boardFocusPulse.axisFocus,
+        persistent: false,
+      }
+    }
+
+    return null
+  }
+
+  private getAxisViewFocusTarget(boardSize: BoardSize): GameAxisViewFocusTarget {
+    const maxFixedCoord = getAxisViewFixedCoordMax(this.axisViewState.mode, boardSize)
+    const axis = clampBoardAxisCoord(this.axisViewState.fixedCoord, maxFixedCoord)
+    return {
+      coord: getAxisViewFixedBoardCoord(this.axisViewState.mode, axis, boardSize, this.viewPlayer),
+      type: this.axisViewState.mode === 'yt' ? 'file' : 'rank',
     }
   }
 

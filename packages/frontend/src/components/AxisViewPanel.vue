@@ -86,9 +86,17 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (frameId !== null) cancelAnimationFrame(frameId)
   frameId = null
+  props.game?.setAxisViewHoverBoard(null)
 })
 
-watch(() => props.game, syncAxisViewStateFromGame, { immediate: true })
+watch(
+  () => props.game,
+  (game, previousGame) => {
+    previousGame?.setAxisViewHoverBoard(null)
+    syncAxisViewStateFromGame(game)
+  },
+  { immediate: true },
+)
 
 function loop() {
   draw()
@@ -140,7 +148,7 @@ function drawSnapshot(
 
   const layout = getAxisViewCanvasLayout(width, height, visibleColumns, snapshot.rowLabels.length)
   const hoverKey = hoveredBoardKey.value
-  let hoverColumnRect: CanvasRect | null = null
+  const outlineRects: CanvasRect[] = []
   const visibleColumnIndexes = new Map<number, number>()
 
   ctx.save()
@@ -162,7 +170,7 @@ function drawSnapshot(
       fillCanvasRect(ctx, cellRect)
     }
 
-    if (getBoardKey(column) === hoverKey) hoverColumnRect = columnRect
+    if (column.focused || getBoardKey(column) === hoverKey) outlineRects.push(columnRect)
 
     ctx.fillStyle = colors.labelText
     ctx.globalAlpha = 0.78
@@ -183,8 +191,8 @@ function drawSnapshot(
 
   drawTargetCells(ctx, snapshot, layout, visibleColumnIndexes, colors)
   drawPieces(ctx, snapshot, layout, visibleColumnIndexes)
+  drawAxisViewColumnOutlines(ctx, outlineRects, colors)
   drawAxisViewColumnSeparators(ctx, layout, visibleColumns.length, snapshot.rowLabels.length, colors)
-  if (hoverColumnRect) drawAxisViewColumnOutline(ctx, hoverColumnRect, colors)
   ctx.restore()
 }
 
@@ -293,6 +301,20 @@ function drawAxisViewColumnOutline(
     Math.max(0, rect.h - lineWidth),
   )
   ctx.restore()
+}
+
+function drawAxisViewColumnOutlines(
+  ctx: CanvasRenderingContext2D,
+  rects: CanvasRect[],
+  colors: ReturnType<typeof getAxisViewColors>,
+) {
+  const seen = new Set<string>()
+  for (const rect of rects) {
+    const key = `${rect.x}:${rect.y}:${rect.w}:${rect.h}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    drawAxisViewColumnOutline(ctx, rect, colors)
+  }
 }
 
 function drawAxisViewColumnSeparators(
@@ -480,8 +502,8 @@ function getActiveAxisViewPlayers(visibleColumns: VisibleAxisViewColumn[]): Set<
   return players
 }
 
-function syncAxisViewStateFromGame() {
-  const state = props.game?.getAxisViewState()
+function syncAxisViewStateFromGame(game = props.game) {
+  const state = game?.getAxisViewState()
   if (! state) return
   mode.value = state.mode
   fixedCoord.value = state.fixedCoord
@@ -514,11 +536,13 @@ function handlePointerMove(event: PointerEvent) {
   const item = getHitItemAtEvent(event)
   hoveredBoardKey.value = item ? getBoardKey(item.column) : null
   hoveredPieceKey.value = item?.piece ? getPieceCellKey(item.piece) : null
+  props.game?.setAxisViewHoverBoard(item ? { l: item.column.l, m: item.column.m } : null)
 }
 
 function handlePointerLeave() {
   hoveredBoardKey.value = null
   hoveredPieceKey.value = null
+  props.game?.setAxisViewHoverBoard(null)
 }
 
 function handleClick(event: MouseEvent) {
