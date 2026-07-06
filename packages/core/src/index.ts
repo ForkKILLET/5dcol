@@ -315,11 +315,16 @@ export namespace Line {
 }
 
 export namespace Board {
-  export const clone = ({ pieces, unmoved, ...misc }: Board): Board => ({
-    ...misc,
-    pieces: pieces.map(row => row.slice()),
-    unmoved: cloneUnmovedMask(pieces, unmoved),
-  })
+  export const clone = ({ pieces, unmoved, ...misc }: Board): Board => {
+    const size = Board.getSize({ ...misc, pieces, unmoved })
+    return {
+      ...misc,
+      width: size.width,
+      height: size.height,
+      pieces: pieces.map(row => row.slice()),
+      unmoved: cloneUnmovedMask(pieces, unmoved),
+    }
+  }
 
   export const getSize = ({ width, height, pieces }: Board): BoardSize => ({
     width: width ?? pieces.length,
@@ -607,6 +612,7 @@ export namespace Board {
     const player = Pieces.getPlayer(piece)
     if (player === null) return []
 
+    const size = Board.getSize(board)
     const targets: CoordSpacelike[] = []
     const addStep = (dx: number, dy: number) => {
       addTarget(targets, board, player, { x: from.x + dx, y: from.y + dy })
@@ -651,14 +657,14 @@ export namespace Board {
     switch (piece) {
       case Piece.WW:
         addBrawnCaptureTargets()
-        addPawnTargets(-1, board.height - 2, Player.B)
+        addPawnTargets(-1, size.height - 2, Player.B)
         break
       case Piece.WB:
         addBrawnCaptureTargets()
         addPawnTargets(1, 1, Player.W)
         break
       case Piece.PW:
-        addPawnTargets(-1, board.height - 2, Player.B)
+        addPawnTargets(-1, size.height - 2, Player.B)
         break
       case Piece.PB:
         addPawnTargets(1, 1, Player.W)
@@ -882,12 +888,12 @@ export namespace Board {
   export const KING_HOME_FILE = 4
 
   export const getHomeRank = (board: Board, player: Player): number => (
-    player === Player.W ? board.height - 1 : 0
+    player === Player.W ? Board.getSize(board).height - 1 : 0
   )
 
   export const getQueenSideRookFile = (): number => 0
 
-  export const getKingSideRookFile = (board: Board): number => board.width - 1
+  export const getKingSideRookFile = (board: Board): number => Board.getSize(board).width - 1
 
   const canCastleKingSide = (board: Board, player: Player): boolean => {
     const y = getHomeRank(board, player)
@@ -1366,7 +1372,8 @@ export namespace Multiverse {
     xyDirections: CoordSpacelike[],
   ): void => {
     const board = Multiverse.getBoard(multiverse, from, player)
-    const maxDistance = board ? Math.max(board.width, board.height) : STANDARD_BOARD_SIZE.width
+    const size = board ? Board.getSize(board) : STANDARD_BOARD_SIZE
+    const maxDistance = Math.max(size.width, size.height)
     for (const tl of tlDirections) {
       for (const xy of xyDirections) {
         for (let n = 1; n < maxDistance; n ++) {
