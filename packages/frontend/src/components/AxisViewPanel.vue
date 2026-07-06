@@ -62,16 +62,18 @@ const hoveredBoardKey = ref<string | null>(null)
 const fixedCoord = ref(0)
 const mode = ref<GameAxisViewMode>('yt')
 const playerFilter = ref<AxisViewPlayerFilter>('both')
+const maxFixedCoord = ref(7)
 
 let frameId: number | null = null
 let lastHitItems: AxisViewHitItem[] = []
 const pieceImageCache = new Map<Piece, HTMLImageElement>()
 
-const axisLabel = computed(() => (
-  mode.value === 'yt'
-    ? String.fromCharCode('a'.charCodeAt(0) + fixedCoord.value)
-    : `${fixedCoord.value + 1}`
-))
+const axisLabel = computed(() => {
+  const coord = fixedCoord.value
+  return mode.value === 'yt'
+    ? getAxisViewFileLabel(coord)
+    : `${coord + 1}`
+})
 
 onMounted(() => {
   frameId = requestAnimationFrame(loop)
@@ -110,6 +112,8 @@ function draw() {
 
   const snapshot = props.game?.getAxisViewSnapshot(mode.value, fixedCoord.value)
   if (! snapshot || snapshot.columns.length === 0) return
+  if (snapshot.maxFixedCoord !== maxFixedCoord.value) maxFixedCoord.value = snapshot.maxFixedCoord
+  if (snapshot.fixedCoord !== fixedCoord.value) fixedCoord.value = snapshot.fixedCoord
 
   drawSnapshot(ctx, snapshot, width, height, getAxisViewColors(canvasElement))
 }
@@ -141,7 +145,7 @@ function drawSnapshot(
 
     for (let rowIndex = 0; rowIndex < snapshot.rowLabels.length; rowIndex++) {
       const cellRect = getAxisViewCellRect(layout, columnIndex, rowIndex)
-      const light = isAxisViewRowLight(snapshot.fixedCoord, rowIndex)
+      const light = isAxisViewRowLight(snapshot, rowIndex)
       const base = getAxisViewColumnBoardFill(column, visibleColumns, playerFilter.value, colors)
       ctx.fillStyle = light ? base.light : base.dark
       fillCanvasRect(ctx, cellRect)
@@ -273,12 +277,16 @@ function getAxisViewRowEdge(layout: AxisViewCanvasLayout, index: number): number
   return Math.round(layout.gridY + index * layout.cellSize)
 }
 
-function isAxisViewRowLight(fixedCoord: number, rowIndex: number): boolean {
-  return (fixedCoord + getAxisViewRowCoord(rowIndex)) % 2 === 0
+function isAxisViewRowLight(snapshot: GameAxisViewSnapshot, rowIndex: number): boolean {
+  const rowCoord = getAxisViewRowCoord(snapshot, rowIndex)
+  return (snapshot.fixedCoord + rowCoord) % 2 === 0
 }
 
-function getAxisViewRowCoord(rowIndex: number): number {
-  return 7 - rowIndex
+function getAxisViewRowCoord(snapshot: GameAxisViewSnapshot, rowIndex: number): number {
+  const size = snapshot.mode === 'yt'
+    ? snapshot.boardSize.height
+    : snapshot.boardSize.width
+  return Math.max(0, size - rowIndex - 1)
 }
 
 function getAxisViewColors(element: HTMLElement) {
@@ -382,7 +390,11 @@ function handleModeClick(nextMode: GameAxisViewMode) {
 }
 
 function stepFixedCoord(delta: number) {
-  fixedCoord.value = Math.max(0, Math.min(7, fixedCoord.value + delta))
+  fixedCoord.value = Math.max(0, Math.min(maxFixedCoord.value, fixedCoord.value + delta))
+}
+
+function getAxisViewFileLabel(file: number): string {
+  return String.fromCharCode('a'.charCodeAt(0) + file)
 }
 
 function handlePointerMove(event: PointerEvent) {
@@ -479,7 +491,7 @@ function getBoardKey({ l, m }: Pick<GameAxisViewBoardColumn, 'l' | 'm'>): string
         <GameButton
           size="tiny"
           shape="circle"
-          :disabled="fixedCoord >= 7"
+          :disabled="fixedCoord >= maxFixedCoord"
           @click="stepFixedCoord(1)"
         >
           <GameIcon name="chevron-right" />

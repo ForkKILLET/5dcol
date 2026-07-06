@@ -164,9 +164,11 @@ export interface GameAxisViewPieceCell {
 }
 
 export interface GameAxisViewSnapshot {
+  boardSize: BoardSize
   columns: GameAxisViewBoardColumn[]
   fixedCoord: number
   l: number
+  maxFixedCoord: number
   mode: GameAxisViewMode
   pieces: GameAxisViewPieceCell[]
   rowLabels: string[]
@@ -1546,8 +1548,10 @@ export class Game extends Disposable(Empty) {
     const latestM = Line.getLatestBoardIndex(line)
     const status = Multiverse.getTimelineStatus(this.multiverse, this.player)
     const activeLines = new Set([...status.mandatory, ...status.optional])
-    const axis = clampBoardAxisCoord(fixedCoord)
-    const rowCoords = getAxisViewRowCoords()
+    const boardSize = getLineBoardSize(line)
+    const maxFixedCoord = getAxisViewFixedCoordMax(mode, boardSize)
+    const axis = clampBoardAxisCoord(fixedCoord, maxFixedCoord)
+    const rowCoords = getAxisViewRowCoords(mode, boardSize)
     const columns: GameAxisViewBoardColumn[] = []
     const pieces: GameAxisViewPieceCell[] = []
 
@@ -1584,9 +1588,11 @@ export class Game extends Disposable(Empty) {
     if (columns.length === 0) return null
 
     return {
+      boardSize,
       columns,
       fixedCoord: axis,
       l,
+      maxFixedCoord,
       mode,
       pieces,
       rowLabels: getAxisViewRowLabels(mode, rowCoords),
@@ -4730,13 +4736,25 @@ export class Game extends Disposable(Empty) {
 
 const AXIS_VIEW_FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
 
-function clampBoardAxisCoord(value: number): number {
+function clampBoardAxisCoord(value: number, max: number): number {
   if (! Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(7, Math.round(value)))
+  return Math.max(0, Math.min(max, Math.round(value)))
 }
 
-function getAxisViewRowCoords(): number[] {
-  return [7, 6, 5, 4, 3, 2, 1, 0]
+function getLineBoardSize(line: Line): BoardSize {
+  for (const [, board] of Line.getBoardEntries(line)) {
+    if (board) return Board.getSize(board)
+  }
+  return STANDARD_BOARD_SIZE
+}
+
+function getAxisViewFixedCoordMax(mode: GameAxisViewMode, { width, height }: BoardSize): number {
+  return Math.max(0, (mode === 'yt' ? width : height) - 1)
+}
+
+function getAxisViewRowCoords(mode: GameAxisViewMode, { width, height }: BoardSize): number[] {
+  const count = mode === 'yt' ? height : width
+  return Array.from({ length: count }, (_, index) => count - index - 1)
 }
 
 function getAxisViewRowLabels(mode: GameAxisViewMode, rowCoords: number[]): string[] {
