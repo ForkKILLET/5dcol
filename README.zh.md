@@ -84,7 +84,7 @@ pnpm -F @5dcol/backend build
 ### PM2
 
 ```bash
-HOST=0.0.0.0 pm2 start ./packages/backend/dist/main.js --name 5dcol-backend --update-env
+HOST=0.0.0.0 pm2 start ./packages/backend/dist/index.js --name 5dcol-backend --update-env
 ```
 
 常用环境变量：
