@@ -87,12 +87,15 @@ onBeforeUnmount(() => {
   if (frameId !== null) cancelAnimationFrame(frameId)
   frameId = null
   props.game?.setAxisViewHoverBoard(null)
+  props.game?.setAxisViewVisible(false)
 })
 
 watch(
   () => props.game,
   (game, previousGame) => {
     previousGame?.setAxisViewHoverBoard(null)
+    previousGame?.setAxisViewVisible(false)
+    game?.setAxisViewVisible(true)
     syncAxisViewStateFromGame(game)
   },
   { immediate: true },

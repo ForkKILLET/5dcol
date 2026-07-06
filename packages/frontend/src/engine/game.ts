@@ -373,6 +373,7 @@ export class Game extends Disposable(Empty) {
   private hoverPiece: PieceSelection | null = null
   private hoverCheckWarning: { l: number, m: number } | null = null
   private hoverAxisViewBoard: GameBoardFocus | null = null
+  private axisViewVisible = false
   private pendingArrowMarkerStart: RecordMarkerSquare | null = null
   private dragArrowMarkerStart: RecordMarkerSquare | null = null
   private pendingMove: PendingMove | null = null
@@ -1531,6 +1532,13 @@ export class Game extends Disposable(Empty) {
     this.axisViewState = next
     this.syncWorkspace()
     this.persistGameState()
+  }
+
+  public setAxisViewVisible(visible: boolean) {
+    if (this.axisViewVisible === visible) return
+
+    this.axisViewVisible = visible
+    if (! visible) this.hoverAxisViewBoard = null
   }
 
   public setAxisViewHoverBoard(board: GameBoardFocus | null) {
@@ -4640,6 +4648,8 @@ export class Game extends Disposable(Empty) {
     m: number,
     boardSize: BoardSize,
   ): (GameAxisViewFocusTarget & { persistent: boolean }) | null {
+    if (! this.axisViewVisible) return null
+
     if (this.hoverAxisViewBoard?.l === l && this.hoverAxisViewBoard.m === m) {
       return {
         ...this.getAxisViewFocusTarget(boardSize),
