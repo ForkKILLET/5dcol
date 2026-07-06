@@ -37,9 +37,21 @@ export enum Piece {
   YB  = 0x1c,
 }
 
+export interface BoardSize {
+  width: number
+  height: number
+}
+
+export const STANDARD_BOARD_SIZE: BoardSize = {
+  width: 8,
+  height: 8,
+}
+
 // Hierarchy
 
 export interface Board {
+  width: number
+  height: number
   pieces: Piece[][]
 
   canCastleQW: boolean
@@ -306,6 +318,19 @@ export namespace Board {
     ...misc,
     pieces: pieces.map(row => row.slice()),
   })
+
+  export const getSize = ({ width, height, pieces }: Board): BoardSize => ({
+    width: width ?? pieces.length,
+    height: height ?? pieces[0]?.length ?? 0,
+  })
+
+  export const isInBoard = (coord: CoordSpacelike, board: Board): boolean => (
+    Coord.isInBoard(coord, Board.getSize(board))
+  )
+
+  export function * spacelikes(board: Board) {
+    yield * Coord.spacelikes(Board.getSize(board))
+  }
 }
 
 // Coordinates
@@ -343,8 +368,11 @@ export namespace Coord {
     Coord.isSameBoard(p, q) && Coord.isSameSpace(p, q)
   )
 
-  export const isInBoard = ({ x, y }: CoordSpacelike): boolean => (
-    x >= 0 && x < 8 && y >= 0 && y < 8
+  export const isInBoard = (
+    { x, y }: CoordSpacelike,
+    { width, height }: BoardSize = STANDARD_BOARD_SIZE,
+  ): boolean => (
+    x >= 0 && x < width && y >= 0 && y < height
   )
 
   export const isFreshBoard = ({ l, t }: CoordTimelike, multiverse: Multiverse, player: Player) => {
@@ -352,9 +380,9 @@ export namespace Coord {
     return Coord.time(t, player) + 1 === line.boards.length
   }
 
-  export function * spacelikes() {
-    for (let x = 0; x < 8; x ++) {
-      for (let y = 0; y < 8; y ++) {
+  export function * spacelikes({ width, height }: BoardSize = STANDARD_BOARD_SIZE) {
+    for (let x = 0; x < width; x ++) {
+      for (let y = 0; y < height; y ++) {
         yield [x, y] as const
       }
     }
@@ -377,11 +405,15 @@ export namespace Pieces {
     || piece === Piece.WW || piece === Piece.WB
   )
 
-  export const promotePawn = (piece: Piece, to: CoordSpacelike): Piece => {
+  export const promotePawn = (
+    piece: Piece,
+    to: CoordSpacelike,
+    { height }: BoardSize = STANDARD_BOARD_SIZE,
+  ): Piece => {
     if (piece === Piece.PW && to.y === 0) return Piece.QW
-    if (piece === Piece.PB && to.y === 7) return Piece.QB
+    if (piece === Piece.PB && to.y === height - 1) return Piece.QB
     if (piece === Piece.WW && to.y === 0) return Piece.QW
-    if (piece === Piece.WB && to.y === 7) return Piece.QB
+    if (piece === Piece.WB && to.y === height - 1) return Piece.QB
     return piece
   }
 }
@@ -403,6 +435,8 @@ interface Coord4Delta {
 
 export namespace Board {
   export const createInitial = (): Board => ({
+    width: STANDARD_BOARD_SIZE.width,
+    height: STANDARD_BOARD_SIZE.height,
     pieces: [
       [Piece.RB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.RW],
       [Piece.NB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.NW],
@@ -486,10 +520,11 @@ export namespace Action {
 
 export namespace Board {
   export const getPiece = ({ x, y }: CoordSpacelike, board: Board): Piece => (
-    board.pieces[x][y]
+    board.pieces[x]?.[y] ?? Piece.E
   )
 
   export const setPiece = ({ x, y }: CoordSpacelike, board: Board, piece: Piece): void => {
+    if (! Board.isInBoard({ x, y }, board)) return
     board.pieces[x][y] = piece
   }
 
@@ -499,7 +534,7 @@ export namespace Board {
     player: Player,
     target: CoordSpacelike,
   ): boolean => {
-    if (! Coord.isInBoard(target)) return false
+    if (! Board.isInBoard(target, board)) return false
 
     const targetPiece = Board.getPiece(target, board)
     if (Pieces.getPlayer(targetPiece) === player) return false
@@ -518,7 +553,7 @@ export namespace Board {
     for (const direction of directions) {
       for (
         let target = { x: from.x + direction.x, y: from.y + direction.y };
-        Coord.isInBoard(target);
+        Board.isInBoard(target, board);
         target = { x: target.x + direction.x, y: target.y + direction.y }
       ) {
         if (! addTarget(targets, board, player, target)) break
@@ -535,7 +570,7 @@ export namespace Board {
     from: CoordSpacelike,
     context?: MoveTargetContext2D,
   ): CoordSpacelike[] => {
-    if (! Coord.isInBoard(from)) return []
+    if (! Board.isInBoard(from, board)) return []
 
     const piece = Board.getPiece(from, board)
     const player = Pieces.getPlayer(piece)
@@ -551,12 +586,12 @@ export namespace Board {
       opponent: Player,
     ) => {
       const forward = { x: from.x, y: from.y + direction }
-      if (Coord.isInBoard(forward) && Board.getPiece(forward, board) === Piece.E) {
+      if (Board.isInBoard(forward, board) && Board.getPiece(forward, board) === Piece.E) {
         targets.push(forward)
         const doubleForward = { x: from.x, y: from.y + direction * 2 }
         if (
           from.y === startRank
-          && Coord.isInBoard(doubleForward)
+          && Board.isInBoard(doubleForward, board)
           && Board.getPiece(doubleForward, board) === Piece.E
         ) {
           targets.push(doubleForward)
@@ -564,7 +599,7 @@ export namespace Board {
       }
       for (const dx of [-1, 1]) {
         const target = { x: from.x + dx, y: from.y + direction }
-        if (! Coord.isInBoard(target)) continue
+        if (! Board.isInBoard(target, board)) continue
         if (Pieces.getPlayer(Board.getPiece(target, board)) === opponent) targets.push(target)
       }
       addEnPassantTarget(targets, board, from, player, context)
@@ -574,7 +609,7 @@ export namespace Board {
         [1, 1], [1, -1], [-1, 1], [-1, -1],
       ] as const) {
         const target = { x: from.x + dx, y: from.y + dy }
-        if (! Coord.isInBoard(target)) continue
+        if (! Board.isInBoard(target, board)) continue
         if (Pieces.getPlayer(Board.getPiece(target, board)) === Players.opponent(player)) {
           if (! targets.some(existing => Coord.isSameSpace(existing, target))) targets.push(target)
         }
@@ -584,14 +619,14 @@ export namespace Board {
     switch (piece) {
       case Piece.WW:
         addBrawnCaptureTargets()
-        addPawnTargets(-1, 6, Player.B)
+        addPawnTargets(-1, board.height - 2, Player.B)
         break
       case Piece.WB:
         addBrawnCaptureTargets()
         addPawnTargets(1, 1, Player.W)
         break
       case Piece.PW:
-        addPawnTargets(-1, 6, Player.B)
+        addPawnTargets(-1, board.height - 2, Player.B)
         break
       case Piece.PB:
         addPawnTargets(1, 1, Player.W)
@@ -680,7 +715,7 @@ export namespace Board {
     const pawnY = square.y - getPawnDirection(attacker)
     for (const dx of [-1, 1]) {
       const pawn = { x: square.x + dx, y: pawnY }
-      if (Coord.isInBoard(pawn) && [attackerPawn, attackerBrawn].includes(Board.getPiece(pawn, board))) return true
+      if (Board.isInBoard(pawn, board) && [attackerPawn, attackerBrawn].includes(Board.getPiece(pawn, board))) return true
     }
 
     for (const [dx, dy] of [
@@ -688,7 +723,7 @@ export namespace Board {
       [1, -2], [2, -1], [-1, -2], [-2, -1],
     ] as const) {
       const knight = { x: square.x + dx, y: square.y + dy }
-      if (Coord.isInBoard(knight) && Board.getPiece(knight, board) === attackerKnight) return true
+      if (Board.isInBoard(knight, board) && Board.getPiece(knight, board) === attackerKnight) return true
     }
 
     for (const [dx, dy] of [
@@ -696,14 +731,14 @@ export namespace Board {
       [1, 1], [1, -1], [-1, 1], [-1, -1],
     ] as const) {
       const king = { x: square.x + dx, y: square.y + dy }
-      if (Coord.isInBoard(king) && [attackerKing, attackerCommonKing].includes(Board.getPiece(king, board))) return true
+      if (Board.isInBoard(king, board) && [attackerKing, attackerCommonKing].includes(Board.getPiece(king, board))) return true
     }
 
     for (const [dx, dy] of [
       [1, 1], [1, -1], [-1, 1], [-1, -1],
     ] as const) {
       const brawn = { x: square.x + dx, y: square.y + dy }
-      if (Coord.isInBoard(brawn) && Board.getPiece(brawn, board) === attackerBrawn) return true
+      if (Board.isInBoard(brawn, board) && Board.getPiece(brawn, board) === attackerBrawn) return true
     }
 
     if (hasPhysicalSlidingAttack(board, square, [
@@ -729,7 +764,7 @@ export namespace Board {
   ): boolean => {
     const attacker = Players.opponent(player)
 
-    for (const [x, y] of Coord.spacelikes()) {
+    for (const [x, y] of Board.spacelikes(board)) {
       const piece = Board.getPiece({ x, y }, board)
       if (Pieces.getPlayer(piece) !== player || ! Pieces.isRoyal(piece)) continue
       if (Board.isSquareUnderAttack(board, { x, y }, attacker)) return true
@@ -747,7 +782,7 @@ export namespace Board {
     for (const direction of directions) {
       for (
         let current = { x: square.x + direction.x, y: square.y + direction.y };
-        Coord.isInBoard(current);
+        Board.isInBoard(current, board);
         current = { x: current.x + direction.x, y: current.y + direction.y }
       ) {
         const piece = Board.getPiece(current, board)
@@ -772,7 +807,7 @@ export namespace Board {
 
     for (const dx of [-1, 1]) {
       const capturedPos = { x: from.x + dx, y: from.y }
-      if (! Coord.isInBoard(capturedPos)) continue
+      if (! Board.isInBoard(capturedPos, board)) continue
 
       const capturedPawn = Board.getPiece(capturedPos, board)
       if (Pieces.getPlayer(capturedPawn) !== Players.opponent(player)) continue
@@ -786,7 +821,7 @@ export namespace Board {
         x: capturedPos.x,
         y: from.y + getPawnDirection(player),
       }
-      if (! Coord.isInBoard(capturedFrom) || ! Coord.isInBoard(target)) continue
+      if (! Board.isInBoard(capturedFrom, board) || ! Board.isInBoard(target, board)) continue
       if (Board.getPiece(target, board) !== Piece.E) continue
       if (Board.getPiece(capturedPos, previousBoard) !== Piece.E) continue
       if (Board.getPiece(capturedFrom, previousBoard) !== capturedPawn) continue
@@ -800,41 +835,69 @@ export namespace Board {
     board: Board,
     king: Piece,
   ): void => {
+    const whiteHomeRank = getHomeRank(board, Player.W)
+    const blackHomeRank = getHomeRank(board, Player.B)
     if (king === Piece.KW) {
-      if (canCastleKingSide(board, Player.W)) targets.push({ x: 6, y: 7 })
-      if (canCastleQueenSide(board, Player.W)) targets.push({ x: 2, y: 7 })
+      if (canCastleKingSide(board, Player.W)) targets.push({ x: KING_HOME_FILE + 2, y: whiteHomeRank })
+      if (canCastleQueenSide(board, Player.W)) targets.push({ x: KING_HOME_FILE - 2, y: whiteHomeRank })
     }
     else {
-      if (canCastleKingSide(board, Player.B)) targets.push({ x: 6, y: 0 })
-      if (canCastleQueenSide(board, Player.B)) targets.push({ x: 2, y: 0 })
+      if (canCastleKingSide(board, Player.B)) targets.push({ x: KING_HOME_FILE + 2, y: blackHomeRank })
+      if (canCastleQueenSide(board, Player.B)) targets.push({ x: KING_HOME_FILE - 2, y: blackHomeRank })
     }
   }
 
+  export const KING_HOME_FILE = 4
+
+  export const getHomeRank = (board: Board, player: Player): number => (
+    player === Player.W ? board.height - 1 : 0
+  )
+
+  export const getQueenSideRookFile = (): number => 0
+
+  export const getKingSideRookFile = (board: Board): number => board.width - 1
+
   const canCastleKingSide = (board: Board, player: Player): boolean => {
-    const y = player === Player.W ? 7 : 0
+    const y = getHomeRank(board, player)
     const king = player === Player.W ? Piece.KW : Piece.KB
     const rook = player === Player.W ? Piece.RW : Piece.RB
     const canCastle = player === Player.W ? board.canCastleKW : board.canCastleKB
+    const rookFile = getKingSideRookFile(board)
+    const path = [KING_HOME_FILE, KING_HOME_FILE + 1, KING_HOME_FILE + 2]
     return canCastle
-      && Board.getPiece({ x: 4, y }, board) === king
-      && Board.getPiece({ x: 7, y }, board) === rook
-      && Board.getPiece({ x: 5, y }, board) === Piece.E
-      && Board.getPiece({ x: 6, y }, board) === Piece.E
-      && isCastlingPathSafe(board, player, y, [4, 5, 6])
+      && Board.isInBoard({ x: KING_HOME_FILE + 2, y }, board)
+      && Board.getPiece({ x: KING_HOME_FILE, y }, board) === king
+      && Board.getPiece({ x: rookFile, y }, board) === rook
+      && getCastlingBetweenFiles(KING_HOME_FILE, rookFile)
+        .every(x => Board.getPiece({ x, y }, board) === Piece.E || x === KING_HOME_FILE + 2)
+      && Board.getPiece({ x: KING_HOME_FILE + 1, y }, board) === Piece.E
+      && Board.getPiece({ x: KING_HOME_FILE + 2, y }, board) === Piece.E
+      && isCastlingPathSafe(board, player, y, path)
   }
 
   const canCastleQueenSide = (board: Board, player: Player): boolean => {
-    const y = player === Player.W ? 7 : 0
+    const y = getHomeRank(board, player)
     const king = player === Player.W ? Piece.KW : Piece.KB
     const rook = player === Player.W ? Piece.RW : Piece.RB
     const canCastle = player === Player.W ? board.canCastleQW : board.canCastleQB
+    const rookFile = getQueenSideRookFile()
+    const path = [KING_HOME_FILE, KING_HOME_FILE - 1, KING_HOME_FILE - 2]
     return canCastle
-      && Board.getPiece({ x: 4, y }, board) === king
-      && Board.getPiece({ x: 0, y }, board) === rook
-      && Board.getPiece({ x: 1, y }, board) === Piece.E
-      && Board.getPiece({ x: 2, y }, board) === Piece.E
-      && Board.getPiece({ x: 3, y }, board) === Piece.E
-      && isCastlingPathSafe(board, player, y, [4, 3, 2])
+      && Board.isInBoard({ x: KING_HOME_FILE - 2, y }, board)
+      && Board.getPiece({ x: KING_HOME_FILE, y }, board) === king
+      && Board.getPiece({ x: rookFile, y }, board) === rook
+      && getCastlingBetweenFiles(rookFile, KING_HOME_FILE).every(x => Board.getPiece({ x, y }, board) === Piece.E)
+      && Board.getPiece({ x: KING_HOME_FILE - 1, y }, board) === Piece.E
+      && Board.getPiece({ x: KING_HOME_FILE - 2, y }, board) === Piece.E
+      && isCastlingPathSafe(board, player, y, path)
+  }
+
+  export const getCastlingBetweenFiles = (from: number, to: number): number[] => {
+    const min = Math.min(from, to)
+    const max = Math.max(from, to)
+    const files: number[] = []
+    for (let x = min + 1; x < max; x += 1) files.push(x)
+    return files
   }
 
   const isCastlingPathSafe = (
@@ -925,10 +988,9 @@ export namespace Multiverse {
 
     const targets: Coord[] = []
     const addTarget = (target: Coord): boolean => {
-      if (! Coord.isInBoard(target)) return false
-
       const targetBoard = Multiverse.getBoard(multiverse, target, player)
       if (! targetBoard) return false
+      if (! Board.isInBoard(target, targetBoard)) return false
 
       const targetPiece = Board.getPiece(target, targetBoard)
       if (Pieces.getPlayer(targetPiece) === player) return false
@@ -1017,7 +1079,7 @@ export namespace Multiverse {
 
       const board = line.boards[m]
       const t = Coord.turn(m, player)
-      for (const [x, y] of Coord.spacelikes()) {
+      for (const [x, y] of Board.spacelikes(board)) {
         const piece = Board.getPiece({ x, y }, board)
         if (Pieces.getPlayer(piece) !== player) continue
 
@@ -1047,7 +1109,7 @@ export namespace Multiverse {
 
       const board = line.boards[m]
       const t = Coord.turn(m, attackingPlayer)
-      for (const [x, y] of Coord.spacelikes()) {
+      for (const [x, y] of Board.spacelikes(board)) {
         const piece = Board.getPiece({ x, y }, board)
         if (Pieces.getPlayer(piece) !== attackingPlayer) continue
 
@@ -1184,6 +1246,9 @@ export namespace Multiverse {
     from: Coord,
     player: Player,
   ): void => {
+    const sourceBoard = Multiverse.getBoard(multiverse, from, player)
+    if (! sourceBoard) return
+
     const lForward = player === Player.W ? -1 : 1
     const captureDeltas = player === Player.W
       ? [{ t: 1, l: -1 }, { t: -1, l: -1 }]
@@ -1204,7 +1269,7 @@ export namespace Multiverse {
 
     addStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: 0, l: lForward })
 
-    const startRank = player === Player.W ? 6 : 1
+    const startRank = player === Player.W ? sourceBoard.height - 2 : 1
     if (from.y !== startRank) return
 
     const doubleForward = { ...from, l: from.l + lForward * 2 }
@@ -1264,9 +1329,11 @@ export namespace Multiverse {
     tlDirections: Coord4Delta[],
     xyDirections: CoordSpacelike[],
   ): void => {
+    const board = Multiverse.getBoard(multiverse, from, player)
+    const maxDistance = board ? Math.max(board.width, board.height) : STANDARD_BOARD_SIZE.width
     for (const tl of tlDirections) {
       for (const xy of xyDirections) {
-        for (let n = 1; n < 8; n ++) {
+        for (let n = 1; n < maxDistance; n ++) {
           const canContinue = addStepTarget(targets, multiverse, from, player, {
             x: xy.x * n,
             y: xy.y * n,
@@ -1292,10 +1359,10 @@ export namespace Multiverse {
       t: from.t + delta.t,
       l: from.l + delta.l,
     }
-    if (! Coord.isInBoard(target)) return
 
     const board = Multiverse.getBoard(multiverse, target, player)
     if (! board) return
+    if (! Board.isInBoard(target, board)) return
 
     if (Pieces.getPlayer(Board.getPiece(target, board)) !== Players.opponent(player)) return
 
@@ -1317,10 +1384,10 @@ export namespace Multiverse {
       t: from.t + delta.t,
       l: from.l + delta.l,
     }
-    if (! Coord.isInBoard(target)) return false
 
     const board = Multiverse.getBoard(multiverse, target, player)
     if (! board) return false
+    if (! Board.isInBoard(target, board)) return false
 
     const piece = Board.getPiece(target, board)
     if (Pieces.getPlayer(piece) === player) return false
@@ -1390,12 +1457,12 @@ export namespace Multiverse {
         board.canCastleKB = false
         break
       case Piece.RW:
-        if (from.x === 0 && from.y === 7) board.canCastleQW = false
-        if (from.x === 7 && from.y === 7) board.canCastleKW = false
+        if (from.x === Board.getQueenSideRookFile() && from.y === Board.getHomeRank(board, Player.W)) board.canCastleQW = false
+        if (from.x === Board.getKingSideRookFile(board) && from.y === Board.getHomeRank(board, Player.W)) board.canCastleKW = false
         break
       case Piece.RB:
-        if (from.x === 0 && from.y === 0) board.canCastleQB = false
-        if (from.x === 7 && from.y === 0) board.canCastleKB = false
+        if (from.x === Board.getQueenSideRookFile() && from.y === Board.getHomeRank(board, Player.B)) board.canCastleQB = false
+        if (from.x === Board.getKingSideRookFile(board) && from.y === Board.getHomeRank(board, Player.B)) board.canCastleKB = false
         break
     }
   }
@@ -1407,12 +1474,12 @@ export namespace Multiverse {
   ): void => {
     switch (targetPiece) {
       case Piece.RW:
-        if (to.x === 0 && to.y === 7) board.canCastleQW = false
-        if (to.x === 7 && to.y === 7) board.canCastleKW = false
+        if (to.x === Board.getQueenSideRookFile() && to.y === Board.getHomeRank(board, Player.W)) board.canCastleQW = false
+        if (to.x === Board.getKingSideRookFile(board) && to.y === Board.getHomeRank(board, Player.W)) board.canCastleKW = false
         break
       case Piece.RB:
-        if (to.x === 0 && to.y === 0) board.canCastleQB = false
-        if (to.x === 7 && to.y === 0) board.canCastleKB = false
+        if (to.x === Board.getQueenSideRookFile() && to.y === Board.getHomeRank(board, Player.B)) board.canCastleQB = false
+        if (to.x === Board.getKingSideRookFile(board) && to.y === Board.getHomeRank(board, Player.B)) board.canCastleKB = false
         break
     }
   }
@@ -1424,16 +1491,16 @@ export namespace Multiverse {
     to: CoordSpacelike,
   ): void => {
     if (piece !== Piece.KW && piece !== Piece.KB) return
-    if (from.x !== 4 || Math.abs(to.x - from.x) !== 2) return
+    if (from.x !== Board.KING_HOME_FILE || Math.abs(to.x - from.x) !== 2) return
 
     const rook = piece === Piece.KW ? Piece.RW : Piece.RB
-    if (to.x === 6) {
-      Board.setPiece({ x: 7, y: from.y }, board, Piece.E)
-      Board.setPiece({ x: 5, y: from.y }, board, rook)
+    if (to.x === Board.KING_HOME_FILE + 2) {
+      Board.setPiece({ x: Board.getKingSideRookFile(board), y: from.y }, board, Piece.E)
+      Board.setPiece({ x: Board.KING_HOME_FILE + 1, y: from.y }, board, rook)
     }
-    else if (to.x === 2) {
-      Board.setPiece({ x: 0, y: from.y }, board, Piece.E)
-      Board.setPiece({ x: 3, y: from.y }, board, rook)
+    else if (to.x === Board.KING_HOME_FILE - 2) {
+      Board.setPiece({ x: Board.getQueenSideRookFile(), y: from.y }, board, Piece.E)
+      Board.setPiece({ x: Board.KING_HOME_FILE - 1, y: from.y }, board, rook)
     }
   }
 
@@ -1480,20 +1547,20 @@ export namespace Multiverse {
     Board.setPiece(from, boardFromNew, Piece.E)
     if (Coord.isSameBoard(from, to)) {
       applyEnPassantCapture(boardFromNew, piece, from, to)
-      Board.setPiece(to, boardFromNew, Pieces.promotePawn(piece, to))
+      Board.setPiece(to, boardFromNew, Pieces.promotePawn(piece, to, Board.getSize(boardFromNew)))
       applyCastlingRookMove(boardFromNew, piece, from, to)
     }
     else if (Coord.isFreshBoard(to, multiverse, player)) {
       const boardToNew = advance(to, player, multiverse)
       updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
       setBoardCreation(boardToNew, move, player, 'target', order)
-      Board.setPiece(to, boardToNew, Pieces.promotePawn(piece, to))
+      Board.setPiece(to, boardToNew, Pieces.promotePawn(piece, to, Board.getSize(boardToNew)))
     }
     else {
       const boardToNew = fork(to, player, multiverse)
       updateCastlingRightsForCapture(boardToNew, Board.getPiece(to, boardToNew), to)
       setBoardCreation(boardToNew, move, player, 'target', order)
-      Board.setPiece(to, boardToNew, Pieces.promotePawn(piece, to))
+      Board.setPiece(to, boardToNew, Pieces.promotePawn(piece, to, Board.getSize(boardToNew)))
     }
     multiverse.lastMove = move
   })
@@ -2097,7 +2164,7 @@ const createPhysicalSemimoveBoard = (
   const piece = Board.getPiece(from, board)
   Board.setPiece(from, board, Piece.E)
   applyPhysicalEnPassantCapture(board, piece, from, to)
-  Board.setPiece(to, board, Pieces.promotePawn(piece, to))
+  Board.setPiece(to, board, Pieces.promotePawn(piece, to, Board.getSize(board)))
   applyPhysicalCastlingRookMove(board, piece, from, to)
   return board
 }
@@ -2126,7 +2193,7 @@ const createArrivingSemimoveBoard = (
 
   const board = Board.clone(target)
   const piece = Board.getPiece(from, source)
-  Board.setPiece(to, board, Pieces.promotePawn(piece, to))
+  Board.setPiece(to, board, Pieces.promotePawn(piece, to, Board.getSize(board)))
   return board
 }
 
@@ -2154,16 +2221,16 @@ const applyPhysicalCastlingRookMove = (
   to: CoordSpacelike,
 ): void => {
   if (piece !== Piece.KW && piece !== Piece.KB) return
-  if (from.x !== 4 || Math.abs(to.x - from.x) !== 2) return
+  if (from.x !== Board.KING_HOME_FILE || Math.abs(to.x - from.x) !== 2) return
 
   const rook = piece === Piece.KW ? Piece.RW : Piece.RB
-  if (to.x === 6) {
-    Board.setPiece({ x: 7, y: from.y }, board, Piece.E)
-    Board.setPiece({ x: 5, y: from.y }, board, rook)
+  if (to.x === Board.KING_HOME_FILE + 2) {
+    Board.setPiece({ x: Board.getKingSideRookFile(board), y: from.y }, board, Piece.E)
+    Board.setPiece({ x: Board.KING_HOME_FILE + 1, y: from.y }, board, rook)
   }
-  else if (to.x === 2) {
-    Board.setPiece({ x: 0, y: from.y }, board, Piece.E)
-    Board.setPiece({ x: 3, y: from.y }, board, rook)
+  else if (to.x === Board.KING_HOME_FILE - 2) {
+    Board.setPiece({ x: Board.getQueenSideRookFile(), y: from.y }, board, Piece.E)
+    Board.setPiece({ x: Board.KING_HOME_FILE - 1, y: from.y }, board, rook)
   }
 }
 
@@ -2674,12 +2741,12 @@ export namespace GameState {
   ): void => {
     const board = Multiverse.getBoard(multiverse, move.from, player)
     if (isBoardCreatedInSameAction(board, player, order)) {
-      throw new Error(`Illegal 5dpgn move in ${label}: ${formatCoord(move.from)} was already submitted this turn`)
+      throw new Error(`Illegal 5dpgn move in ${label}: ${formatCoord(multiverse, move.from, player)} was already submitted this turn`)
     }
 
     const targets = Multiverse.getMoveTargets(multiverse, move.from, player)
     if (targets.some(target => Coord.isSameBoard(target, move.to) && Coord.isSameSpace(target, move.to))) return
-    throw new Error(`Illegal 5dpgn move in ${label}: ${formatCoord(move.from)} to ${formatCoord(move.to)}`)
+    throw new Error(`Illegal 5dpgn move in ${label}: ${formatCoord(multiverse, move.from, player)} to ${formatCoord(multiverse, move.to, player)}`)
   }
 
   const isBoardCreatedInSameAction = (
@@ -2693,5 +2760,9 @@ export namespace GameState {
     return Math.floor(board.createdByOrder / MOVE_ORDER_STRIDE) === Math.floor(order / MOVE_ORDER_STRIDE)
   }
 
-  const formatCoord = ({ l, t, x, y }: Coord): string => `(${l}T${t})${String.fromCharCode(97 + x)}${8 - y}`
+  const formatCoord = (multiverse: Multiverse, coord: Coord, player: Player): string => {
+    const board = Multiverse.getBoard(multiverse, coord, player)
+    const height = board ? Board.getSize(board).height : STANDARD_BOARD_SIZE.height
+    return `(${coord.l}T${coord.t})${String.fromCharCode(97 + coord.x)}${height - coord.y}`
+  }
 }

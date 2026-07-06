@@ -1,5 +1,6 @@
 import {
   Board,
+  STANDARD_BOARD_SIZE,
   Coord,
   GameState,
   Line,
@@ -9,12 +10,13 @@ import {
   Player,
   Players,
   type Action,
+  type BoardSize,
   type CoordSpacelike,
   type CoordTimelike,
   type Move,
 } from './index.js'
 
-const FILES = 'abcdefgh'
+const FILES = 'abcdefghijklmnopqrstuvwxyz'
 const PIECE_NAMES = 'PWKCQYSNRBUD'
 const EVALUATION_SYMBOLS = ['!!', '!?', '?!', '??', '!', '?', '-']
 const STANDARD_NAG_GLYPHS = new Map<number, string>([
@@ -193,13 +195,9 @@ interface FENBoardBlock {
   player: Player
 }
 
-interface BoardSize {
-  width: number
-  height: number
-}
-
 interface MoveFormatContext {
   piece: Piece
+  boardSize: BoardSize
   capture: boolean
   branching: boolean
   promotion: boolean
@@ -210,6 +208,7 @@ interface MoveFormatContext {
 
 interface SourceHintContext {
   piece: Piece
+  boardSize: BoardSize
   capture: boolean
   branching: boolean
   promotion: boolean
@@ -676,15 +675,19 @@ const formatActionInContext = (
 
   for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex ++) {
     const move = action.moves[moveIndex]!
-    const piece = getMovePiece(nextMultiverse, move, player)
+    const sourceBoard = Multiverse.getBoard(nextMultiverse, move.from, player)
+    const targetBoard = Multiverse.getBoard(nextMultiverse, move.to, player)
+    const boardSize = targetBoard ? Board.getSize(targetBoard) : sourceBoard ? Board.getSize(sourceBoard) : STANDARD_BOARD_SIZE
+    const piece = sourceBoard ? Board.getPiece(move.from, sourceBoard) : Piece.E
     const sourceBoardText = shouldOmitSourceBoard(nextMultiverse, player, options)
       ? ''
       : formatBoard(move.from)
     const baseContext = {
       piece,
+      boardSize,
       capture: isCaptureMove(nextMultiverse, move, player, piece),
       branching: isBranchingMove(nextMultiverse, move, player),
-      promotion: isPromotionMove(piece, move.to),
+      promotion: isPromotionMove(piece, move.to, boardSize),
       sourceBoardText,
     }
     const context: MoveFormatContext = {
@@ -788,15 +791,21 @@ class Parser {
   private cursor = 0
   private readonly fenBlocks: FENBoardBlock[] = []
   private readonly studyHeaders = new Map<string, string[]>()
-  private boardSize = DEFAULT_BOARD_SIZE
+  private boardSize = STANDARD_BOARD_SIZE
   private studyGlyphsByNag = new Map(STANDARD_NAG_GLYPHS)
 
   constructor(private readonly input: string) {}
 
   parse(): ParsedGame {
     this.skipPrelude()
-    const studyHeaders = parseStudyHeaders(this.studyHeaders)
+    const studyHeaders = parseStudyHeaders(this.studyHeaders, this.boardSize)
     this.studyGlyphsByNag = getStudyGlyphsByNag(studyHeaders.glyphTemplates)
+    if (
+      this.fenBlocks.length === 0
+      && (this.boardSize.width !== STANDARD_BOARD_SIZE.width || this.boardSize.height !== STANDARD_BOARD_SIZE.height)
+    ) {
+      throw this.error(`5DPGN Size "${formatBoardSize(this.boardSize)}" requires an initial 5DFEN position`)
+    }
     const initialMultiverse = this.fenBlocks.length > 0
       ? createMultiverseFromFENBlocks(this.fenBlocks)
       : Multiverse.createInitial()
@@ -903,6 +912,7 @@ class Parser {
         nextMultiverse,
         player,
         actionIndex * GameState.MOVE_ORDER_STRIDE + moves.length,
+        this.boardSize,
       )
       moves.push(move)
       nextMultiverse = Multiverse.applyMove(
@@ -1149,8 +1159,9 @@ const resolveMoveToken = (
   multiverse: Multiverse,
   player: Player,
   order: number,
+  boardSize: BoardSize = STANDARD_BOARD_SIZE,
 ): Move => {
-  const pattern = parseMovePattern(token, player)
+  const pattern = parseMovePattern(token, player, boardSize)
   const candidates = getLegalMoveCandidates(multiverse, player, order).filter(candidate => (
     matchesMovePattern(candidate, pattern, multiverse, player)
   ))
@@ -1165,7 +1176,11 @@ const resolveMoveToken = (
   throw new Error(`Illegal 5dpgn move "${token}"`)
 }
 
-const parseMovePattern = (rawToken: string, player: Player): MovePattern => {
+const parseMovePattern = (
+  rawToken: string,
+  player: Player,
+  boardSize: BoardSize = STANDARD_BOARD_SIZE,
+): MovePattern => {
   const token = stripMoveAnnotations(rawToken)
   let cursor = 0
   const sourceBoardResult = readBoardAt(token, cursor)
@@ -1173,10 +1188,10 @@ const parseMovePattern = (rawToken: string, player: Player): MovePattern => {
   if (sourceBoardResult) cursor = sourceBoardResult.next
 
   if (token.startsWith('O-O-O', cursor) || token.startsWith('0-0-0', cursor)) {
-    return parseCastlingPattern(sourceBoard, player, false)
+    return parseCastlingPattern(sourceBoard, player, false, boardSize)
   }
   if (token.startsWith('O-O', cursor) || token.startsWith('0-0', cursor)) {
-    return parseCastlingPattern(sourceBoard, player, true)
+    return parseCastlingPattern(sourceBoard, player, true, boardSize)
   }
 
   let piece: string | undefined
@@ -1190,8 +1205,8 @@ const parseMovePattern = (rawToken: string, player: Player): MovePattern => {
   const targetBoardIndex = findBoardStart(body, 0)
   const isSuperPhysical = jumpIndex >= 0 || targetBoardIndex !== null
   return isSuperPhysical
-    ? parseSuperPhysicalPattern(body, sourceBoard, piece)
-    : parsePhysicalPattern(body, sourceBoard, piece)
+    ? parseSuperPhysicalPattern(body, sourceBoard, piece, boardSize)
+    : parsePhysicalPattern(body, sourceBoard, piece, boardSize)
 }
 
 const isNAGToken = (token: string): boolean => /^\$\d+$/.test(token)
@@ -1200,14 +1215,15 @@ const parseCastlingPattern = (
   sourceBoard: BoardPattern | undefined,
   player: Player,
   kingSide: boolean,
+  boardSize: BoardSize,
 ): MovePattern => {
-  const y = player === Player.W ? 7 : 0
+  const y = player === Player.W ? boardSize.height - 1 : 0
   return {
     sourceBoard,
     piece: 'K',
-    fromFile: 4,
+    fromFile: Board.KING_HOME_FILE,
     fromRankY: y,
-    toFile: kingSide ? 6 : 2,
+    toFile: kingSide ? Board.KING_HOME_FILE + 2 : Board.KING_HOME_FILE - 2,
     toRankY: y,
     physical: true,
   }
@@ -1217,9 +1233,10 @@ const parsePhysicalPattern = (
   body: string,
   sourceBoard: BoardPattern | undefined,
   piece: string | undefined,
+  boardSize: BoardSize,
 ): MovePattern => {
-  const { square, prefix } = splitTargetSquare(body)
-  const source = parseSourceHint(stripTrailingCapture(prefix))
+  const { square, prefix } = splitTargetSquare(body, boardSize)
+  const source = parseSourceHint(stripTrailingCapture(prefix), boardSize)
   return {
     sourceBoard,
     piece,
@@ -1234,6 +1251,7 @@ const parseSuperPhysicalPattern = (
   body: string,
   sourceBoard: BoardPattern | undefined,
   piece: string | undefined,
+  boardSize: BoardSize,
 ): MovePattern => {
   const jumpIndex = body.indexOf('>')
   const targetBoardIndex = findBoardStart(body, 0)
@@ -1244,7 +1262,7 @@ const parseSuperPhysicalPattern = (
     throw new Error(`Invalid 5dpgn jump "${body}"`)
   }
 
-  const source = parseSourceHint(body.slice(0, splitIndex))
+  const source = parseSourceHint(body.slice(0, splitIndex), boardSize)
   let cursor = splitIndex
   let jump: '>' | '>>' | undefined
   if (body.startsWith('>>', cursor)) {
@@ -1261,7 +1279,7 @@ const parseSuperPhysicalPattern = (
   const targetBoard = targetBoardResult?.board
   if (targetBoardResult) cursor = targetBoardResult.next
 
-  const { square, prefix } = splitTargetSquare(body.slice(cursor))
+  const { square, prefix } = splitTargetSquare(body.slice(cursor), boardSize)
   if (stripTrailingCapture(prefix).length > 0) {
     throw new Error(`Invalid 5dpgn jump target "${body}"`)
   }
@@ -1337,32 +1355,41 @@ const readMoveGlyphs = (token: string, readNAGGlyph: (nag: number) => string): s
   return glyphs
 }
 
-const splitTargetSquare = (body: string): { prefix: string, square: CoordSpacelike } => {
+const splitTargetSquare = (body: string, boardSize: BoardSize): { prefix: string, square: CoordSpacelike } => {
   if (body.length < 2) throw new Error(`Invalid 5dpgn move body "${body}"`)
-  const file = body[body.length - 2]!
-  const rank = body[body.length - 1]!
-  if (! isFile(file) || ! isRank(rank)) {
+  const match = /([a-z])([1-9]\d*)$/i.exec(body)
+  if (! match) throw new Error(`Invalid 5dpgn target square "${body}"`)
+  const file = match[1]!.toLowerCase()
+  const rank = match[2]!
+  if (! isFile(file, boardSize) || ! isRank(rank, boardSize)) {
     throw new Error(`Invalid 5dpgn target square "${body}"`)
   }
   return {
-    prefix: body.slice(0, -2),
-    square: parseSquare(file, rank),
+    prefix: body.slice(0, match.index),
+    square: parseSquare(file, rank, boardSize),
   }
 }
 
-const parseSourceHint = (hint: string): Pick<MovePattern, 'fromFile' | 'fromRankY'> => {
+const parseSourceHint = (
+  hint: string,
+  boardSize: BoardSize,
+): Pick<MovePattern, 'fromFile' | 'fromRankY'> => {
   const source: Pick<MovePattern, 'fromFile' | 'fromRankY'> = {}
-  for (const char of hint) {
-    if (isFile(char) && source.fromFile === undefined) {
-      source.fromFile = FILES.indexOf(char)
-      continue
-    }
-    if (isRank(char) && source.fromRankY === undefined) {
-      source.fromRankY = 8 - Number(char)
-      continue
-    }
-    throw new Error(`Invalid 5dpgn source hint "${hint}"`)
+  if (hint === '') return source
+
+  let cursor = 0
+  const file = hint[cursor]?.toLowerCase()
+  if (file !== undefined && isFile(file, boardSize)) {
+    source.fromFile = FILES.indexOf(file)
+    cursor += 1
   }
+  if (cursor < hint.length) {
+    const rank = hint.slice(cursor)
+    if (! isRank(rank, boardSize)) throw new Error(`Invalid 5dpgn source hint "${hint}"`)
+    source.fromRankY = parseRankY(rank, boardSize)
+    cursor = hint.length
+  }
+  if (cursor !== hint.length) throw new Error(`Invalid 5dpgn source hint "${hint}"`)
   return source
 }
 
@@ -1524,11 +1551,16 @@ const isDigit = (char: string | undefined): boolean => (
   char !== undefined && char >= '0' && char <= '9'
 )
 
-const isFile = (char: string): boolean => FILES.includes(char)
+const isFile = (char: string, boardSize: BoardSize = STANDARD_BOARD_SIZE): boolean => {
+  const index = FILES.indexOf(char)
+  return index >= 0 && index < boardSize.width
+}
 
-const isRank = (char: string): boolean => char >= '1' && char <= '8'
-
-const DEFAULT_BOARD_SIZE: BoardSize = { width: 8, height: 8 }
+const isRank = (value: string, boardSize: BoardSize = STANDARD_BOARD_SIZE): boolean => {
+  if (! /^[1-9]\d*$/.test(value)) return false
+  const rank = Number(value)
+  return Number.isSafeInteger(rank) && rank >= 1 && rank <= boardSize.height
+}
 
 const formatBoardSize = ({ width, height }: BoardSize): string => `${width}x${height}`
 
@@ -1544,8 +1576,9 @@ const parseBoardSizeHeader = (value: string): BoardSize => {
 }
 
 const assertSupportedBoardSize = (size: BoardSize): void => {
-  if (size.width === DEFAULT_BOARD_SIZE.width && size.height === DEFAULT_BOARD_SIZE.height) return
-  throw new Error(`Unsupported 5DPGN Size "${formatBoardSize(size)}"; only 8x8 is supported`)
+  if (size.width > FILES.length) {
+    throw new Error(`Unsupported 5DPGN Size "${formatBoardSize(size)}"; width cannot exceed ${FILES.length}`)
+  }
 }
 
 const parseFENBlock = (content: string, boardSize: BoardSize): FENBoardBlock => {
@@ -1595,7 +1628,7 @@ const createMultiverseFromFENBlocks = (blocks: FENBoardBlock[]): Multiverse => {
   }
 }
 
-const parseBoardFEN = (fen: string, boardSize: BoardSize = DEFAULT_BOARD_SIZE): Board => {
+const parseBoardFEN = (fen: string, boardSize: BoardSize = STANDARD_BOARD_SIZE): Board => {
   assertSupportedBoardSize(boardSize)
   const rows = fen.split('/')
   if (rows.length !== boardSize.height) throw new Error(`Invalid 5DFEN board "${fen}"`)
@@ -1607,8 +1640,13 @@ const parseBoardFEN = (fen: string, boardSize: BoardSize = DEFAULT_BOARD_SIZE): 
     let x = 0
     for (let index = 0; index < rows[y]!.length; index += 1) {
       const char = rows[y]![index]!
-      if (/[1-8]/.test(char)) {
-        x += Number(char)
+      if (isDigit(char)) {
+        let next = index + 1
+        while (isDigit(rows[y]![next])) next += 1
+        const empty = Number(rows[y]!.slice(index, next))
+        if (! Number.isSafeInteger(empty) || empty <= 0) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
+        x += empty
+        index = next - 1
         continue
       }
 
@@ -1626,11 +1664,17 @@ const parseBoardFEN = (fen: string, boardSize: BoardSize = DEFAULT_BOARD_SIZE): 
   }
 
   return {
+    width: boardSize.width,
+    height: boardSize.height,
     pieces,
-    canCastleQW: hasUnmovedPiece(pieces, unmoved, 4, 7, Piece.KW) && hasUnmovedPiece(pieces, unmoved, 0, 7, Piece.RW),
-    canCastleKW: hasUnmovedPiece(pieces, unmoved, 4, 7, Piece.KW) && hasUnmovedPiece(pieces, unmoved, 7, 7, Piece.RW),
-    canCastleQB: hasUnmovedPiece(pieces, unmoved, 4, 0, Piece.KB) && hasUnmovedPiece(pieces, unmoved, 0, 0, Piece.RB),
-    canCastleKB: hasUnmovedPiece(pieces, unmoved, 4, 0, Piece.KB) && hasUnmovedPiece(pieces, unmoved, 7, 0, Piece.RB),
+    canCastleQW: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, boardSize.height - 1, Piece.KW)
+      && hasUnmovedPiece(pieces, unmoved, Board.getQueenSideRookFile(), boardSize.height - 1, Piece.RW),
+    canCastleKW: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, boardSize.height - 1, Piece.KW)
+      && hasUnmovedPiece(pieces, unmoved, boardSize.width - 1, boardSize.height - 1, Piece.RW),
+    canCastleQB: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, 0, Piece.KB)
+      && hasUnmovedPiece(pieces, unmoved, Board.getQueenSideRookFile(), 0, Piece.RB),
+    canCastleKB: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, 0, Piece.KB)
+      && hasUnmovedPiece(pieces, unmoved, boardSize.width - 1, 0, Piece.RB),
     createdBy: null,
     createdByPlayer: null,
     createdByRole: null,
@@ -1648,7 +1692,7 @@ const hasUnmovedPiece = (
   pieces[x]?.[y] === piece && unmoved.has(`${x},${y}`)
 )
 
-const formatBoardFEN = (board: Board, boardSize: BoardSize = DEFAULT_BOARD_SIZE): string => {
+const formatBoardFEN = (board: Board, boardSize: BoardSize = Board.getSize(board)): string => {
   assertSupportedBoardSize(boardSize)
   const rows: string[] = []
   for (let y = 0; y < boardSize.height; y += 1) {
@@ -1675,12 +1719,14 @@ const formatBoardFEN = (board: Board, boardSize: BoardSize = DEFAULT_BOARD_SIZE)
 }
 
 const shouldMarkUnmoved = (board: Board, piece: Piece, x: number, y: number): boolean => {
-  if (piece === Piece.KW && x === 4 && y === 7) return board.canCastleQW || board.canCastleKW
-  if (piece === Piece.RW && x === 0 && y === 7) return board.canCastleQW
-  if (piece === Piece.RW && x === 7 && y === 7) return board.canCastleKW
-  if (piece === Piece.KB && x === 4 && y === 0) return board.canCastleQB || board.canCastleKB
-  if (piece === Piece.RB && x === 0 && y === 0) return board.canCastleQB
-  if (piece === Piece.RB && x === 7 && y === 0) return board.canCastleKB
+  const whiteHomeRank = Board.getHomeRank(board, Player.W)
+  const blackHomeRank = Board.getHomeRank(board, Player.B)
+  if (piece === Piece.KW && x === Board.KING_HOME_FILE && y === whiteHomeRank) return board.canCastleQW || board.canCastleKW
+  if (piece === Piece.RW && x === Board.getQueenSideRookFile() && y === whiteHomeRank) return board.canCastleQW
+  if (piece === Piece.RW && x === Board.getKingSideRookFile(board) && y === whiteHomeRank) return board.canCastleKW
+  if (piece === Piece.KB && x === Board.KING_HOME_FILE && y === blackHomeRank) return board.canCastleQB || board.canCastleKB
+  if (piece === Piece.RB && x === Board.getQueenSideRookFile() && y === blackHomeRank) return board.canCastleQB
+  if (piece === Piece.RB && x === Board.getKingSideRookFile(board) && y === blackHomeRank) return board.canCastleKB
   return false
 }
 
@@ -1750,9 +1796,11 @@ const formatHeaders = (options: ResolvedExportOptions, glyphTemplates: readonly 
   for (const [key, value] of Object.entries(DEFAULT_HEADER_VALUES)) {
     headers.set(key, value)
   }
+  const boardSize = getMultiverseBoardSize(options.initialMultiverse ?? Multiverse.createInitial())
+  headers.set('Size', formatBoardSize(boardSize))
   applyExportHeaders(headers, options.headers)
   headers.set('Result', options.result)
-  const studyHeaders = formatStudyAnnotationHeaders(options.studyAnnotations, glyphTemplates)
+  const studyHeaders = formatStudyAnnotationHeaders(options.studyAnnotations, glyphTemplates, boardSize)
 
   const ordered: Array<{ key: string, value: string }> = []
   for (const key of HEADER_ORDER) {
@@ -1770,11 +1818,22 @@ const formatHeaders = (options: ResolvedExportOptions, glyphTemplates: readonly 
     .map(({ key, value }) => `[${key} "${escapeHeaderValue(value)}"]`)
 }
 
+const getMultiverseBoardSize = (multiverse: Multiverse): BoardSize => {
+  for (const [, line] of Multiverse.getLineEntries(multiverse)) {
+    if (! line) continue
+    for (const [, board] of Line.getBoardEntries(line)) {
+      if (board) return Board.getSize(board)
+    }
+  }
+  return STANDARD_BOARD_SIZE
+}
+
 const STUDY_HEADER_VERSION = '1'
 
 const formatStudyAnnotationHeaders = (
   annotations: readonly StudyAnnotation[],
   glyphTemplates: readonly StudyGlyphTemplate[],
+  boardSize: BoardSize,
 ): Array<{ key: string, value: string }> => {
   if (annotations.length === 0 && glyphTemplates.length === 0) return []
 
@@ -1829,7 +1888,7 @@ const formatStudyAnnotationHeaders = (
         output.push({ key: '5DStudy_Square', value: formatFlowMap({
           author: getStudyAnnotationMemberIndex(memberIndexes, annotation.authorId),
           branch: annotation.target.branchId,
-          at: formatMarkerCoord(annotation.target.coord, annotation.target.m),
+          at: formatMarkerCoord(annotation.target.coord, annotation.target.m, boardSize),
           ...(annotation.label ? { label: annotation.label } : {}),
         }) })
         break
@@ -1841,10 +1900,12 @@ const formatStudyAnnotationHeaders = (
           from: formatMarkerCoord(
             annotation.target.from,
             Coord.boardIndex(annotation.target.from, annotation.target.fromPlayer ?? Player.W),
+            boardSize,
           ),
           to: formatMarkerCoord(
             annotation.target.to,
             Coord.boardIndex(annotation.target.to, annotation.target.toPlayer ?? Player.W),
+            boardSize,
           ),
           ...(annotation.label ? { label: annotation.label } : {}),
         }) })
@@ -2088,7 +2149,10 @@ interface StudyGlyphMeta {
   index: number
 }
 
-const parseStudyHeaders = (headers: ReadonlyMap<string, readonly string[]>): ParsedStudyHeaders => {
+const parseStudyHeaders = (
+  headers: ReadonlyMap<string, readonly string[]>,
+  boardSize: BoardSize = STANDARD_BOARD_SIZE,
+): ParsedStudyHeaders => {
   try {
     if (headers.size === 0) return emptyParsedStudyHeaders()
     if (getStudyHeaderValues(headers, '5DStudy_Version')[0] !== STUDY_HEADER_VERSION) {
@@ -2102,9 +2166,9 @@ const parseStudyHeaders = (headers: ReadonlyMap<string, readonly string[]>): Par
     return {
       markerAnnotations: [
         ...getStudyHeaderValues(headers, '5DStudy_Square')
-          .map((value, index) => parseStudySquareMarkerAnnotation(value, index, members)),
+          .map((value, index) => parseStudySquareMarkerAnnotation(value, index, members, boardSize)),
         ...getStudyHeaderValues(headers, '5DStudy_Arrow')
-          .map((value, index) => parseStudyArrowMarkerAnnotation(value, index, members)),
+          .map((value, index) => parseStudyArrowMarkerAnnotation(value, index, members, boardSize)),
       ]
         .filter((annotation): annotation is StudyMarkerAnnotation => annotation !== null),
       commentMetas: getStudyHeaderValues(headers, '5DStudy_CommentMeta')
@@ -2199,10 +2263,11 @@ const parseStudySquareMarkerAnnotation = (
   value: string,
   index: number,
   members: readonly string[],
+  boardSize: BoardSize,
 ): StudyMarkerAnnotation | null => {
   const item = parseFlowMap(value)
   const branchId = readFlowString(item.branch)
-  const target = parseMarkerCoord(readFlowString(item.at))
+  const target = parseMarkerCoord(readFlowString(item.at), boardSize)
   const authorId = readAuthorId(item.author, members)
   if (! branchId || target === null || authorId === null) return null
   return {
@@ -2224,11 +2289,12 @@ const parseStudyArrowMarkerAnnotation = (
   value: string,
   index: number,
   members: readonly string[],
+  boardSize: BoardSize,
 ): StudyMarkerAnnotation | null => {
   const item = parseFlowMap(value)
   const branchId = readFlowString(item.branch)
-  const from = parseMarkerCoord(readFlowString(item.from))
-  const to = parseMarkerCoord(readFlowString(item.to))
+  const from = parseMarkerCoord(readFlowString(item.from), boardSize)
+  const to = parseMarkerCoord(readFlowString(item.to), boardSize)
   const authorId = readAuthorId(item.author, members)
   if (! branchId || from === null || to === null || authorId === null) return null
   return {
@@ -2280,32 +2346,40 @@ const formatOptionalString = <Key extends string>(
   typeof value === 'string' ? { [key]: value } as Partial<Record<Key, string>> : {}
 )
 
-const formatMarkerCoord = (coord: Coord, m: number): string => `(${coord.l}M${m})${formatSquare(coord)}`
+const formatMarkerCoord = (coord: Coord, m: number, boardSize: BoardSize): string => (
+  `(${coord.l}M${m})${formatSquare(coord, boardSize)}`
+)
 
-const parseMarkerCoord = (value: string | null): { coord: Coord, m: number, player: Player } | null => {
+const parseMarkerCoord = (
+  value: string | null,
+  boardSize: BoardSize = STANDARD_BOARD_SIZE,
+): { coord: Coord, m: number, player: Player } | null => {
   if (value === null) return null
-  const match = /^\(([+-]?\d+)M([+-]?\d+)\)([a-h])([1-8])$/.exec(value)
+  const match = /^\(([+-]?\d+)M([+-]?\d+)\)([a-z])([1-9]\d*)$/i.exec(value)
   if (! match) return null
   const l = Number(match[1])
   const m = Number(match[2])
   const player = m % 2 === Player.B ? Player.B : Player.W
-  const file = match[3]!
+  const file = match[3]!.toLowerCase()
   const rank = match[4]!
+  if (! isFile(file, boardSize) || ! isRank(rank, boardSize)) return null
   return {
     coord: {
       l,
       t: Math.floor(m / 2),
-      ...parseSquare(file, rank),
+      ...parseSquare(file, rank, boardSize),
     },
     m,
     player,
   }
 }
 
-const parseSquare = (file: string, rank: string): CoordSpacelike => ({
+const parseSquare = (file: string, rank: string, boardSize: BoardSize): CoordSpacelike => ({
   x: FILES.indexOf(file),
-  y: 8 - Number(rank),
+  y: parseRankY(rank, boardSize),
 })
+
+const parseRankY = (rank: string, { height }: BoardSize): number => height - Number(rank)
 
 const formatMove = (
   { from, to }: Move,
@@ -2316,7 +2390,7 @@ const formatMove = (
   const promotion = options.includePromotionMarkers && context.promotion ? '=Q' : ''
   const suffix = options.includeCheckMarkers ? context.suffix : ''
   const capture = options.includeCaptureMarkers && context.capture ? 'x' : ''
-  const toSquare = formatSquare(to)
+  const toSquare = formatSquare(to, context.boardSize)
   if (Coord.isSameBoard(from, to)) {
     const text = `${fromText}${capture}${toSquare}${promotion}${suffix}`
     return {
@@ -2356,10 +2430,10 @@ const getSourceHint = (
   context: SourceHintContext,
   options: ResolvedExportOptions,
 ): string => {
-  const fullSource = formatSquare(move.from)
+  const fullSource = formatSquare(move.from, context.boardSize)
   if (! options.omitUnnecessarySourceSquares) return fullSource
 
-  for (const hint of getSourceHintCandidates(move.from)) {
+  for (const hint of getSourceHintCandidates(move.from, context.boardSize)) {
     if (doesMoveTokenResolveToMove(
       formatMoveTokenForSourceHint(move, context, options, hint),
       move,
@@ -2373,9 +2447,9 @@ const getSourceHint = (
   return fullSource
 }
 
-const getSourceHintCandidates = (from: CoordSpacelike): string[] => {
+const getSourceHintCandidates = (from: CoordSpacelike, boardSize: BoardSize): string[] => {
   const file = FILES[from.x]!
-  const rank = `${8 - from.y}`
+  const rank = `${boardSize.height - from.y}`
   return ['', file, rank, `${file}${rank}`]
 }
 
@@ -2388,7 +2462,7 @@ const formatMoveTokenForSourceHint = (
   const sourceText = `${context.sourceBoardText}${formatPieceSymbol(context.piece, options)}${sourceHint}`
   const promotion = options.includePromotionMarkers && context.promotion ? '=Q' : ''
   const capture = options.includeCaptureMarkers && context.capture ? 'x' : ''
-  const toSquare = formatSquare(move.to)
+  const toSquare = formatSquare(move.to, context.boardSize)
   if (Coord.isSameBoard(move.from, move.to)) return `${sourceText}${capture}${toSquare}${promotion}`
 
   const travel = options.includeTravelMarkers
@@ -2405,7 +2479,8 @@ const doesMoveTokenResolveToMove = (
   order: number,
 ): boolean => {
   try {
-    const pattern = parseMovePattern(token, player)
+    const board = Multiverse.getBoard(multiverse, move.from, player)
+    const pattern = parseMovePattern(token, player, board ? Board.getSize(board) : STANDARD_BOARD_SIZE)
     const matches = getLegalMoveCandidates(multiverse, player, order).filter(candidate => (
       matchesMovePattern(candidate, pattern, multiverse, player)
     ))
@@ -2426,7 +2501,9 @@ const isSameMove = (p: Move, q: Move): boolean => (
 
 const formatBoard = ({ l, t }: CoordTimelike): string => `(${l}T${t})`
 
-const formatSquare = ({ x, y }: CoordSpacelike): string => `${FILES[x]}${8 - y}`
+const formatSquare = ({ x, y }: CoordSpacelike, { height }: BoardSize = STANDARD_BOARD_SIZE): string => (
+  `${FILES[x]}${height - y}`
+)
 
 const formatPieceSymbol = (piece: Piece, options: ResolvedExportOptions): string => (
   options.includePieceSymbols ? PIECE_SYMBOLS[piece] ?? '' : ''
@@ -2436,11 +2513,6 @@ const resolveExportOptions = (options: ExportOptions): ResolvedExportOptions => 
   ...DEFAULT_EXPORT_OPTIONS,
   ...options,
 })
-
-const getMovePiece = (multiverse: Multiverse, { from }: Move, player: Player): Piece => {
-  const board = Multiverse.getBoard(multiverse, from, player)
-  return board ? Board.getPiece(from, board) : Piece.E
-}
 
 const isCaptureMove = (
   multiverse: Multiverse,
@@ -2472,8 +2544,8 @@ const isBranchingMove = (multiverse: Multiverse, { from, to }: Move, player: Pla
   return Coord.boardIndex(to, player) < latestM
 }
 
-const isPromotionMove = (piece: Piece, to: CoordSpacelike): boolean => (
-  Pieces.promotePawn(piece, to) !== piece
+const isPromotionMove = (piece: Piece, to: CoordSpacelike, boardSize: BoardSize): boolean => (
+  Pieces.promotePawn(piece, to, boardSize) !== piece
 )
 
 const getChecksGiven = (multiverse: Multiverse, attackingPlayer: Player): Move[] => (
