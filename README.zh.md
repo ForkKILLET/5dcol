@@ -130,6 +130,17 @@ compose 文件默认使用发布到 GHCR 的
 [ftxi/5dchess_engine](https://github.com/ftxi/5dchess_engine)
 中的实现与思路。
 
+棋子素材沿用了原游戏附带的 attribution 说明：标准棋子由 Colin M.L.
+Burnett 绘制；独角兽棋子基于 Burnett 的马 SVG，由 Francois-Pier 修改；
+dragon、brawn、princess、royal queen 和 common king 棋子基于 Burnett
+的棋子 SVG，由 Conor Petersen 修改。来源链接和许可证文本见
+[`attributions_svg_chess_pieces.txt`](./packages/frontend/public/assets/textures/pieces/attributions_svg_chess_pieces.txt)。
+
+音效和音乐沿用原游戏的 attribution 列表，主要来自 Freesound，许可证以
+Creative Commons 0 为主，其中 Anton 的 `wind1.wav` 使用 Creative
+Commons Attribution 3.0。完整来源列表见
+[`attributions_sounds.txt`](./packages/frontend/public/assets/sounds/attributions_sounds.txt)。
+
 5DC OL 是非官方粉丝项目，与 Thunkspace 或原 5D Chess 团队没有从属关系。
 
 ## 许可证

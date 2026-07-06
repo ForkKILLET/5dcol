@@ -149,6 +149,20 @@ ports, volumes, or networks.
 The hypercuboid checkmate algorithm is based on the implementation and ideas
 from [ftxi/5dchess_engine](https://github.com/ftxi/5dchess_engine).
 
+The chess piece assets follow the attribution notes shipped with the original
+game: standard pieces are by Colin M.L. Burnett, unicorn pieces are derived from
+Burnett's knight SVGs and modified by Francois-Pier, and the dragon, brawn,
+princess, royal queen, and common king pieces are derived from Burnett's piece
+SVGs and modified by Conor Petersen. See
+[`attributions_svg_chess_pieces.txt`](./packages/frontend/public/assets/textures/pieces/attributions_svg_chess_pieces.txt)
+for source URLs and license text.
+
+Sound effects and music follow the original game's attribution list, primarily
+from Freesound under Creative Commons 0, with `wind1.wav` by Anton under
+Creative Commons Attribution 3.0. See
+[`attributions_sounds.txt`](./packages/frontend/public/assets/sounds/attributions_sounds.txt)
+for the full source list.
+
 5DC OL is an unofficial fan project and is not affiliated with Thunkspace or
 the original 5D Chess team.
 
