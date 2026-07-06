@@ -175,6 +175,7 @@ function drawSnapshot(
   ctx.globalAlpha = 1
 
   drawPieces(ctx, snapshot, layout, visibleColumnIndexes)
+  drawAxisViewColumnSeparators(ctx, layout, visibleColumns.length, snapshot.rowLabels.length, colors)
   ctx.restore()
 }
 
@@ -236,6 +237,31 @@ function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRec
   ctx.fillRect(x, y, w, h)
 }
 
+function drawAxisViewColumnSeparators(
+  ctx: CanvasRenderingContext2D,
+  layout: AxisViewCanvasLayout,
+  columnCount: number,
+  rowCount: number,
+  colors: ReturnType<typeof getAxisViewColors>,
+) {
+  if (columnCount <= 1) return
+
+  const y0 = getAxisViewRowEdge(layout, 0)
+  const y1 = getAxisViewRowEdge(layout, rowCount)
+
+  ctx.save()
+  ctx.strokeStyle = colors.columnSeparator
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let columnIndex = 1; columnIndex < columnCount; columnIndex++) {
+    const x = getAxisViewColumnEdge(layout, columnIndex) + 0.5
+    ctx.moveTo(x, y0)
+    ctx.lineTo(x, y1)
+  }
+  ctx.stroke()
+  ctx.restore()
+}
+
 function getAxisViewCellRect(
   layout: AxisViewCanvasLayout,
   columnIndex: number,
@@ -295,6 +321,7 @@ function getAxisViewColors(element: HTMLElement) {
       light: Color4.toRgbaString(Colors.BoardWhite),
     },
     columnHighlightFill: withAlpha(Color4.toRgbaString(Colors.BoardHighlightWhite), 0.58),
+    columnSeparator: withAlpha(Color4.toRgbaString(Colors.BoardBorderBlack), 0.42),
     labelText: getCssColor(style, '--button-text-color', 'rgba(244, 245, 237, 1)'),
   }
 }
