@@ -1,8 +1,19 @@
 services:
   5dcol-backend:
     image: ${FIVE_DCOL_BACKEND_IMAGE:-ghcr.io/forkkillet/5dcol-backend:latest}
+
     restart: unless-stopped
+
+    healthcheck:
+      test: ['CMD-SHELL', 'nc -z 127.0.0.1 5161']
+      interval: 30s
+      timeout: 1s
+      retries: 1
+      start_period: 30s
+
     environment:
       - PORT=5161
+      - NAME=${NAME}
+
     volumes:
       - ./data:/app/data

@@ -52,4 +52,4 @@ COPY --from=build /app/packages/backend/drizzle packages/backend/drizzle
 
 EXPOSE 5161
 
-CMD ["node", "./packages/backend/dist/main.js"]
+CMD ["node", "./packages/backend/dist/index.js"]
