@@ -3,10 +3,12 @@ import { ref, watch } from 'vue'
 import GameButton from './GameButton.vue'
 import GamePanel from './GamePanel.vue'
 import GameTextInput from './GameTextInput.vue'
+import GameToggle from './GameToggle.vue'
 
 const name = defineModel<string>('name', { required: true })
+const visibilityPrivate = defineModel<boolean>('visibilityPrivate', { default: false })
 
-defineProps<{
+withDefaults(defineProps<{
   backLabel: string
   deleteConfirmLabel: string
   deleteLabel: string
@@ -15,8 +17,16 @@ defineProps<{
   nameLabel: string
   namePlaceholder: string
   saveLabel: string
+  showVisibility?: boolean
   title: string
-}>()
+  visibilityLabel?: string
+  visibilityPrivateLabel?: string
+}>(), {
+  meta: '',
+  showVisibility: false,
+  visibilityLabel: '',
+  visibilityPrivateLabel: '',
+})
 
 const emit = defineEmits<{
   back: []
@@ -27,6 +37,10 @@ const emit = defineEmits<{
 const confirmingDelete = ref(false)
 
 watch(name, () => {
+  confirmingDelete.value = false
+})
+
+watch(visibilityPrivate, () => {
   confirmingDelete.value = false
 })
 
@@ -75,6 +89,19 @@ function clickSave() {
           />
         </span>
       </label>
+
+      <div
+        v-if="showVisibility"
+        class="room-manage-panel__row"
+      >
+        <span>{{ visibilityLabel }}</span>
+        <GameToggle
+          v-model="visibilityPrivate"
+          size="small"
+        >
+          <span>{{ visibilityPrivateLabel }}</span>
+        </GameToggle>
+      </div>
 
       <section class="room-manage-panel__danger">
         <div class="room-manage-panel__danger-title">{{ dangerTitle }}</div>

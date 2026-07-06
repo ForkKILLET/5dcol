@@ -44,6 +44,11 @@ type StudyCreateTarget =
   | { kind: 'local' }
   | { kind: 'online', serverId: string }
 
+interface OnlineStudyManageTarget {
+  serverId: string
+  studyId: string
+}
+
 interface StudyServerState {
   id: string
   address: string
@@ -78,6 +83,9 @@ const sortedSummaries = computed(() => summaries.value)
 const activeTab = ref<'local' | 'online'>('local')
 const managingStudyId = ref<string | null>(null)
 const managingStudyTitle = ref('')
+const managingOnlineStudy = ref<OnlineStudyManageTarget | null>(null)
+const managingOnlineStudyTitle = ref('')
+const managingOnlineStudyPrivate = ref(true)
 const studyCreateTarget = ref<StudyCreateTarget | null>(null)
 const studyCreateName = ref('')
 const studyCreatePrivate = ref(true)
@@ -101,6 +109,20 @@ const managedStudy = computed(() => (
     ? null
     : sortedSummaries.value.find(study => study.id === managingStudyId.value) ?? null
 ))
+const managedOnlineStudyServer = computed(() => {
+  const target = managingOnlineStudy.value
+  return target
+    ? studyServers.find(server => server.id === target.serverId) ?? null
+    : null
+})
+const managedOnlineStudyRoom = computed(() => {
+  const target = managingOnlineStudy.value
+  const server = managedOnlineStudyServer.value
+  return target && server
+    ? server.studies.find(study => study.id === target.studyId) ?? null
+    : null
+})
+const isManagingStudy = computed(() => managingStudyId.value !== null || managingOnlineStudy.value !== null)
 const pageTitle = computed(() => {
   if (activeTab.value === 'local') return t('study.localTitle')
   return t('study.onlineTitle')
@@ -286,15 +308,34 @@ function openStudyCreatePanel(target: StudyCreateTarget, source: StudySourceKind
 function openStudyManagePanel(id: string, title: string) {
   emit('uiSound')
   closeStudyCreatePanel({ sound: false })
+  managingOnlineStudy.value = null
+  managingOnlineStudyTitle.value = ''
   managingStudyId.value = id
   managingStudyTitle.value = title
 }
 
+function openOnlineStudyManagePanel(server: StudyServerState, study: StudyRoom) {
+  if (! canManageOnlineStudy(study)) return
+  emit('uiSound')
+  closeStudyCreatePanel({ sound: false })
+  managingStudyId.value = null
+  managingStudyTitle.value = ''
+  managingOnlineStudy.value = {
+    serverId: server.id,
+    studyId: study.id,
+  }
+  managingOnlineStudyTitle.value = study.name
+  managingOnlineStudyPrivate.value = study.private
+}
+
 function closeStudyManagePanel(options: { sound?: boolean } = {}) {
-  if (! managingStudyId.value) return
+  if (! isManagingStudy.value) return
   if (options.sound !== false) emit('uiSound')
   managingStudyId.value = null
   managingStudyTitle.value = ''
+  managingOnlineStudy.value = null
+  managingOnlineStudyTitle.value = ''
+  managingOnlineStudyPrivate.value = true
 }
 
 function closeStudyCreatePanel(options: { sound?: boolean } = {}) {
@@ -436,8 +477,12 @@ function getStudyVisibilityMeta(study: StudyRoom) {
     : t('study.public')
 }
 
+function canManageOnlineStudy(study: StudyRoom) {
+  return study.ownerUserId === onlineUserId.value
+}
+
 function openStudy(id: string) {
-  if (managingStudyId.value) return
+  if (isManagingStudy.value) return
   const study = getStudy(id)
   if (! study) return
   emit('uiSound')
@@ -461,6 +506,48 @@ function saveManagedStudy() {
   emit('uiSound')
   renameStudy(id, managingStudyTitle.value)
   closeStudyManagePanel({ sound: false })
+}
+
+async function saveManagedOnlineStudy() {
+  const target = managingOnlineStudy.value
+  const server = managedOnlineStudyServer.value
+  if (! target || ! server || ! onlineUserId.value) return
+
+  emit('uiSound')
+  try {
+    const client = new MatchClient(server.address)
+    const response = await client.updateStudy(target.studyId, {
+      userId: onlineUserId.value,
+      name: managingOnlineStudyTitle.value,
+      private: managingOnlineStudyPrivate.value,
+    })
+    upsertServerStudy(server, response.room)
+    closeStudyManagePanel({ sound: false })
+  }
+  catch (err) {
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function removeManagedOnlineStudy() {
+  const target = managingOnlineStudy.value
+  const server = managedOnlineStudyServer.value
+  if (! target || ! server || ! onlineUserId.value) return
+
+  emit('uiSound')
+  try {
+    const client = new MatchClient(server.address)
+    await client.deleteStudy(target.studyId, {
+      userId: onlineUserId.value,
+    })
+    server.studies = server.studies.filter(study => study.id !== target.studyId)
+    closeStudyManagePanel({ sound: false })
+  }
+  catch (err) {
+    server.status = 'failed'
+    server.error = err instanceof Error ? err.message : String(err)
+  }
 }
 
 function close() {
@@ -495,6 +582,9 @@ function syncStudyServerRegistry() {
     expandedStudyServerIds.delete(server.id)
     if (studyCreateTarget.value?.kind === 'online' && studyCreateTarget.value.serverId === server.id) {
       closeStudyCreatePanel({ sound: false })
+    }
+    if (managingOnlineStudy.value?.serverId === server.id) {
+      closeStudyManagePanel({ sound: false })
     }
   }
 
@@ -553,7 +643,7 @@ function syncStudyServerRegistry() {
       </div>
 
       <OnlinePanelToolbar
-        v-if="activeTab === 'online' && !studyCreateTarget && !managingStudyId"
+        v-if="activeTab === 'online' && !studyCreateTarget && !isManagingStudy"
         v-model:nickname="studyNickname"
         class="study-online-toolbar"
         :show-back="false"
@@ -562,7 +652,7 @@ function syncStudyServerRegistry() {
       />
 
       <div
-        v-if="activeTab === 'local' && !studyCreateTarget && !managingStudyId"
+        v-if="activeTab === 'local' && !studyCreateTarget && !isManagingStudy"
         class="study-local-toolbar"
       >
         <GameButton
@@ -616,6 +706,30 @@ function syncStudyServerRegistry() {
         @back="closeStudyManagePanel"
         @save="saveManagedStudy"
         @delete="removeManagedStudy"
+      />
+      <RoomManagePanel
+        v-else-if="activeTab === 'online' && managedOnlineStudyRoom"
+        v-model:name="managingOnlineStudyTitle"
+        v-model:visibility-private="managingOnlineStudyPrivate"
+        :title="t('study.manageOnlineTitle')"
+        :meta="[
+          managedOnlineStudyServer?.name || managedOnlineStudyServer?.address || '',
+          getStudyMeta(managedOnlineStudyRoom),
+          getStudyMemberMeta(managedOnlineStudyRoom),
+        ].filter(Boolean).join(' - ')"
+        :name-label="t('study.studyName')"
+        :name-placeholder="t('study.namePlaceholder')"
+        :show-visibility="true"
+        :visibility-label="t('room.visibility')"
+        :visibility-private-label="t('study.private')"
+        :danger-title="t('room.dangerZone')"
+        :delete-label="t('button.delete')"
+        :delete-confirm-label="t('room.confirmDelete')"
+        :back-label="t('button.back')"
+        :save-label="t('button.save')"
+        @back="closeStudyManagePanel"
+        @save="saveManagedOnlineStudy"
+        @delete="removeManagedOnlineStudy"
       />
       <div
         v-else-if="activeTab === 'local'"
@@ -702,6 +816,13 @@ function syncStudyServerRegistry() {
                     <span>{{ getStudyVisibilityMeta(study) }}</span>
                   </template>
                   <template #actions>
+                    <GameButton
+                      v-if="canManageOnlineStudy(study)"
+                      size="small"
+                      @click="openOnlineStudyManagePanel(server, study)"
+                    >
+                      <span>{{ t('button.manage') }}</span>
+                    </GameButton>
                     <GameButton
                       size="small"
                       @click="openOnlineStudy(server, study)"

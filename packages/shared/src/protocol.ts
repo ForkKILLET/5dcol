@@ -681,6 +681,32 @@ export const JoinStudyRoomResponseSchema = z.object({
 
 export type JoinStudyRoomResponse = z.infer<typeof JoinStudyRoomResponseSchema>
 
+export const UpdateStudyRoomRequestSchema = z.object({
+  userId: z.string(),
+  name: z.string().optional(),
+  private: z.boolean().optional(),
+})
+
+export type UpdateStudyRoomRequest = z.infer<typeof UpdateStudyRoomRequestSchema>
+
+export const UpdateStudyRoomResponseSchema = z.object({
+  room: StudyRoomSchema,
+})
+
+export type UpdateStudyRoomResponse = z.infer<typeof UpdateStudyRoomResponseSchema>
+
+export const DeleteStudyRoomRequestSchema = z.object({
+  userId: z.string(),
+})
+
+export type DeleteStudyRoomRequest = z.infer<typeof DeleteStudyRoomRequestSchema>
+
+export const DeleteStudyRoomResponseSchema = z.object({
+  roomId: z.string(),
+})
+
+export type DeleteStudyRoomResponse = z.infer<typeof DeleteStudyRoomResponseSchema>
+
 export const StudyDocumentPatchRequestSchema = z.object({
   userId: z.string(),
   baseVersion: z.number().int().nonnegative(),

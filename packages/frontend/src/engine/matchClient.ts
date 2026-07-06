@@ -1,6 +1,7 @@
 import {
   CreateMatchRoomResponseSchema,
   CreateStudyRoomResponseSchema,
+  DeleteStudyRoomResponseSchema,
   ForfeitMatchRoomResponseSchema,
   GetMatchRoomStateResponseSchema,
   GetMatchSessionResponseSchema,
@@ -13,6 +14,7 @@ import {
   MatchServerInfoSchema,
   StudyRoomsResponseSchema,
   SubmitMatchActionResponseSchema,
+  UpdateStudyRoomResponseSchema,
   parseMatchRoomEvent,
   parseStudyRoomEvent,
 } from '@5dcol/shared/protocol'
@@ -21,6 +23,8 @@ import type {
   CreateMatchRoomResponse,
   CreateStudyRoomRequest,
   CreateStudyRoomResponse,
+  DeleteStudyRoomRequest,
+  DeleteStudyRoomResponse,
   ForfeitMatchRoomRequest,
   GetStudyRoomStateResponse,
   JoinMatchRoomRequest,
@@ -42,6 +46,8 @@ import type {
   StudyRoomEvent,
   StudyRoom,
   SubmitMatchActionRequest,
+  UpdateStudyRoomRequest,
+  UpdateStudyRoomResponse,
 } from '@5dcol/shared/protocol'
 import type { Move } from '@5dcol/core'
 
@@ -199,6 +205,26 @@ export class MatchClient {
       `/studies/${encodeURIComponent(studyId)}/join`,
       {
         method: 'POST',
+        body: JSON.stringify(request),
+      },
+    ))
+  }
+
+  async updateStudy(studyId: string, request: UpdateStudyRoomRequest): Promise<UpdateStudyRoomResponse> {
+    return UpdateStudyRoomResponseSchema.parse(await this.request(
+      `/studies/${encodeURIComponent(studyId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(request),
+      },
+    ))
+  }
+
+  async deleteStudy(studyId: string, request: DeleteStudyRoomRequest): Promise<DeleteStudyRoomResponse> {
+    return DeleteStudyRoomResponseSchema.parse(await this.request(
+      `/studies/${encodeURIComponent(studyId)}`,
+      {
+        method: 'DELETE',
         body: JSON.stringify(request),
       },
     ))

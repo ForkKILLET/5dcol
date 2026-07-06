@@ -8,6 +8,7 @@ import { Action, GameState, Multiverse, Player } from '@5dcol/core'
 import {
   CreateStudyRoomRequestSchema,
   ChatMessageSchema,
+  DeleteStudyRoomRequestSchema,
   MATCH_PROTOCOL_VERSION,
   MatchRoomClientEventSchema,
   MatchRoomSettingsSchema,
@@ -19,11 +20,14 @@ import {
   StudyRoomClientEventSchema,
   StudyRoomSchema,
   SubmitMatchActionRequestSchema,
+  UpdateStudyRoomRequestSchema,
   type ChatMessage,
   type CreateMatchRoomRequest,
   type CreateMatchRoomResponse,
   type CreateStudyRoomRequest,
   type CreateStudyRoomResponse,
+  type DeleteStudyRoomRequest,
+  type DeleteStudyRoomResponse,
   type ForfeitMatchRoomRequest,
   type ForfeitMatchRoomResponse,
   type GetMatchServerStatsResponse,
@@ -67,6 +71,8 @@ import {
   type StudyRoom,
   type SubmitMatchActionRequest,
   type SubmitMatchActionResponse,
+  type UpdateStudyRoomRequest,
+  type UpdateStudyRoomResponse,
 } from '@5dcol/shared/protocol'
 import { createRoomStorage, type UserState } from './storage.ts'
 
@@ -449,6 +455,65 @@ export function createBackendServer(options: BackendServerOptions) {
     }
   })
 
+  app.patch<{ Params: { id: string }, Body: UpdateStudyRoomRequest }>(
+    '/studies/:id',
+    async (request, reply): Promise<UpdateStudyRoomResponse | MatchErrorResponse> => {
+      const body = UpdateStudyRoomRequestSchema.parse(request.body)
+      const room = studyRooms.find(room => room.id === request.params.id)
+      if (! room) return sendError(reply, 404, 'Study not found')
+
+      const user = findUser(users, body.userId)
+      if (! user || ! canManageStudyRoom(room, user.id)) return sendError(reply, 403, 'Permission denied')
+
+      const patches: StudyPatch[] = []
+      if (body.name !== undefined) {
+        const title = body.name.trim()
+        if (! title) return sendError(reply, 400, 'Study name is required')
+        if (title !== room.name) {
+          patches.push({
+            type: 'update-title',
+            title,
+          })
+        }
+      }
+      if (body.private !== undefined && body.private !== room.private) {
+        patches.push({
+          type: 'update-private',
+          private: body.private,
+        })
+      }
+
+      for (const patch of patches) applyStudyPatch(room, patch)
+      if (patches.length > 0) {
+        saveAll()
+        broadcastStudyState(studySubscribers, studyPresence, chatMessages, room)
+      }
+
+      return { room }
+    },
+  )
+
+  app.delete<{ Params: { id: string }, Body: DeleteStudyRoomRequest }>(
+    '/studies/:id',
+    async (request, reply): Promise<DeleteStudyRoomResponse | MatchErrorResponse> => {
+      const body = DeleteStudyRoomRequestSchema.parse(request.body)
+      const roomIndex = studyRooms.findIndex(room => room.id === request.params.id)
+      if (roomIndex < 0) return sendError(reply, 404, 'Study not found')
+
+      const room = studyRooms[roomIndex]!
+      const user = findUser(users, body.userId)
+      if (! user || ! canDeleteStudyRoom(room, user.id)) return sendError(reply, 403, 'Permission denied')
+
+      studyRooms.splice(roomIndex, 1)
+      removeStudyChatMessages(chatMessages, room.id)
+      closeStudySubscribers(studySubscribers, room.id)
+      studyPresence.delete(room.id)
+      saveAll()
+
+      return { roomId: room.id }
+    },
+  )
+
   app.get<{ Params: { id: string } }>(
     '/studies/:id/state',
     async (request, reply): Promise<GetStudyRoomStateResponse | MatchErrorResponse> => {
@@ -602,6 +667,13 @@ function getStudyChatMessages(messages: ChatMessage[], roomId: string): ChatMess
     .filter(message => message.roomKind === 'study' && message.roomId === roomId)
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(-STUDY_CHAT_HISTORY_LIMIT)
+}
+
+function removeStudyChatMessages(messages: ChatMessage[], roomId: string) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]!
+    if (message.roomKind === 'study' && message.roomId === roomId) messages.splice(i, 1)
+  }
 }
 
 function leaveRoom(room: RoomState, session: SessionState) {
@@ -1184,6 +1256,15 @@ function canEditStudyRoom(room: StudyRoom, userId: string): boolean {
     || member?.role === 'editor'
 }
 
+function canManageStudyRoom(room: StudyRoom, userId: string): boolean {
+  const member = room.members.find(member => member.userId === userId)
+  return member?.role === 'owner' || member?.role === 'moderator'
+}
+
+function canDeleteStudyRoom(room: StudyRoom, userId: string): boolean {
+  return room.ownerUserId === userId
+}
+
 function requiresExistingStudyEditPermission(command: StudyCommand): boolean {
   return command.type === 'update-private'
 }
@@ -1687,6 +1768,19 @@ function broadcastStudyEvent(
   for (const subscriber of subscribers) {
     subscriber.socket.send(JSON.stringify(event))
   }
+}
+
+function closeStudySubscribers(
+  studySubscribers: Map<string, Set<StudySubscriber>>,
+  roomId: string,
+) {
+  const subscribers = studySubscribers.get(roomId)
+  if (! subscribers) return
+
+  for (const subscriber of subscribers) {
+    subscriber.socket.close()
+  }
+  studySubscribers.delete(roomId)
 }
 
 function broadcastPendingAction(
