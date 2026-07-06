@@ -4522,22 +4522,36 @@ export class Game extends Disposable(Empty) {
     if (focusPulse <= 0) return
 
     const focusPreset = boardPlayer === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
-    const mask = this.getBoardFocusMaskRect(pos, metrics)
     this.renderer.submit({
       type: RenderItemType.Quad,
       layer: RenderLayer.MoveHighlight,
       order: -1,
-      mat: Mat3.transform(mask.pos, mask.size),
+      mat: Mat3.transform(pos, metrics.contentSize),
       color: Color4.withAlpha(
         focusPreset.fill,
         alpha * focusPulse * Animations.BoardFocusMaskAlpha,
       ),
     })
+
+    const axisFocusRect = this.getBoardAxisFocusRect(pos, metrics)
+    if (! axisFocusRect) return
+
+    this.renderer.submit({
+      type: RenderItemType.RoundRect,
+      layer: RenderLayer.MoveHighlight,
+      order: 0,
+      pos: axisFocusRect.pos,
+      size: axisFocusRect.size,
+      radius: 0,
+      fill: null,
+      stroke: Color4.withAlpha(focusPreset.border, alpha * focusPulse),
+      strokeWidth: Sizes.BoardBorder,
+    })
   }
 
-  private getBoardFocusMaskRect(pos: Vec2, metrics: BoardRenderMetrics): { pos: Vec2, size: Vec2 } {
+  private getBoardAxisFocusRect(pos: Vec2, metrics: BoardRenderMetrics): { pos: Vec2, size: Vec2 } | null {
     const axisFocus = this.boardFocusPulse?.axisFocus
-    if (! axisFocus) return { pos, size: metrics.contentSize }
+    if (! axisFocus) return null
 
     if (axisFocus.type === 'file') {
       const squarePos = this.getSquarePos(pos[0], pos[1], { x: axisFocus.coord, y: 0 }, metrics)
