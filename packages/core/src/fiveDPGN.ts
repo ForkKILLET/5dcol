@@ -1637,7 +1637,7 @@ const parseBoardFEN = (fen: string, boardSize: BoardSize = STANDARD_BOARD_SIZE):
   if (rows.length !== boardSize.height) throw new Error(`Invalid 5DFEN board "${fen}"`)
 
   const pieces = Array.from({ length: boardSize.width }, () => Array.from({ length: boardSize.height }, () => Piece.E))
-  const unmoved = new Set<string>()
+  const explicitUnmoved = new Set<string>()
 
   for (let y = 0; y < rows.length; y += 1) {
     let x = 0
@@ -1658,7 +1658,7 @@ const parseBoardFEN = (fen: string, boardSize: BoardSize = STANDARD_BOARD_SIZE):
       if (x >= boardSize.width) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
       pieces[x]![y] = piece
       if (rows[y]![index + 1] === '*') {
-        unmoved.add(`${x},${y}`)
+        explicitUnmoved.add(`${x},${y}`)
         index += 1
       }
       x += 1
@@ -1670,14 +1670,17 @@ const parseBoardFEN = (fen: string, boardSize: BoardSize = STANDARD_BOARD_SIZE):
     width: boardSize.width,
     height: boardSize.height,
     pieces,
-    canCastleQW: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, boardSize.height - 1, Piece.KW)
-      && hasUnmovedPiece(pieces, unmoved, Board.getQueenSideRookFile(), boardSize.height - 1, Piece.RW),
-    canCastleKW: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, boardSize.height - 1, Piece.KW)
-      && hasUnmovedPiece(pieces, unmoved, boardSize.width - 1, boardSize.height - 1, Piece.RW),
-    canCastleQB: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, 0, Piece.KB)
-      && hasUnmovedPiece(pieces, unmoved, Board.getQueenSideRookFile(), 0, Piece.RB),
-    canCastleKB: hasUnmovedPiece(pieces, unmoved, Board.KING_HOME_FILE, 0, Piece.KB)
-      && hasUnmovedPiece(pieces, unmoved, boardSize.width - 1, 0, Piece.RB),
+    unmoved: Board.createUnmovedMask(pieces, (piece, x, y) => (
+      explicitUnmoved.has(`${x},${y}`) || Pieces.isPawnlike(piece)
+    )),
+    canCastleQW: hasUnmovedPiece(pieces, explicitUnmoved, Board.KING_HOME_FILE, boardSize.height - 1, Piece.KW)
+      && hasUnmovedPiece(pieces, explicitUnmoved, Board.getQueenSideRookFile(), boardSize.height - 1, Piece.RW),
+    canCastleKW: hasUnmovedPiece(pieces, explicitUnmoved, Board.KING_HOME_FILE, boardSize.height - 1, Piece.KW)
+      && hasUnmovedPiece(pieces, explicitUnmoved, boardSize.width - 1, boardSize.height - 1, Piece.RW),
+    canCastleQB: hasUnmovedPiece(pieces, explicitUnmoved, Board.KING_HOME_FILE, 0, Piece.KB)
+      && hasUnmovedPiece(pieces, explicitUnmoved, Board.getQueenSideRookFile(), 0, Piece.RB),
+    canCastleKB: hasUnmovedPiece(pieces, explicitUnmoved, Board.KING_HOME_FILE, 0, Piece.KB)
+      && hasUnmovedPiece(pieces, explicitUnmoved, boardSize.width - 1, 0, Piece.RB),
     createdBy: null,
     createdByPlayer: null,
     createdByRole: null,
@@ -1730,6 +1733,7 @@ const shouldMarkUnmoved = (board: Board, piece: Piece, x: number, y: number): bo
   if (piece === Piece.KB && x === Board.KING_HOME_FILE && y === blackHomeRank) return board.canCastleQB || board.canCastleKB
   if (piece === Piece.RB && x === Board.getQueenSideRookFile() && y === blackHomeRank) return board.canCastleQB
   if (piece === Piece.RB && x === Board.getKingSideRookFile(board) && y === blackHomeRank) return board.canCastleKB
+  if (Pieces.isPawnlike(piece)) return Board.isUnmoved({ x, y }, board)
   return false
 }
 

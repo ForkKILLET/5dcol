@@ -53,6 +53,7 @@ export interface Board {
   width: number
   height: number
   pieces: Piece[][]
+  unmoved: boolean[][]
 
   canCastleQW: boolean
   canCastleKW: boolean
@@ -314,9 +315,10 @@ export namespace Line {
 }
 
 export namespace Board {
-  export const clone = ({ pieces, ...misc }: Board): Board => ({
+  export const clone = ({ pieces, unmoved, ...misc }: Board): Board => ({
     ...misc,
     pieces: pieces.map(row => row.slice()),
+    unmoved: cloneUnmovedMask(pieces, unmoved),
   })
 
   export const getSize = ({ width, height, pieces }: Board): BoardSize => ({
@@ -328,9 +330,32 @@ export namespace Board {
     Coord.isInBoard(coord, Board.getSize(board))
   )
 
+  export const createUnmovedMask = (
+    pieces: Piece[][],
+    isUnmoved: (piece: Piece, x: number, y: number) => boolean,
+  ): boolean[][] => pieces.map((column, x) => column.map((piece, y) => isUnmoved(piece, x, y)))
+
+  export const isUnmoved = ({ x, y }: CoordSpacelike, board: Board): boolean => (
+    board.unmoved?.[x]?.[y] ?? false
+  )
+
+  export const setUnmoved = ({ x, y }: CoordSpacelike, board: Board, unmoved: boolean): void => {
+    if (! Board.isInBoard({ x, y }, board)) return
+    board.unmoved ??= createEmptyUnmovedMask(Board.getSize(board))
+    board.unmoved[x]![y] = unmoved
+  }
+
   export function * spacelikes(board: Board) {
     yield * Coord.spacelikes(Board.getSize(board))
   }
+
+  const cloneUnmovedMask = (pieces: Piece[][], unmoved: boolean[][]): boolean[][] => (
+    pieces.map((column, x) => column.map((_, y) => unmoved?.[x]?.[y] ?? false))
+  )
+
+  const createEmptyUnmovedMask = ({ width, height }: BoardSize): boolean[][] => (
+    Array.from({ length: width }, () => Array.from({ length: height }, () => false))
+  )
 }
 
 // Coordinates
@@ -434,10 +459,8 @@ interface Coord4Delta {
 // Initialization
 
 export namespace Board {
-  export const createInitial = (): Board => ({
-    width: STANDARD_BOARD_SIZE.width,
-    height: STANDARD_BOARD_SIZE.height,
-    pieces: [
+  export const createInitial = (): Board => {
+    const pieces = [
       [Piece.RB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.RW],
       [Piece.NB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.NW],
       [Piece.BB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.BW],
@@ -446,16 +469,22 @@ export namespace Board {
       [Piece.BB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.BW],
       [Piece.NB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.NW],
       [Piece.RB, Piece.PB, Piece.E, Piece.E, Piece.E, Piece.E, Piece.PW, Piece.RW],
-    ],
-    canCastleQW: true,
-    canCastleKW: true,
-    canCastleQB: true,
-    canCastleKB: true,
-    createdBy: null,
-    createdByPlayer: null,
-    createdByRole: null,
-    createdByOrder: null,
-  })
+    ]
+    return {
+      width: STANDARD_BOARD_SIZE.width,
+      height: STANDARD_BOARD_SIZE.height,
+      pieces,
+      unmoved: Board.createUnmovedMask(pieces, piece => piece !== Piece.E),
+      canCastleQW: true,
+      canCastleKW: true,
+      canCastleQB: true,
+      canCastleKB: true,
+      createdBy: null,
+      createdByPlayer: null,
+      createdByRole: null,
+      createdByOrder: null,
+    }
+  }
 }
 
 export namespace Line {
@@ -526,6 +555,7 @@ export namespace Board {
   export const setPiece = ({ x, y }: CoordSpacelike, board: Board, piece: Piece): void => {
     if (! Board.isInBoard({ x, y }, board)) return
     board.pieces[x][y] = piece
+    Board.setUnmoved({ x, y }, board, false)
   }
 
   const addTarget = (
@@ -562,6 +592,7 @@ export namespace Board {
   }
 
   export interface MoveTargetContext2D {
+    canPawnDoubleMove?: boolean
     previousBoard: Board | null
   }
 
@@ -585,12 +616,13 @@ export namespace Board {
       startRank: number,
       opponent: Player,
     ) => {
+      const canDoubleMove = context?.canPawnDoubleMove ?? from.y === startRank
       const forward = { x: from.x, y: from.y + direction }
       if (Board.isInBoard(forward, board) && Board.getPiece(forward, board) === Piece.E) {
         targets.push(forward)
         const doubleForward = { x: from.x, y: from.y + direction * 2 }
         if (
-          from.y === startRank
+          canDoubleMove
           && Board.isInBoard(doubleForward, board)
           && Board.getPiece(doubleForward, board) === Piece.E
         ) {
@@ -1001,9 +1033,14 @@ export namespace Multiverse {
       return targetPiece === Piece.E
     }
 
-    for (const target of Board.getMoveTargets2D(board, from, {
+    const moveTargetContext: Board.MoveTargetContext2D = {
       previousBoard: Multiverse.getPreviousBoard(multiverse, from, player),
-    })) {
+    }
+    if (Pieces.isPawnlike(piece)) {
+      moveTargetContext.canPawnDoubleMove = Board.isUnmoved(from, board)
+    }
+
+    for (const target of Board.getMoveTargets2D(board, from, moveTargetContext)) {
       addTarget({ ...target, l: from.l, t: from.t })
     }
 
@@ -1269,8 +1306,7 @@ export namespace Multiverse {
 
     addStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: 0, l: lForward })
 
-    const startRank = player === Player.W ? sourceBoard.height - 2 : 1
-    if (from.y !== startRank) return
+    if (! Board.isUnmoved(from, sourceBoard)) return
 
     const doubleForward = { ...from, l: from.l + lForward * 2 }
     const doubleForwardBoard = Multiverse.getBoard(multiverse, doubleForward, player)
