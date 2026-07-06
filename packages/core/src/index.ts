@@ -53,7 +53,7 @@ export interface Board {
   width: number
   height: number
   pieces: Piece[][]
-  unmoved: boolean[][]
+  unmoved?: boolean[][]
 
   canCastleQW: boolean
   canCastleKW: boolean
@@ -349,8 +349,8 @@ export namespace Board {
     yield * Coord.spacelikes(Board.getSize(board))
   }
 
-  const cloneUnmovedMask = (pieces: Piece[][], unmoved: boolean[][]): boolean[][] => (
-    pieces.map((column, x) => column.map((_, y) => unmoved?.[x]?.[y] ?? false))
+  const cloneUnmovedMask = (pieces: Piece[][], unmoved: boolean[][] | undefined): boolean[][] => (
+    pieces.map((column, x) => column.map((piece, y) => unmoved?.[x]?.[y] ?? Pieces.isPawnlike(piece)))
   )
 
   const createEmptyUnmovedMask = ({ width, height }: BoardSize): boolean[][] => (
