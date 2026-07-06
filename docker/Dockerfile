@@ -43,6 +43,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=5161
+ENV MATCH_DATABASE_FILE=/app/data/rooms.sqlite
+ENV MATCH_LEGACY_DATA_FILE=/app/data/rooms.json
 
 COPY --from=prod-deps /app /app
 COPY --from=build /app/packages/backend/dist packages/backend/dist

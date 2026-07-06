@@ -9,3 +9,5 @@ services:
     restart: unless-stopped
     environment:
       - PORT=5161
+    volumes:
+      - ./data:/app/data

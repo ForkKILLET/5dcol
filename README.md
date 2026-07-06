@@ -119,7 +119,7 @@ docker run -d \
   -p 5161:5161 \
   -e HOST=0.0.0.0 \
   -e PORT=5161 \
-  -v 5dcol-backend-data:/app/packages/backend/data \
+  -v 5dcol-backend-data:/app/data \
   5dcol-backend
 ```
 
