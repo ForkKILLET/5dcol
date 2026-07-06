@@ -80,18 +80,11 @@ const DEFAULT_STUDY_WORKSPACES: StoredStudyWorkspaces = {
   workspaces: {},
 }
 
+let storedLocalStudies: Ref<StoredLocalStudies> | null = null
 let storedStudyWorkspaces: Ref<StoredStudyWorkspaces> | null = null
 
 export function useLocalStudies() {
-  const stored = useStorageRef<StoredLocalStudies>(
-    LOCAL_STUDIES_STORAGE_KEY,
-    DEFAULT_LOCAL_STUDIES,
-    {
-      deep: true,
-      parse: raw => StoredLocalStudiesSchema.parse(JSON.parse(raw) as unknown),
-      serialize: value => JSON.stringify(StoredLocalStudiesSchema.parse(value)),
-    },
-  )
+  const stored = getStoredLocalStudies()
 
   const studies = computed(() => stored.value.studies)
   const summaries = computed(() => (
@@ -190,6 +183,19 @@ export function useLocalStudies() {
     renameStudy,
     deleteStudy,
   }
+}
+
+function getStoredLocalStudies(): Ref<StoredLocalStudies> {
+  storedLocalStudies ??= useStorageRef<StoredLocalStudies>(
+    LOCAL_STUDIES_STORAGE_KEY,
+    DEFAULT_LOCAL_STUDIES,
+    {
+      deep: true,
+      parse: raw => StoredLocalStudiesSchema.parse(JSON.parse(raw) as unknown),
+      serialize: value => JSON.stringify(StoredLocalStudiesSchema.parse(value)),
+    },
+  )
+  return storedLocalStudies
 }
 
 export function createStudyDocumentFromText(
