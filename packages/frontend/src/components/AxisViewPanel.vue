@@ -190,9 +190,9 @@ function drawSnapshot(
   ctx.globalAlpha = 1
 
   drawTargetCells(ctx, snapshot, layout, visibleColumnIndexes, colors)
-  drawPieces(ctx, snapshot, layout, visibleColumnIndexes)
-  drawAxisViewColumnOutlines(ctx, outlineRects, colors)
+  drawPieces(ctx, snapshot, layout, visibleColumnIndexes, colors)
   drawAxisViewColumnSeparators(ctx, layout, visibleColumns.length, snapshot.rowLabels.length, colors)
+  drawAxisViewColumnOutlines(ctx, outlineRects, colors)
   ctx.restore()
 }
 
@@ -220,7 +220,10 @@ function drawPieces(
   snapshot: GameAxisViewSnapshot,
   layout: AxisViewCanvasLayout,
   visibleColumnIndexes: Map<number, number>,
+  colors: ReturnType<typeof getAxisViewColors>,
 ) {
+  const hoveredPiece = hoveredPieceKey.value
+
   for (const pieceCell of snapshot.pieces) {
     const visibleColumnIndex = visibleColumnIndexes.get(pieceCell.columnIndex)
     if (visibleColumnIndex === undefined) continue
@@ -233,6 +236,13 @@ function drawPieces(
     const x = cellRect.x + (cellRect.w - size) / 2
     const y = cellRect.y + (cellRect.h - size) / 2
     const pieceRect = { h: size, w: size, x, y }
+    if (hoveredPiece === getPieceCellKey(pieceCell)) {
+      ctx.fillStyle = isAxisViewRowLight(snapshot, pieceCell.rowIndex)
+        ? colors.targetHighlight.light
+        : colors.targetHighlight.dark
+      fillCanvasRect(ctx, cellRect)
+    }
+
     const column = snapshot.columns[pieceCell.columnIndex]
     if (column) {
       lastHitItems.push({
@@ -288,17 +298,14 @@ function drawAxisViewColumnOutline(
   rect: CanvasRect,
   colors: ReturnType<typeof getAxisViewColors>,
 ) {
-  const lineWidth = 2
-  const inset = lineWidth / 2
-
   ctx.save()
   ctx.strokeStyle = colors.columnOutline
-  ctx.lineWidth = lineWidth
+  ctx.lineWidth = 2.5
   ctx.strokeRect(
-    rect.x + inset,
-    rect.y + inset,
-    Math.max(0, rect.w - lineWidth),
-    Math.max(0, rect.h - lineWidth),
+    rect.x,
+    rect.y,
+    Math.max(0, rect.w),
+    Math.max(0, rect.h),
   )
   ctx.restore()
 }
@@ -393,14 +400,14 @@ function getAxisViewColors(element: HTMLElement) {
   const style = getComputedStyle(element)
   return {
     dimBoardFill: {
-      dark: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.8),
-      light: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.9),
+      dark: Color4.toRgbaString(Colors.BoardTimeBlack),
+      light: Color4.toRgbaString(Colors.BoardTimeWhite),
     },
     originalBoardFill: {
       dark: Color4.toRgbaString(Colors.BoardBlack),
       light: Color4.toRgbaString(Colors.BoardWhite),
     },
-    columnOutline: Color4.toRgbaString(Colors.BoardHighlightBlack),
+    columnOutline: withAlpha(Color4.toRgbaString(Colors.FocusGreen), 0.88),
     columnSeparator: withAlpha(Color4.toRgbaString(Colors.BoardBorderBlack), 0.42),
     labelText: getCssColor(style, '--button-text-color', 'rgba(244, 245, 237, 1)'),
     targetHighlight: {
@@ -487,19 +494,27 @@ function getAxisViewColumnBoardFill(
 ) {
   if (filter !== 'both') return colors.originalBoardFill
 
-  const activePlayers = getActiveAxisViewPlayers(visibleColumns)
-  if (activePlayers.size === 0) return colors.originalBoardFill
-  return activePlayers.has(column.player)
+  const focusColumnParity = getAxisViewFocusColumnParity(visibleColumns)
+  if (focusColumnParity === null) return colors.originalBoardFill
+  return getAxisViewColumnParity(column) === focusColumnParity
     ? colors.originalBoardFill
     : colors.dimBoardFill
 }
 
-function getActiveAxisViewPlayers(visibleColumns: VisibleAxisViewColumn[]): Set<Player> {
-  const players = new Set<Player>()
+function getAxisViewFocusColumnParity(visibleColumns: VisibleAxisViewColumn[]): number | null {
   for (const { column } of visibleColumns) {
-    if (column.active) players.add(column.player)
+    if (column.focused) return getAxisViewColumnParity(column)
   }
-  return players
+
+  for (const { column } of visibleColumns) {
+    if (column.active) return getAxisViewColumnParity(column)
+  }
+
+  return null
+}
+
+function getAxisViewColumnParity(column: GameAxisViewBoardColumn): number {
+  return Math.abs(column.m) % 2
 }
 
 function syncAxisViewStateFromGame(game = props.game) {

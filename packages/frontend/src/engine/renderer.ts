@@ -25,6 +25,7 @@ export abstract class Renderer extends Disposable(Empty) {
   protected renderItems: RenderItem[] = []
 
   abstract drawQuad(item: QuadRenderItem): void
+  abstract drawRect(item: RectRenderItem): void
   abstract drawRoundRect(item: RoundRectRenderItem): void
   abstract drawPolygon(item: PolygonRenderItem): void
   abstract drawCurve(item: CurveRenderItem): void
@@ -118,6 +119,9 @@ export abstract class Renderer extends Disposable(Empty) {
         case RenderItemType.Quad:
           this.drawQuad(item)
           break
+        case RenderItemType.Rect:
+          this.drawRect(item)
+          break
         case RenderItemType.RoundRect:
           this.drawRoundRect(item)
           break
@@ -147,6 +151,7 @@ export abstract class Renderer extends Disposable(Empty) {
 
 export const enum RenderItemType {
   Quad,
+  Rect,
   RoundRect,
   Texture,
   Polygon,
@@ -165,6 +170,15 @@ export interface QuadRenderItem extends RenderItemBase {
   type: RenderItemType.Quad
   mat: Mat3
   color: Color4
+}
+
+export interface RectRenderItem extends RenderItemBase {
+  type: RenderItemType.Rect
+  pos: Vec2
+  size: Vec2
+  fill: FillStyle | null
+  stroke: FillStyle | null
+  strokeWidth?: number
 }
 
 export interface RoundRectRenderItem extends RenderItemBase {
@@ -245,6 +259,7 @@ export interface TextRenderItem extends RenderItemBase {
 
 export type RenderItem =
   | QuadRenderItem
+  | RectRenderItem
   | RoundRectRenderItem
   | TextureRenderItem
   | PolygonRenderItem

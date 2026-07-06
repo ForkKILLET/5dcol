@@ -6,6 +6,7 @@ import type {
   FillStyle,
   PolygonRenderItem,
   QuadRenderItem,
+  RectRenderItem,
   RoundRectRenderItem,
   TextRenderItem,
   TextureRenderItem,
@@ -179,6 +180,28 @@ export class WebGLRenderer extends Renderer {
     )
     gl.uniform4f(this.quadColorLocation, color[0], color[1], color[2], color[3])
     gl.drawArrays(gl.TRIANGLES, 0, 6)
+  }
+
+  drawRect({ pos, size, fill, stroke, strokeWidth = 1, space }: RectRenderItem): void {
+    if (size[0] <= 0 || size[1] <= 0) return
+
+    if (fill) {
+      this.drawMesh(triangulatePolygon(getRectPoints(pos, size)), fill, space)
+    }
+
+    if (stroke && strokeWidth > 0) {
+      const halfStroke = strokeWidth / 2
+      const outerPos: Vec2Type = [pos[0] - halfStroke, pos[1] - halfStroke]
+      const outerSize: Vec2Type = [size[0] + strokeWidth, size[1] + strokeWidth]
+      const innerPos: Vec2Type = [pos[0] + halfStroke, pos[1] + halfStroke]
+      const innerSize: Vec2Type = [size[0] - strokeWidth, size[1] - strokeWidth]
+      if (innerSize[0] <= 0 || innerSize[1] <= 0) {
+        this.drawMesh(triangulatePolygon(getRectPoints(outerPos, outerSize)), stroke, space)
+        return
+      }
+
+      this.drawMesh(getRingTriangles(getRectPoints(outerPos, outerSize), getRectPoints(innerPos, innerSize)), stroke, space)
+    }
   }
 
   drawRoundRect({ pos, size, radius, fill, stroke, strokeWidth = 1, space }: RoundRectRenderItem): void {
@@ -463,6 +486,18 @@ function getRoundRectPoints(
     ...getArcPoints([x + w - radii.br, y + h - radii.br], radii.br, 0, Math.PI / 2, ROUND_RECT_CORNER_SEGMENTS),
     ...getArcPoints([x + radii.bl, y + h - radii.bl], radii.bl, Math.PI / 2, Math.PI, ROUND_RECT_CORNER_SEGMENTS),
     ...getArcPoints([x + radii.tl, y + radii.tl], radii.tl, Math.PI, Math.PI * 1.5, ROUND_RECT_CORNER_SEGMENTS),
+  ]
+}
+
+function getRectPoints(
+  [x, y]: Vec2Type,
+  [w, h]: Vec2Type,
+): Vec2Type[] {
+  return [
+    [x, y],
+    [x + w, y],
+    [x + w, y + h],
+    [x, y + h],
   ]
 }
 

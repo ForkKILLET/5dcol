@@ -157,6 +157,7 @@ export namespace Colors {
 
   export const BoardHighlightBlack = Color4.fromRgba(133, 156, 96, 1)
   export const BoardHighlightWhite = Color4.fromRgba(149, 170, 106, 1)
+  export const FocusGreen = Color4.fromRgba(105, 143, 107, 1)
   export const MoveHighlight2DBlack = Color4.fromRgba(220, 206, 96, 1)
   export const MoveHighlight2DWhite = Color4.fromRgba(237, 222, 124, 1)
   export const MoveHighlight5DBlack = Color4.fromRgba(140, 136, 219, 1)

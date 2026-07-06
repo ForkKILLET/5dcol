@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Player } from '@5dcol/core'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Game, GameMinimapBoard, GameMinimapSnapshot } from '@engine/game'
 import { Color4, type Rect, type Vec2 } from '@engine/basic'
-import { Animations, ButtonColors, Colors } from '@engine/constant'
+import { Animations, Colors } from '@engine/constant'
 import GamePanel from './GamePanel.vue'
 
 interface CanvasRect {
@@ -28,15 +28,10 @@ const emit = defineEmits<{
 }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
-const canvasAspectRatio = ref(1)
 const hoveredBoardKey = ref<string | null>(null)
 
 let frameId: number | null = null
 let lastHitItems: Array<{ board: GameMinimapBoard, rect: CanvasRect }> = []
-
-const canvasStyle = computed(() => ({
-  '--minimap-canvas-aspect-ratio': `${canvasAspectRatio.value}`,
-}))
 
 onMounted(() => {
   frameId = requestAnimationFrame(loop)
@@ -77,7 +72,6 @@ function draw() {
   if (! snapshot?.bounds || snapshot.boards.length === 0) return
 
   const paddingWorld = getMinimapWorldPadding(snapshot)
-  canvasAspectRatio.value = getMinimapAspectRatio(snapshot, paddingWorld)
   const transform = getMinimapTransform(
     snapshot.bounds,
     width,
@@ -86,9 +80,10 @@ function draw() {
   )
   const colors = getMinimapColors(canvasElement)
 
-  drawGrid(ctx, snapshot, transform, colors)
+  drawGrid(ctx, snapshot, transform, colors, width, height)
   drawBoards(ctx, snapshot, transform, colors)
-  drawViewport(ctx, snapshot.viewport, transform, colors, width, height)
+  drawViewport(ctx, snapshot.fullViewport, transform, colors.fullViewportStroke, width, height, true)
+  drawViewport(ctx, snapshot.viewport, transform, colors.viewportStroke, width, height)
 }
 
 function drawGrid(
@@ -96,11 +91,31 @@ function drawGrid(
   snapshot: GameMinimapSnapshot,
   transform: MinimapTransform,
   colors: ReturnType<typeof getMinimapColors>,
+  canvasWidth: number,
+  canvasHeight: number,
 ) {
-  for (const cell of snapshot.gridCells) {
-    const rect = worldRectToCanvasRect(cell.rect, transform)
-    ctx.fillStyle = cell.white ? colors.gridWhiteFill : colors.gridBlackFill
-    fillCanvasRect(ctx, rect)
+  const anchor = snapshot.gridCells[0]
+  if (! anchor) return
+
+  const anchorRect = worldRectToCanvasRect(anchor.rect, transform)
+  const tileW = Math.max(1, Math.abs(anchorRect.w))
+  const tileH = Math.max(1, Math.abs(anchorRect.h))
+  const colStart = Math.floor((0 - anchorRect.x) / tileW) - 1
+  const colEnd = Math.ceil((canvasWidth - anchorRect.x) / tileW) + 1
+  const rowStart = Math.floor((0 - anchorRect.y) / tileH) - 1
+  const rowEnd = Math.ceil((canvasHeight - anchorRect.y) / tileH) + 1
+
+  for (let row = rowStart; row <= rowEnd; row++) {
+    const y0 = Math.floor(anchorRect.y + row * tileH)
+    const y1 = Math.ceil(anchorRect.y + (row + 1) * tileH)
+    for (let col = colStart; col <= colEnd; col++) {
+      const sameParity = (row + col) % 2 === 0
+      const white = sameParity ? anchor.white : !anchor.white
+      const x0 = Math.floor(anchorRect.x + col * tileW)
+      const x1 = Math.ceil(anchorRect.x + (col + 1) * tileW)
+      ctx.fillStyle = white ? colors.gridWhiteFill : colors.gridBlackFill
+      ctx.fillRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0))
+    }
   }
 }
 
@@ -142,17 +157,19 @@ function drawViewport(
   ctx: CanvasRenderingContext2D,
   viewport: Rect,
   transform: MinimapTransform,
-  colors: ReturnType<typeof getMinimapColors>,
+  strokeStyle: string,
   canvasWidth: number,
   canvasHeight: number,
+  forceDashed = false,
 ) {
   const rect = worldRectToCanvasRect(viewport, transform)
   const lineWidth = 2
   ctx.lineWidth = lineWidth
-  ctx.strokeStyle = colors.viewportStroke
+  ctx.strokeStyle = strokeStyle
   drawViewportEdge(ctx, {
     canvasRange: canvasHeight,
     canvasSide: canvasWidth,
+    forceDashed,
     lineWidth,
     orientation: 'vertical',
     position: rect.x,
@@ -162,6 +179,7 @@ function drawViewport(
   drawViewportEdge(ctx, {
     canvasRange: canvasHeight,
     canvasSide: canvasWidth,
+    forceDashed,
     lineWidth,
     orientation: 'vertical',
     position: rect.x + rect.w,
@@ -171,6 +189,7 @@ function drawViewport(
   drawViewportEdge(ctx, {
     canvasRange: canvasWidth,
     canvasSide: canvasHeight,
+    forceDashed,
     lineWidth,
     orientation: 'horizontal',
     position: rect.y,
@@ -180,6 +199,7 @@ function drawViewport(
   drawViewportEdge(ctx, {
     canvasRange: canvasWidth,
     canvasSide: canvasHeight,
+    forceDashed,
     lineWidth,
     orientation: 'horizontal',
     position: rect.y + rect.h,
@@ -193,6 +213,7 @@ function drawViewportEdge(
   {
     canvasRange,
     canvasSide,
+    forceDashed,
     lineWidth,
     orientation,
     position,
@@ -201,6 +222,7 @@ function drawViewportEdge(
   }: {
     canvasRange: number
     canvasSide: number
+    forceDashed?: boolean
     lineWidth: number
     orientation: 'horizontal' | 'vertical'
     position: number
@@ -217,7 +239,7 @@ function drawViewportEdge(
     : position >= canvasSide
       ? canvasSide - inset
       : position
-  const dashed = position <= 0 || position >= canvasSide
+  const dashed = forceDashed === true || position <= 0 || position >= canvasSide
 
   ctx.save()
   ctx.setLineDash(dashed ? [5, 4] : [])
@@ -270,12 +292,6 @@ function getMinimapWorldPadding(snapshot: GameMinimapSnapshot): number {
   return Math.max(boardRect[1][0], boardRect[1][1])
 }
 
-function getMinimapAspectRatio(snapshot: GameMinimapSnapshot, paddingWorld: number): number {
-  if (! snapshot.bounds) return 1
-  const [, [w, h]] = snapshot.bounds
-  return Math.max(0.001, (w + paddingWorld * 2) / Math.max(1, h + paddingWorld * 2))
-}
-
 function worldRectToCanvasRect([[x, y], [w, h]]: Rect, transform: MinimapTransform): CanvasRect {
   return {
     x: x * transform.scale + transform.offset[0],
@@ -297,27 +313,24 @@ function getMinimapColors(element: HTMLElement) {
   const style = getComputedStyle(element)
   const participant = getCssColor(style, '--record-participant-color', 'rgba(132, 93, 156, 1)')
   const active = getCssColor(style, '--game-status-color', participant)
-  const focus = getCssColor(
-    style,
-    '--button-hover-border-color',
-    Color4.toRgbaString(ButtonColors.GreenWhite.border),
-  )
+  const focus = Color4.toRgbaString(Colors.FocusGreen)
   return {
     activeStroke: active,
     focusStroke: focus,
     boardBlackFill: Color4.toRgbaString(Colors.BoardBlack),
     boardHighlightBlackFill: withAlpha(
-      Color4.toRgbaString(ButtonColors.GreenBlack.fill),
+      Color4.toRgbaString(Colors.FocusGreen),
       Animations.BoardFocusMaskAlpha,
     ),
     boardHighlightWhiteFill: withAlpha(
-      Color4.toRgbaString(ButtonColors.GreenWhite.fill),
+      Color4.toRgbaString(Colors.FocusGreen),
       Animations.BoardFocusMaskAlpha,
     ),
     boardWhiteFill: Color4.toRgbaString(Colors.BoardWhite),
     boardStroke: withAlpha(getCssColor(style, '--button-border-color', 'rgba(39, 39, 39, 1)'), 0.6),
-    gridBlackFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeBlack), 0.36),
-    gridWhiteFill: withAlpha(Color4.toRgbaString(Colors.BoardTimeWhite), 0.36),
+    fullViewportStroke: withAlpha(focus, 0.68),
+    gridBlackFill: Color4.toRgbaString(Colors.BoardTimeBlack),
+    gridWhiteFill: Color4.toRgbaString(Colors.BoardTimeWhite),
     mandatoryFill: withAlpha(active, 0.18),
     viewportStroke: focus,
   }
@@ -387,7 +400,6 @@ function getBoardKey({ l, m }: Pick<GameMinimapBoard, 'l' | 'm'>): string {
       ref="canvas"
       class="minimap-canvas"
       :class="{ 'is-hovering-board': hoveredBoardKey !== null }"
-      :style="canvasStyle"
       @click="handleClick"
       @pointermove="handlePointerMove"
       @pointerleave="handlePointerLeave"
@@ -407,18 +419,17 @@ function getBoardKey({ l, m }: Pick<GameMinimapBoard, 'l' | 'm'>): string {
   justify-content: center;
   min-width: 0;
   min-height: 0;
+  padding: 0;
   overflow: hidden;
 }
 
 .minimap-canvas {
   display: block;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   align-self: stretch;
   width: 100%;
-  height: auto;
-  max-height: 100%;
+  height: 100%;
   min-height: 0;
-  aspect-ratio: var(--minimap-canvas-aspect-ratio);
   border-radius: 5px;
   cursor: default;
   touch-action: none;

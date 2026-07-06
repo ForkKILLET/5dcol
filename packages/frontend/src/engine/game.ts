@@ -139,6 +139,7 @@ export interface GameMinimapGridCell {
 export interface GameMinimapSnapshot {
   boards: GameMinimapBoard[]
   bounds: Rect | null
+  fullViewport: Rect
   gridCells: GameMinimapGridCell[]
   viewport: Rect
 }
@@ -1599,6 +1600,7 @@ export class Game extends Disposable(Empty) {
     return {
       boards,
       bounds: Rect.bounds([...gridCells.map(cell => cell.rect), ...boards.map(board => board.rect)]),
+      fullViewport: this.getFullViewportWorldRect(),
       gridCells,
       viewport: this.getViewportWorldRect(),
     }
@@ -1722,11 +1724,14 @@ export class Game extends Disposable(Empty) {
     const [[x, y], [w, h]] = this.layout.getViewportScreenRect()
     const topLeft = this.renderer.screenToWorld([x, y])
     const bottomRight = this.renderer.screenToWorld([x + w, y + h])
-    const x0 = Math.min(topLeft[0], bottomRight[0])
-    const y0 = Math.min(topLeft[1], bottomRight[1])
-    const x1 = Math.max(topLeft[0], bottomRight[0])
-    const y1 = Math.max(topLeft[1], bottomRight[1])
-    return [[x0, y0], [x1 - x0, y1 - y0]]
+    return rectFromWorldCorners(topLeft, bottomRight)
+  }
+
+  private getFullViewportWorldRect(): Rect {
+    const { widthCss, heightCss } = this.renderer.getScreen()
+    const topLeft = this.renderer.screenToWorld([0, 0])
+    const bottomRight = this.renderer.screenToWorld([widthCss, heightCss])
+    return rectFromWorldCorners(topLeft, bottomRight)
   }
 
   private getAxisViewLineEntry(preferredL: number | null | undefined): readonly [number, Line] | null {
@@ -4262,7 +4267,7 @@ export class Game extends Disposable(Empty) {
     }
 
     this.renderSpacelikeLabels(board, x0, y0, layers.board, alpha, metrics)
-    this.renderBoardFocusMask(l, m, boardPlayer, [x0, y0], alpha, metrics)
+    this.renderBoardFocusMask(l, m, [x0, y0], alpha, metrics)
     this.renderMoveFormationArrow(board, alpha)
     this.renderCheckBadge(l, m, [x0, y0], alpha, metrics.contentSize)
   }
@@ -4578,9 +4583,8 @@ export class Game extends Disposable(Empty) {
     return this.toDisplayCoord(displayCoord, boardSize)
   }
 
-  private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number, metrics: BoardRenderMetrics) {
+  private renderBoardFocusMask(l: number, m: number, pos: Vec2, alpha: number, metrics: BoardRenderMetrics) {
     const focusPulse = this.getBoardFocusPulseProgress(l, m)
-    const focusPreset = boardPlayer === Player.B ? ButtonColors.GreenBlack : ButtonColors.GreenWhite
 
     if (focusPulse > 0) {
       this.renderer.submit({
@@ -4589,7 +4593,7 @@ export class Game extends Disposable(Empty) {
         order: -1,
         mat: Mat3.transform(pos, metrics.contentSize),
         color: Color4.withAlpha(
-          focusPreset.fill,
+          Colors.FocusGreen,
           alpha * focusPulse * Animations.BoardFocusMaskAlpha,
         ),
       })
@@ -4598,19 +4602,15 @@ export class Game extends Disposable(Empty) {
     const axisFocusRect = this.getBoardAxisFocusRect(l, m, pos, metrics)
     if (! axisFocusRect) return
 
-    const axisFocusAlpha = Math.max(focusPulse, axisFocusRect.persistent ? 1 : 0)
-    if (axisFocusAlpha <= 0) return
-
     this.renderer.submit({
-      type: RenderItemType.RoundRect,
+      type: RenderItemType.Rect,
       layer: RenderLayer.MoveHighlight,
       order: 0,
       pos: axisFocusRect.pos,
       size: axisFocusRect.size,
-      radius: 0,
       fill: null,
-      stroke: Color4.withAlpha(focusPreset.border, alpha * axisFocusAlpha),
-      strokeWidth: Sizes.BoardBorder,
+      stroke: Color4.withAlpha(Colors.FocusGreen, alpha * 0.88),
+      strokeWidth: 1.5,
     })
   }
 
@@ -5036,6 +5036,14 @@ const RECOVERY_FILE_LABELS = 'abcdefghijklmnopqrstuvwxyz'
 function clampBoardAxisCoord(value: number, max: number): number {
   if (! Number.isFinite(value)) return 0
   return Math.max(0, Math.min(max, Math.round(value)))
+}
+
+function rectFromWorldCorners(a: Vec2, b: Vec2): Rect {
+  const x0 = Math.min(a[0], b[0])
+  const y0 = Math.min(a[1], b[1])
+  const x1 = Math.max(a[0], b[0])
+  const y1 = Math.max(a[1], b[1])
+  return [[x0, y0], [x1 - x0, y1 - y0]]
 }
 
 function getLineBoardSize(line: Line): BoardSize {

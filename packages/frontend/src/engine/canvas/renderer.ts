@@ -1,6 +1,6 @@
 import { Color4, Mat3, type Device as Screen } from '@engine/basic'
 import type { AssetLoadProgressCallback } from '@engine/assets'
-import { CircleRenderItem, type CornerRadii, CurveRenderItem, type FillStyle, PolygonRenderItem, QuadRenderItem, Renderer, RoundRectRenderItem, TextRenderItem, TextureRenderItem } from '@engine/renderer'
+import { CircleRenderItem, type CornerRadii, CurveRenderItem, type FillStyle, PolygonRenderItem, QuadRenderItem, RectRenderItem, Renderer, RoundRectRenderItem, TextRenderItem, TextureRenderItem } from '@engine/renderer'
 import { CanvasBitmapTexture, CanvasSVGTexture, CanvasTextureManager, CanvasTextureType } from '@engine/canvas/textureManager'
 import type { Logger } from '@engine/logger'
 import { exhuastive } from '@/utils'
@@ -140,6 +140,21 @@ export class CanvasRenderer extends Renderer {
     this.applyTransform(mat, space)
     this.ctx.fillStyle = Color4.toRgbaString(color)
     this.ctx.fillRect(0, 0, 1, 1)
+  }
+
+  drawRect({ pos: [x, y], size: [w, h], fill, stroke, strokeWidth = 1, space }: RectRenderItem): void {
+    if (w <= 0 || h <= 0) return
+
+    this.applyTransform(Mat3.identity(), space)
+    if (fill) {
+      this.ctx.fillStyle = this.getFillStyle(fill)
+      this.ctx.fillRect(x, y, w, h)
+    }
+    if (stroke && strokeWidth > 0) {
+      this.ctx.strokeStyle = this.getFillStyle(stroke)
+      this.ctx.lineWidth = strokeWidth
+      this.ctx.strokeRect(x, y, w, h)
+    }
   }
 
   drawRoundRect(item: RoundRectRenderItem): void {
