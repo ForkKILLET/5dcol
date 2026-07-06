@@ -89,13 +89,13 @@ Build the backend first:
 
 ```bash
 pnpm install
-pnpm -r run build
+pnpm -F @5dcol/backend build
 ```
 
 ### PM2
 
 ```bash
-HOST=0.0.0.0 pm2 start ./packages/backend/dist/index.js --name 5dcol-backend --update-env
+HOST=0.0.0.0 pm2 start ./packages/backend/dist/main.js --name 5dcol-backend --update-env
 ```
 
 Common environment variables:
@@ -110,6 +110,7 @@ Common environment variables:
 ```bash
 docker build \
   --build-arg GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -f docker/Dockerfile \
   -t 5dcol-backend \
   .
@@ -126,12 +127,12 @@ docker run -d \
 
 ```bash
 GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-The provided compose file attaches the backend to an external `caddy_network`.
-Adjust the network section if your reverse proxy or hosting setup uses a
-different network.
+Adjust the compose file if your reverse proxy or hosting setup needs additional
+ports, volumes, or networks.
 
 ## Acknowledgements
 

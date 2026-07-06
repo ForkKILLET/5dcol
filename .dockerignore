@@ -5,3 +5,12 @@ dist
 **/dist
 
 .git
+.github
+.vscode
+
+docs
+work
+
+packages/backend/data
+**/*.sqlite
+**/*.sqlite-*

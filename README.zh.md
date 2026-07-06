@@ -75,13 +75,13 @@ pnpm -F @5dcol/frontend exec vue-tsc --noEmit
 
 ```bash
 pnpm install
-pnpm -r run build
+pnpm -F @5dcol/backend build
 ```
 
 ### PM2
 
 ```bash
-HOST=0.0.0.0 pm2 start ./packages/backend/dist/index.js --name 5dcol-backend --update-env
+HOST=0.0.0.0 pm2 start ./packages/backend/dist/main.js --name 5dcol-backend --update-env
 ```
 
 常用环境变量：
@@ -94,7 +94,12 @@ HOST=0.0.0.0 pm2 start ./packages/backend/dist/index.js --name 5dcol-backend --u
 ### Docker
 
 ```bash
-docker build -f docker/Dockerfile -t 5dcol-backend .
+docker build \
+  --build-arg GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -f docker/Dockerfile \
+  -t 5dcol-backend \
+  .
 docker run -d \
   --name 5dcol-backend \
   -p 5161:5161 \
@@ -107,10 +112,12 @@ docker run -d \
 ### Docker Compose
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d --build
+GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-仓库中的 compose 文件会把后端接入外部 `caddy_network`。如果你的反向代理或部署环境使用其它网络，请按需修改 network 配置。
+如果你的反向代理或部署环境需要额外的端口、卷或网络，请按需修改 compose 文件。
 
 ## 致谢
 
