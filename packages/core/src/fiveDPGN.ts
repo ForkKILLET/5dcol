@@ -1164,6 +1164,9 @@ const resolveMoveToken = (
   order: number,
   boardSize: BoardSize = STANDARD_BOARD_SIZE,
 ): Move => {
+  const rawMove = parseFullCoordinateMoveToken(token, boardSize)
+  if (rawMove) return rawMove
+
   const pattern = parseMovePattern(token, player, boardSize)
   const candidates = getLegalMoveCandidates(multiverse, player, order).filter(candidate => (
     matchesMovePattern(candidate, pattern, multiverse, player)
@@ -1177,6 +1180,43 @@ const resolveMoveToken = (
   if (candidates.length === 1) return candidates[0]!.move
   if (candidates.length > 1) throw new Error(`Ambiguous 5dpgn move "${token}"`)
   throw new Error(`Illegal 5dpgn move "${token}"`)
+}
+
+const parseFullCoordinateMoveToken = (
+  rawToken: string,
+  boardSize: BoardSize = STANDARD_BOARD_SIZE,
+): Move | null => {
+  const token = stripMoveAnnotations(rawToken)
+  const from = readFullCoordinateAt(token, 0, boardSize)
+  if (! from) return null
+  const to = readFullCoordinateAt(token, from.next, boardSize)
+  if (! to || to.next !== token.length) return null
+  return {
+    from: from.coord,
+    to: to.coord,
+  }
+}
+
+const readFullCoordinateAt = (
+  text: string,
+  cursor: number,
+  boardSize: BoardSize,
+): { coord: Coord, next: number } | null => {
+  const boardResult = readBoardAt(text, cursor)
+  if (! boardResult) return null
+  const squareMatch = /^([a-z])([1-9]\d*)/i.exec(text.slice(boardResult.next))
+  if (! squareMatch) return null
+  const file = squareMatch[1]!.toLowerCase()
+  const rank = squareMatch[2]!
+  if (! isFile(file, boardSize) || ! isRank(rank, boardSize)) return null
+  return {
+    coord: {
+      l: boardResult.board.l ?? 0,
+      t: boardResult.board.t ?? 0,
+      ...parseSquare(file, rank, boardSize),
+    },
+    next: boardResult.next + squareMatch[0].length,
+  }
 }
 
 const parseMovePattern = (
