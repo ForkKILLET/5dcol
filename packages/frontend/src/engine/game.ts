@@ -1,4 +1,4 @@
-import { Action, Board, Player, Players as CorePlayers, Coord, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
+import { Action, Board, STANDARD_BOARD_SIZE, Player, Players as CorePlayers, Coord, GameState as CoreGameState, Line, Move, Multiverse, Piece, Pieces, type BoardSize, type CheckmateStatus, type CoordSpacelike } from '@5dcol/core'
 import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import type { StudyCommand, StudyDocument, StudyPatch, StudyPosition } from '@5dcol/shared/protocol'
 import { Disposable, Effect, Empty } from '@/utils'
@@ -3191,6 +3191,10 @@ export class Game extends Disposable(Empty) {
     return m % 2 === Player.W ? Player.W : Player.B
   }
 
+  private getBoardAt(l: number, m: number): Board | null {
+    return Multiverse.getLine(this.multiverse, l)?.boards[m] ?? null
+  }
+
   private getActiveBoardSquareAtScreen(screen: Vec2): BoardSquareHit | null {
     const hit = this.getBoardSquareAtScreen(screen)
     if (! hit) return null
@@ -3218,9 +3222,9 @@ export class Game extends Disposable(Empty) {
           x: Math.floor((world[0] - x0) / Sizes.PieceWidth),
           y: Math.floor((world[1] - y0) / Sizes.PieceWidth),
         }
-        if (! Coord.isInBoard(displayCoord)) continue
+        if (! Board.isInBoard(displayCoord, board)) continue
 
-        const coord = this.toBoardCoord(displayCoord)
+        const coord = this.toBoardCoord(displayCoord, Board.getSize(board))
 
         return { l, m, board, coord }
       }
@@ -3942,9 +3946,11 @@ export class Game extends Disposable(Empty) {
     const activeBorder = Sizes.ActiveBoardBorder * activeProgress
     const outerBorder = Sizes.BoardBorder + activeBorder
     const outerBorderPos: Vec2 = [x0 - outerBorder, y0 - outerBorder]
+    const boardSize = Board.getSize(board)
+    const boardContentSize = this.getBoardContentSize(boardSize)
     const outerBorderSize: Vec2 = [
-      Sizes.BoardWidth + outerBorder * 2,
-      Sizes.BoardWidth + outerBorder * 2,
+      boardContentSize[0] + outerBorder * 2,
+      boardContentSize[1] + outerBorder * 2,
     ]
     const innerBorderRadius = Scalar.lerp(Sizes.BoardBorderRadius, Sizes.ActiveBoardBorderRadius, activeProgress)
     const outerBorderRadius = innerBorderRadius + Sizes.BoardBorder * activeProgress
@@ -3978,8 +3984,8 @@ export class Game extends Disposable(Empty) {
           y0 - activeBorder,
         ],
         size: [
-          Sizes.BoardWidth + activeBorder * 2,
-          Sizes.BoardWidth + activeBorder * 2,
+          boardContentSize[0] + activeBorder * 2,
+          boardContentSize[1] + activeBorder * 2,
         ],
         radius: innerBorderRadius,
         fill: Color4.withAlpha(activeBorderFill, activeProgress),
@@ -3987,9 +3993,9 @@ export class Game extends Disposable(Empty) {
       })
     }
 
-    for (const [x, y] of Coord.spacelikes()) {
+    for (const [x, y] of Board.spacelikes(board)) {
       const coord = { x, y }
-      const pos = this.getSquarePos(x0, y0, coord)
+      const pos = this.getSquarePos(x0, y0, coord, boardSize)
       const isWhiteSquare = (x + y) % 2 === 0
       const moveHighlightColor = this.getMoveFormationHighlightColor(board, coord, isWhiteSquare)
       const baseColor = this.isHighlightedBoardSquare(l, m, coord)
@@ -4014,25 +4020,26 @@ export class Game extends Disposable(Empty) {
         isWhiteSquare,
       )
 
-      const piece = board.pieces[x][y]
+      const piece = Board.getPiece(coord, board)
       if (piece !== Piece.E) this.renderPiece(piece, pos, layers.piece, alpha)
       this.renderSquareGlyphBadge(this.getMoveFormationGlyphs(board, coord), pos, alpha)
       if (this.shouldRenderPieceGhost(l, m, coord)) this.renderPieceGhost(this.selectedPiece!.piece, pos)
     }
 
-    this.renderSpacelikeLabels(x0, y0, layers.board, alpha)
-    this.renderBoardFocusMask(l, m, boardPlayer, [x0, y0], alpha)
+    this.renderSpacelikeLabels(board, x0, y0, layers.board, alpha)
+    this.renderBoardFocusMask(l, m, boardPlayer, [x0, y0], alpha, boardSize)
     this.renderMoveFormationArrow(board, alpha)
     this.renderCheckBadge(l, m, [x0, y0], alpha)
   }
 
-  private renderSpacelikeLabels(x0: number, y0: number, layer: RenderLayer, alpha: number) {
+  private renderSpacelikeLabels(board: Board, x0: number, y0: number, layer: RenderLayer, alpha: number) {
     const labelAlpha = this.getSpacelikeLabelAlpha() * alpha
     if (labelAlpha <= 0) return
+    const boardSize = Board.getSize(board)
 
-    for (let displayX = 0; displayX < 8; displayX ++) {
-      const displayCoord = { x: displayX, y: 7 }
-      const boardCoord = this.toBoardCoord(displayCoord)
+    for (let displayX = 0; displayX < board.width; displayX ++) {
+      const displayCoord = { x: displayX, y: board.height - 1 }
+      const boardCoord = this.toBoardCoord(displayCoord, boardSize)
       const isWhiteSquare = (boardCoord.x + boardCoord.y) % 2 === 0
       this.renderer.submit({
         type: RenderItemType.Text,
@@ -4043,7 +4050,7 @@ export class Game extends Disposable(Empty) {
           y0 + (displayCoord.y + 1) * Sizes.PieceWidth - Sizes.SpacelikeLabelInset,
         ],
         angle: 0,
-        text: 'abcdefgh'[boardCoord.x],
+        text: this.getFileLabel(boardCoord.x),
         fontSize: Sizes.SpacelikeLabelFontSize,
         color: Color4.withAlpha(
           isWhiteSquare ? Colors.BoardBlack : Colors.BoardWhite,
@@ -4054,9 +4061,9 @@ export class Game extends Disposable(Empty) {
       })
     }
 
-    for (let displayY = 0; displayY < 8; displayY ++) {
-      const displayCoord = { x: 7, y: displayY }
-      const boardCoord = this.toBoardCoord(displayCoord)
+    for (let displayY = 0; displayY < board.height; displayY ++) {
+      const displayCoord = { x: board.width - 1, y: displayY }
+      const boardCoord = this.toBoardCoord(displayCoord, boardSize)
       const isWhiteSquare = (boardCoord.x + boardCoord.y) % 2 === 0
       this.renderer.submit({
         type: RenderItemType.Text,
@@ -4067,7 +4074,7 @@ export class Game extends Disposable(Empty) {
           y0 + displayCoord.y * Sizes.PieceWidth + Sizes.SpacelikeLabelInset,
         ],
         angle: 0,
-        text: String(8 - boardCoord.y),
+        text: String(board.height - boardCoord.y),
         fontSize: Sizes.SpacelikeLabelFontSize,
         color: Color4.withAlpha(
           isWhiteSquare ? Colors.BoardBlack : Colors.BoardWhite,
@@ -4090,8 +4097,8 @@ export class Game extends Disposable(Empty) {
     return Easing.easeInOut(progress)
   }
 
-  private getSquarePos(x0: number, y0: number, coord: CoordSpacelike): Vec2 {
-    const displayCoord = this.toDisplayCoord(coord)
+  private getSquarePos(x0: number, y0: number, coord: CoordSpacelike, boardSize: BoardSize = STANDARD_BOARD_SIZE): Vec2 {
+    const displayCoord = this.toDisplayCoord(coord, boardSize)
     return [
       x0 + displayCoord.x * Sizes.PieceWidth,
       y0 + displayCoord.y * Sizes.PieceWidth,
@@ -4301,20 +4308,28 @@ export class Game extends Disposable(Empty) {
     ]
   }
 
-  private toDisplayCoord(coord: CoordSpacelike): CoordSpacelike {
+  private getFileLabel(file: number): string {
+    return String.fromCharCode('a'.charCodeAt(0) + file)
+  }
+
+  private getBoardContentSize({ width, height }: BoardSize): Vec2 {
+    return [width * Sizes.PieceWidth, height * Sizes.PieceWidth]
+  }
+
+  private toDisplayCoord(coord: CoordSpacelike, boardSize: BoardSize = STANDARD_BOARD_SIZE): CoordSpacelike {
     return this.viewPlayer === Player.W
       ? coord
       : {
-          x: 7 - coord.x,
-          y: 7 - coord.y,
+          x: boardSize.width - 1 - coord.x,
+          y: boardSize.height - 1 - coord.y,
         }
   }
 
-  private toBoardCoord(displayCoord: CoordSpacelike): CoordSpacelike {
-    return this.toDisplayCoord(displayCoord)
+  private toBoardCoord(displayCoord: CoordSpacelike, boardSize: BoardSize = STANDARD_BOARD_SIZE): CoordSpacelike {
+    return this.toDisplayCoord(displayCoord, boardSize)
   }
 
-  private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number) {
+  private renderBoardFocusMask(l: number, m: number, boardPlayer: Player, pos: Vec2, alpha: number, boardSize: BoardSize) {
     const focusPulse = this.getBoardFocusPulseProgress(l, m)
     if (focusPulse <= 0) return
 
@@ -4323,7 +4338,7 @@ export class Game extends Disposable(Empty) {
       type: RenderItemType.Quad,
       layer: RenderLayer.MoveHighlight,
       order: -1,
-      mat: Mat3.transform(pos, Sizes.BoardSize),
+      mat: Mat3.transform(pos, this.getBoardContentSize(boardSize)),
       color: Color4.withAlpha(
         focusPreset.fill,
         alpha * focusPulse * Animations.BoardFocusMaskAlpha,
@@ -4540,16 +4555,30 @@ export class Game extends Disposable(Empty) {
     const boardPos = boardPositions?.get(this.getBoardKey(l, m))
     if (! boardPos) return this.getVisibleSquareCenter(l, m, coord)
 
-    return this.getVisibleSquareCenterAtBoardPos(boardPos, coord)
+    const board = this.getBoardAt(l, m)
+    return this.getVisibleSquareCenterAtBoardPos(
+      boardPos,
+      coord,
+      board ? Board.getSize(board) : STANDARD_BOARD_SIZE,
+    )
   }
 
   private getVisibleSquareCenter(l: number, m: number, coord: CoordSpacelike): Vec2 {
     const [boardPos] = this.layout.getBoardRect(l, m)
-    return this.getVisibleSquareCenterAtBoardPos(boardPos, coord)
+    const board = this.getBoardAt(l, m)
+    return this.getVisibleSquareCenterAtBoardPos(
+      boardPos,
+      coord,
+      board ? Board.getSize(board) : STANDARD_BOARD_SIZE,
+    )
   }
 
-  private getVisibleSquareCenterAtBoardPos(boardPos: Vec2, coord: CoordSpacelike): Vec2 {
-    const displayCoord = this.toDisplayCoord(coord)
+  private getVisibleSquareCenterAtBoardPos(
+    boardPos: Vec2,
+    coord: CoordSpacelike,
+    boardSize: BoardSize = STANDARD_BOARD_SIZE,
+  ): Vec2 {
+    const displayCoord = this.toDisplayCoord(coord, boardSize)
     return Vec2.add(boardPos, [
       Sizes.BoardBorder + (displayCoord.x + 0.5) * Sizes.PieceWidth,
       Sizes.BoardBorder + (displayCoord.y + 0.5) * Sizes.PieceWidth,
