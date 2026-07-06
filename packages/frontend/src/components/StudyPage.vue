@@ -29,6 +29,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
+  deleteLocalStudy: [id: string]
   openStudy: [study: StudyDocument, source?: StudyOpenSource]
   openOnlineSettings: []
   uiSound: []
@@ -434,6 +435,7 @@ function removeStudy(id: string) {
   if (editingStudyId.value === id) cancelRenameStudy()
   openStudyActionMenuId.value = null
   deleteStudy(id)
+  emit('deleteLocalStudy', id)
 }
 
 function beginRenameStudy(id: string, title: string) {

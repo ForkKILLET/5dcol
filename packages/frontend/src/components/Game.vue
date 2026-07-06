@@ -2688,6 +2688,13 @@ function openStudyFromPage(study: StudyDocument, source?: StudyOpenSource) {
   startStudyGame(study, source, { playSound: false })
 }
 
+function handleLocalStudyDeleted(id: string) {
+  clearLastRoom({ kind: 'local-study', id, updatedAt: 0 })
+  if (activeLocalStudy.value?.id === id) {
+    activeLocalStudy.value = null
+  }
+}
+
 function startOnlineGame(serverAddress: string, state: MatchGameState) {
   if (! gameRenderer || ! soundManager || gameStarted.value) return
 
@@ -3673,6 +3680,7 @@ watch([exportFormat, exportMode], () => {
         <StudyPage
           :active="mainMenuMode === 'study'"
           @close="closeStudyPage"
+          @delete-local-study="handleLocalStudyDeleted"
           @open-online-settings="openOnlineSettingsDialog"
           @open-study="openStudyFromPage"
           @ui-sound="playUISound"
