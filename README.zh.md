@@ -13,27 +13,30 @@ Thunkspace。
 
 ## 当前状态
 
-5DC OL 目前支持本地对局、在线房间、5dpgn 导入/导出、观战和回放。项目仍在活跃开发中，规则、网络和 UI 细节会继续打磨。
+5DC OL 目前支持本地和在线 Versus 对局、本地和在线 Study 研讨室、
+5dpgn/FEN 导入导出、观战、回放和分析面板。项目仍在活跃开发中，规则、网络、记谱和 UI 细节会继续打磨。
 
 ## 功能
 
 - 在浏览器中游玩 5D Chess，界面和手感尽量接近原游戏。
-- 本地对局和在线房间。
+- 本地和在线 Versus / Study 房间。
 - 公开房间、私密分享链接房间、未结束在线对局重连、玩家在线状态。
+- 在线研讨室支持成员、聊天、共享棋谱编辑、跟随/跳转成员位置和房间管理。
 - 支持允许观战/回放的房间。
 - 实时查看对手未提交小步、激活棋盘落子范围预览、放弃对局和棋钟。
-- 实时 5dpgn 记谱面板，支持游标导航、导入/导出、回溯、分支，以及从历史位置推演。
-- 支持包含分支的树形记谱导出，也支持到当前游标为止的线性导出。
+- 实时 5dpgn 记谱面板，支持游标导航、导入/导出、回溯、分支、从历史位置推演、评论、glyph 和棋盘标记。
+- 支持包含分支的树形 5dpgn 导出，也支持到当前游标为止的线性导出；支持 FEN 导入/导出和非标准棋盘尺寸的 `Size` 头。
 - 面向阅读的 5dpgn 显示选项，包括棋子符号、穿越符号、吃子符号、将军/将杀符号和升变符号。
+- 可自定义侧边面板布局，包含棋谱、minimap、XT/YT axis view、聊天、成员和棋钟面板。
 - 英文和中文界面。
 - 音效、设置持久化、触屏友好控制和主菜单动画。
 
 ## 包结构
 
-- `@5dcol/core`：游戏状态模型、规则、走法生成、受将检测、将杀检测和 5dpgn 导入/导出工具。
-- `@5dcol/frontend`：Vue/Vite 浏览器前端、DOM UI、Canvas/WebGL 渲染、i18n、音效、本地持久化、记谱树 UI 和匹配房间 UI。
+- `@5dcol/core`：游戏状态模型、规则、走法生成、受将检测、将杀检测和 5dpgn/FEN 导入/导出工具。
+- `@5dcol/frontend`：Vue/Vite 浏览器前端、DOM UI、Canvas/WebGL 渲染、i18n、音效、本地持久化、记谱树 UI、自定义面板布局和在线房间 UI。
 - `@5dcol/shared`：前后端共享的协议类型和 Zod 运行时 schema。
-- `@5dcol/backend`：在线对局后端，负责房间状态更新、CORS、权威回合提交、用户/会话恢复，以及 Drizzle + SQLite 持久化。
+- `@5dcol/backend`：在线对局和在线研讨后端，负责房间状态更新、CORS、权威回合 / study patch 提交、用户/会话恢复、聊天，以及 Drizzle + SQLite 持久化。
 
 ## 开发
 
@@ -63,10 +66,10 @@ pnpm -F @5dcol/frontend dev
 常用定向检查：
 
 ```bash
-pnpm -F @5dcol/core exec tsc -p tsconfig.json --noEmit
-pnpm -F @5dcol/shared exec tsc -p tsconfig.json --noEmit
-pnpm -F @5dcol/backend exec tsc -p tsconfig.json --noEmit
-pnpm -F @5dcol/frontend exec vue-tsc --noEmit
+pnpm -F @5dcol/core check
+pnpm -F @5dcol/shared check
+pnpm -F @5dcol/backend check
+pnpm -F @5dcol/frontend check
 ```
 
 ## 后端部署
@@ -91,7 +94,7 @@ HOST=0.0.0.0 pm2 start ./packages/backend/dist/main.js --name 5dcol-backend --up
 - `NAME="5DC OL Server"`
 - `MATCH_DATABASE_FILE=/path/to/rooms.sqlite`
 
-### Docker
+### 本地 Docker 构建
 
 ```bash
 docker build \
@@ -116,6 +119,8 @@ docker compose -f docker/docker-compose.yml pull
 docker compose -f docker/docker-compose.yml up -d
 ```
 
+compose 文件默认使用发布到 GHCR 的
+`ghcr.io/forkkillet/5dcol-backend:latest` 镜像。
 如果需要部署其它镜像标签，可以设置 `FIVE_DCOL_BACKEND_IMAGE`。
 如果你的反向代理或部署环境需要额外的端口、卷或网络，请按需修改 compose 文件。
 

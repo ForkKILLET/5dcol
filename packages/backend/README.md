@@ -1,10 +1,10 @@
 # @5dcol/backend
 
-Backend server for 5DC OL online matches.
+Backend server for 5DC OL online versus games and study rooms.
 
 The server uses Fastify for HTTP routes, WebSocket room updates, CORS, and
-authoritative online-match state. Match data is persisted with Drizzle on
-Node's built-in SQLite driver.
+authoritative online-room state. Versus rooms, study rooms, users, and chat are
+persisted with Drizzle on Node's built-in SQLite driver.
 
 ```sh
 pnpm -F @5dcol/backend dev
@@ -24,4 +24,5 @@ Room state updates are pushed through WebSocket at:
 
 ```text
 /rooms/:roomId/events?sessionId=...&userId=...
+/studies/:roomId/events?sessionId=...&userId=...
 ```
