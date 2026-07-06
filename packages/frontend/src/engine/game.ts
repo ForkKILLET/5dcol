@@ -1813,34 +1813,8 @@ export class Game extends Disposable(Empty) {
   }
 
   public focusRecordMoveSegment(segment: GameRecordMoveSegment): boolean {
-    if (
-      segment.recordLineId === undefined
-        || segment.recordActionIndex === undefined
-        || segment.moveIndex === undefined
-    ) {
-      this.focusBoard(segment.l, segment.m)
-      return true
-    }
-
-    const board = segment.segmentIndex === 0 && (segment.segmentCount ?? 1) > 1
-      ? { l: segment.l, m: segment.m }
-      : this.getBoardCreatedByRecordMove(
-          segment.recordLineId,
-          segment.recordActionIndex,
-          segment.moveIndex,
-        )
-    if (board) {
-      this.focusBoard(board.l, board.m)
-    }
-    else {
-      this.focusBoard(segment.l, segment.m)
-    }
-    this.ctx.onRecordMoveFocusRequest?.({
-      recordLineId: segment.recordLineId,
-      recordActionIndex: segment.recordActionIndex,
-      moveIndex: segment.moveIndex,
-      segmentIndex: segment.segmentIndex ?? 0,
-    })
+    const board = segment.focusBoard ?? { l: segment.l, m: segment.m }
+    this.focusBoard(board.l, board.m)
     return true
   }
 
@@ -2442,30 +2416,6 @@ export class Game extends Disposable(Empty) {
       moveIndex: hit.board.createdByOrder % CoreGameState.MOVE_ORDER_STRIDE,
       segmentIndex: hit.board.createdByRole === 'target' ? 1 : 0,
     }
-  }
-
-  private getBoardCreatedByRecordMove(
-    recordLineId: number,
-    recordActionIndex: number,
-    moveIndex: number,
-  ): { l: number, m: number } | null {
-    const fullActionIndex = this.recordDocument.getLinePrefixActions(recordLineId).length
-      + recordActionIndex
-    const order = fullActionIndex * CoreGameState.MOVE_ORDER_STRIDE + moveIndex
-    let fallback: { l: number, m: number } | null = null
-
-    for (const [l, line] of Multiverse.getLineEntries(this.multiverse)) {
-      if (! line) continue
-
-      for (const [m, board] of Line.getBoardEntries(line)) {
-        if (! board || board.createdByOrder !== order) continue
-        const target = { l, m }
-        if (board.createdByRole === 'target' || board.createdByRole === 'both') return target
-        fallback ??= target
-      }
-    }
-
-    return fallback
   }
 
   private tryCreatePassAt(screen: Vec2): boolean {

@@ -1,4 +1,4 @@
-import { Coord, Player, type Action, type Move, type Multiverse } from '@5dcol/core'
+import { Coord, Multiverse, Player, type Action, type Move } from '@5dcol/core'
 import * as FiveDPGN from '@5dcol/core/fiveDPGN'
 import { type RecordDocument, type RecordLine } from '@engine/recordTree'
 
@@ -45,11 +45,27 @@ export interface GameRecordMoveSegment {
   text: string
   l: number
   m: number
+  focusBoard?: {
+    l: number
+    m: number
+  }
   recordLineId?: number
   recordActionIndex?: number
   moveIndex?: number
   segmentIndex?: number
   segmentCount?: number
+}
+
+interface MoveFocusBoards {
+  sameBoard: boolean
+  source: {
+    l: number
+    m: number
+  }
+  target: {
+    l: number
+    m: number
+  }
 }
 
 export interface GameRecordComment {
@@ -97,8 +113,11 @@ export const buildGameRecordRows = ({
 export const buildGameRecordActions = (
   actions: Action[],
   options?: FiveDPGN.ExportOptions,
-): GameRecordAction[] => (
-  FiveDPGN.formatActions(actions, options).map((action) => {
+): GameRecordAction[] => {
+  const formattedActions = FiveDPGN.formatActions(actions, options)
+  const actionMoveFocusBoards = getActionMoveFocusBoards(actions, options)
+
+  return formattedActions.map((action) => {
     const sourceAction = actions[action.index]
     return {
       kind: 'action',
@@ -111,17 +130,52 @@ export const buildGameRecordActions = (
             total: formatDuration(sourceAction.clock.totalMs),
           }
         : null,
-      moves: action.moves.map(move => ({
-        segments: move.segments.map(segment => ({
+      moves: action.moves.map((move, moveIndex) => ({
+        segments: move.segments.map((segment, segmentIndex) => ({
           text: segment.text,
           l: segment.board.l,
           m: Coord.boardIndex(segment.board, action.player === 'w' ? Player.W : Player.B),
+          focusBoard: getSegmentFocusBoard(actionMoveFocusBoards[action.index]?.[moveIndex], segmentIndex),
           segmentCount: move.segments.length,
         })),
       })),
     }
   })
-)
+}
+
+const getActionMoveFocusBoards = (
+  actions: readonly Action[],
+  options?: FiveDPGN.ExportOptions,
+): MoveFocusBoards[][] => {
+  let multiverse = options?.initialMultiverse ?? Multiverse.createInitial()
+  let player = Player.W
+
+  return actions.map((action) => {
+    const focusBoards = action.moves.map((move) => {
+      const focus: MoveFocusBoards = {
+        sameBoard: Coord.isSameBoard(move.from, move.to),
+        source: {
+          l: move.from.l,
+          m: Coord.boardIndex(move.from, player),
+        },
+        target: Multiverse.getMoveArrivalBoardIndex(move, player, multiverse),
+      }
+      multiverse = Multiverse.applyMove(move, player, multiverse)
+      return focus
+    })
+    player = player === Player.W ? Player.B : Player.W
+    return focusBoards
+  })
+}
+
+const getSegmentFocusBoard = (
+  focus: MoveFocusBoards | undefined,
+  segmentIndex: number,
+): GameRecordMoveSegment['focusBoard'] => {
+  if (! focus) return undefined
+  const board = focus.sameBoard || segmentIndex > 0 ? focus.target : focus.source
+  return { ...board }
+}
 
 export const formatDuration = (durationMs: number): string => {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))

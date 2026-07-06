@@ -1750,6 +1750,19 @@ function focusRecordSegment(segment: GameRecordMoveSegment) {
   if (! gameStarted.value) return
   playUISound()
   game?.focusRecordMoveSegment(segment)
+  if (
+    segment.recordLineId !== undefined
+    && segment.recordActionIndex !== undefined
+    && segment.moveIndex !== undefined
+  ) {
+    recordFocusedMove.value = {
+      recordLineId: segment.recordLineId,
+      recordActionIndex: segment.recordActionIndex,
+      moveIndex: segment.moveIndex,
+      segmentIndex: segment.segmentIndex ?? 0,
+      pulseId: ++ recordFocusedMovePulseId,
+    }
+  }
 }
 
 function rollbackToRecordCursor(
