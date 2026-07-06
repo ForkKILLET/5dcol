@@ -112,11 +112,11 @@ docker run -d \
 ### Docker Compose
 
 ```bash
-GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
-BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml pull
+docker compose -f docker/docker-compose.yml up -d
 ```
 
+如果需要部署其它镜像标签，可以设置 `FIVE_DCOL_BACKEND_IMAGE`。
 如果你的反向代理或部署环境需要额外的端口、卷或网络，请按需修改 compose 文件。
 
 ## 致谢

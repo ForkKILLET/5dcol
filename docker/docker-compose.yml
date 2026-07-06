@@ -1,11 +1,6 @@
 services:
   5dcol-backend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      args:
-        GIT_COMMIT: ${GIT_COMMIT:-}
-        BUILD_DATE: ${BUILD_DATE:-}
+    image: ${FIVE_DCOL_BACKEND_IMAGE:-ghcr.io/forkkillet/5dcol-backend:latest}
     restart: unless-stopped
     environment:
       - PORT=5161

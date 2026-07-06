@@ -126,11 +126,11 @@ docker run -d \
 ### Docker Compose
 
 ```bash
-GIT_COMMIT="$(git rev-parse --short=12 HEAD)" \
-BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml pull
+docker compose -f docker/docker-compose.yml up -d
 ```
 
+Set `FIVE_DCOL_BACKEND_IMAGE` if you want to deploy a different image tag.
 Adjust the compose file if your reverse proxy or hosting setup needs additional
 ports, volumes, or networks.
 
