@@ -380,6 +380,7 @@ export class Game extends Disposable(Empty) {
   private toolbarSignature = ''
   private recordSignature = ''
   private statusSignature = ''
+  private recordRecoveryMode = false
   private gameInputDisabled = false
   private pointerInsideInput = false
   private cameraMotionId = 0
@@ -725,10 +726,20 @@ export class Game extends Disposable(Empty) {
     if (! recordDocument) return false
 
     const actions = recordDocument.getLineFullActions(0)
-    this.loadCoreGameState(CoreGameState.create(actions, [], studyDocument.initialMultiverse), {
-      focus: false,
-      recordDocument,
-    })
+    try {
+      this.loadCoreGameState(CoreGameState.create(actions, [], studyDocument.initialMultiverse), {
+        focus: false,
+        recordDocument,
+      })
+    }
+    catch (error) {
+      this.logger.error(error instanceof Error ? error.message : String(error))
+      this.loadCoreGameState(CoreGameState.create([], [], studyDocument.initialMultiverse), {
+        focus: false,
+        recordDocument,
+      })
+      this.recordRecoveryMode = true
+    }
     if (! this.applyWorkspaceState(workspace, { smooth: false }, { focusCamera: focus }) && focus) {
       this.focusCurrentPresent({ smooth: false })
     }
@@ -2648,21 +2659,98 @@ export class Game extends Disposable(Empty) {
       initialMultiverse: this.initialMultiverse,
       studyAnnotations: this.recordDocument.serializeFiveDPGNAnnotations(),
     }
+    const text = this.getFiveDPGNExportText(mode, format, options)
+    const actions = this.tryBuildRecordActionsForDisplay()
     return {
-      text: format === 'fen'
-        ? FiveDPGN.exportFEN(this.multiverse)
-        : mode === 'tree'
-          ? FiveDPGN.exportActionTree(this.recordDocument.buildActionTree(), options)
-          : FiveDPGN.exportGameState({
-              actions: this.actions.slice(0, Scalar.clamp(this.actionIndex, 0, this.actions.length)),
-            }, options),
+      text,
       format,
       mode,
       hasPendingMoves: format === 'pgn' && this.pendingMoves.length > 0,
       currentActionIndex: this.actionIndex,
       currentCursor: this.getCurrentRecordCursorTarget(),
-      actions: this.buildRecordActionsForDisplay(),
+      actions,
     }
+  }
+
+  private getFiveDPGNExportText(
+    mode: GameExportMode,
+    format: GameExportFormat,
+    options: FiveDPGN.ExportOptions,
+  ): string {
+    if (format === 'pgn' && this.recordRecoveryMode) {
+      return this.exportRawRecordTreeForRecovery(options)
+    }
+    try {
+      return format === 'fen'
+        ? FiveDPGN.exportFEN(this.multiverse)
+        : mode === 'tree'
+          ? FiveDPGN.exportActionTree(this.recordDocument.buildActionTree(), options)
+          : FiveDPGN.exportGameState({
+              actions: this.actions.slice(0, Scalar.clamp(this.actionIndex, 0, this.actions.length)),
+            }, options)
+    }
+    catch (error) {
+      this.logger.error(error instanceof Error ? error.message : String(error))
+      if (format === 'fen') return ''
+      return this.exportRawRecordTreeForRecovery(options)
+    }
+  }
+
+  private tryBuildRecordActionsForDisplay(): GameRecordRow[] {
+    try {
+      return this.buildRecordActionsForDisplay()
+    }
+    catch (error) {
+      this.logger.error(error instanceof Error ? error.message : String(error))
+      return []
+    }
+  }
+
+  private exportRawRecordTreeForRecovery(options: FiveDPGN.ExportOptions): string {
+    const tree = this.recordDocument.buildActionTree()
+    const body = this.formatRawActionTreeForRecovery(
+      tree,
+      getMultiverseBoardSize(options.initialMultiverse ?? this.initialMultiverse),
+    )
+    try {
+      const emptyExport = FiveDPGN.exportActionTree({ variations: [] }, options).trimEnd()
+      const lines = emptyExport.split('\n')
+      const result = lines.pop() ?? options.result ?? '*'
+      return [
+        ...lines,
+        '{ Recovery export: moves are raw source/target coordinates because the normal formatter failed. }',
+        ...(body.trim() ? [body] : []),
+        result,
+      ].join('\n') + '\n'
+    }
+    catch (error) {
+      this.logger.error(error instanceof Error ? error.message : String(error))
+      return `${body}\n`
+    }
+  }
+
+  private formatRawActionTreeForRecovery(
+    tree: FiveDPGN.ActionTree,
+    boardSize: BoardSize,
+    actionIndex = 0,
+  ): string {
+    const parts: string[] = []
+    for (let index = 0; index < tree.variations.length; index += 1) {
+      const variation = tree.variations[index]!
+      const actionLine = [
+        ...formatRecoveryComments(variation.commentsBefore),
+        `${formatRecoveryTurnSerial(actionIndex)} ${variation.action.moves.map((move, moveIndex) => (
+          `${formatRecoveryMove(move, boardSize)}${formatRecoveryGlyphs(variation.moveGlyphs?.[moveIndex])}`
+        )).join(' ')}${formatRecoveryComments(variation.commentsAfter).map(comment => ` ${comment}`).join('')}`,
+      ].join('\n')
+      const subtreeText = variation.subtree?.variations.length
+        ? this.formatRawActionTreeForRecovery(variation.subtree, boardSize, actionIndex + 1)
+        : ''
+      const variationText = subtreeText ? `${actionLine}\n${subtreeText}` : actionLine
+      const shouldParenthesize = tree.variations.length > 1 && index < tree.variations.length - 1
+      parts.push(shouldParenthesize ? `(${variationText})` : variationText)
+    }
+    return parts.join('\n')
   }
 
   private getFiveDPGNExportOptions(): FiveDPGN.ExportOptions {
@@ -2730,6 +2818,7 @@ export class Game extends Disposable(Empty) {
     this.initialMultiverse = state.initialMultiverse
     this.actions = state.actions
     this.recordDocument = recordDocument ?? RecordDocument.create(state.actions)
+    this.recordRecoveryMode = false
     this.multiverseCommitted = state.multiverseCommitted
     this.multiverse = state.multiverse
     this.player = state.player
@@ -4735,6 +4824,7 @@ export class Game extends Disposable(Empty) {
 }
 
 const AXIS_VIEW_FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
+const RECOVERY_FILE_LABELS = 'abcdefghijklmnopqrstuvwxyz'
 
 function clampBoardAxisCoord(value: number, max: number): number {
   if (! Number.isFinite(value)) return 0
@@ -4746,6 +4836,37 @@ function getLineBoardSize(line: Line): BoardSize {
     if (board) return Board.getSize(board)
   }
   return STANDARD_BOARD_SIZE
+}
+
+function getMultiverseBoardSize(multiverse: Multiverse): BoardSize {
+  for (const [, line] of Multiverse.getLineEntries(multiverse)) {
+    if (! line) continue
+    return getLineBoardSize(line)
+  }
+  return STANDARD_BOARD_SIZE
+}
+
+function formatRecoveryTurnSerial(actionIndex: number): string {
+  const turn = Math.floor(actionIndex / 2) + 1
+  const player = actionIndex % 2 === 0 ? 'w' : 'b'
+  return `${turn}${player}.`
+}
+
+function formatRecoveryMove({ from, to }: Move, boardSize: BoardSize): string {
+  return `${formatRecoveryCoord(from, boardSize)}${formatRecoveryCoord(to, boardSize)}`
+}
+
+function formatRecoveryCoord({ l, t, x, y }: Coord, { height }: BoardSize): string {
+  const file = RECOVERY_FILE_LABELS[x] ?? `x${x}`
+  return `(${l}T${t})${file}${height - y}`
+}
+
+function formatRecoveryComments(comments: readonly string[] | undefined): string[] {
+  return comments?.map(comment => `{${comment}}`) ?? []
+}
+
+function formatRecoveryGlyphs(glyphs: readonly string[] | undefined): string {
+  return glyphs?.join('') ?? ''
 }
 
 function getAxisViewFixedCoordMax(mode: GameAxisViewMode, { width, height }: BoardSize): number {
