@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Piece, Player } from '@5dcol/core'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Game, GameAxisViewBoardColumn, GameAxisViewFocusTarget, GameAxisViewMode, GameAxisViewSnapshot } from '@engine/game'
+import type { Game, GameAxisViewBoardColumn, GameAxisViewFocusTarget, GameAxisViewMode, GameAxisViewPieceCell, GameAxisViewSnapshot, GameAxisViewTargetCell } from '@engine/game'
 import { getAssetUrl } from '@engine/assets'
 import { Color4 } from '@engine/basic'
 import { Colors } from '@engine/constant'
@@ -22,6 +22,7 @@ interface CanvasRect {
 interface AxisViewHitItem {
   column: GameAxisViewBoardColumn
   focusTarget: GameAxisViewFocusTarget
+  piece?: GameAxisViewPieceCell
   rect: CanvasRect
 }
 
@@ -60,6 +61,7 @@ const emit = defineEmits<{
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const hoveredBoardKey = ref<string | null>(null)
+const hoveredPieceKey = ref<string | null>(null)
 const fixedCoord = ref(0)
 const mode = ref<GameAxisViewMode>('yt')
 const playerFilter = ref<AxisViewPlayerFilter>('both')
@@ -111,7 +113,7 @@ function draw() {
   ctx.clearRect(0, 0, width, height)
   lastHitItems = []
 
-  const snapshot = props.game?.getAxisViewSnapshot(mode.value, fixedCoord.value)
+  const snapshot = props.game?.getAxisViewSnapshot(mode.value, fixedCoord.value, hoveredPieceKey.value)
   if (! snapshot || snapshot.columns.length === 0) return
   if (snapshot.maxFixedCoord !== maxFixedCoord.value) maxFixedCoord.value = snapshot.maxFixedCoord
   if (snapshot.fixedCoord !== fixedCoord.value) fixedCoord.value = snapshot.fixedCoord
@@ -131,6 +133,7 @@ function drawSnapshot(
 
   const layout = getAxisViewCanvasLayout(width, height, visibleColumns, snapshot.rowLabels.length)
   const hoverKey = hoveredBoardKey.value
+  let hoverColumnRect: CanvasRect | null = null
   const visibleColumnIndexes = new Map<number, number>()
 
   ctx.save()
@@ -152,10 +155,7 @@ function drawSnapshot(
       fillCanvasRect(ctx, cellRect)
     }
 
-    if (getBoardKey(column) === hoverKey) {
-      ctx.fillStyle = colors.columnHighlightFill
-      fillCanvasRect(ctx, columnRect)
-    }
+    if (getBoardKey(column) === hoverKey) hoverColumnRect = columnRect
 
     ctx.fillStyle = colors.labelText
     ctx.globalAlpha = 0.78
@@ -177,6 +177,7 @@ function drawSnapshot(
   drawTargetCells(ctx, snapshot, layout, visibleColumnIndexes, colors)
   drawPieces(ctx, snapshot, layout, visibleColumnIndexes)
   drawAxisViewColumnSeparators(ctx, layout, visibleColumns.length, snapshot.rowLabels.length, colors)
+  if (hoverColumnRect) drawAxisViewColumnOutline(ctx, hoverColumnRect, colors)
   ctx.restore()
 }
 
@@ -187,7 +188,7 @@ function drawTargetCells(
   visibleColumnIndexes: Map<number, number>,
   colors: ReturnType<typeof getAxisViewColors>,
 ) {
-  for (const targetCell of snapshot.targetCells) {
+  for (const targetCell of getAxisViewVisibleTargetCells(snapshot)) {
     const visibleColumnIndex = visibleColumnIndexes.get(targetCell.columnIndex)
     if (visibleColumnIndex === undefined) continue
 
@@ -216,6 +217,16 @@ function drawPieces(
     const size = layout.cellSize * 0.88
     const x = cellRect.x + (cellRect.w - size) / 2
     const y = cellRect.y + (cellRect.h - size) / 2
+    const pieceRect = { h: size, w: size, x, y }
+    const column = snapshot.columns[pieceCell.columnIndex]
+    if (column) {
+      lastHitItems.push({
+        column,
+        focusTarget: snapshot.focusTarget,
+        piece: pieceCell,
+        rect: pieceRect,
+      })
+    }
     ctx.drawImage(image, x, y, size, size)
   }
 }
@@ -255,6 +266,26 @@ function getAxisViewCanvasLayout(
 
 function fillCanvasRect(ctx: CanvasRenderingContext2D, { x, y, w, h }: CanvasRect) {
   ctx.fillRect(x, y, w, h)
+}
+
+function drawAxisViewColumnOutline(
+  ctx: CanvasRenderingContext2D,
+  rect: CanvasRect,
+  colors: ReturnType<typeof getAxisViewColors>,
+) {
+  const lineWidth = 2
+  const inset = lineWidth / 2
+
+  ctx.save()
+  ctx.strokeStyle = colors.columnOutline
+  ctx.lineWidth = lineWidth
+  ctx.strokeRect(
+    rect.x + inset,
+    rect.y + inset,
+    Math.max(0, rect.w - lineWidth),
+    Math.max(0, rect.h - lineWidth),
+  )
+  ctx.restore()
 }
 
 function drawAxisViewColumnSeparators(
@@ -340,7 +371,7 @@ function getAxisViewColors(element: HTMLElement) {
       dark: Color4.toRgbaString(Colors.BoardBlack),
       light: Color4.toRgbaString(Colors.BoardWhite),
     },
-    columnHighlightFill: withAlpha(Color4.toRgbaString(Colors.BoardHighlightWhite), 0.58),
+    columnOutline: Color4.toRgbaString(Colors.BoardHighlightBlack),
     columnSeparator: withAlpha(Color4.toRgbaString(Colors.BoardBorderBlack), 0.42),
     labelText: getCssColor(style, '--button-text-color', 'rgba(244, 245, 237, 1)'),
     targetHighlight: {
@@ -348,6 +379,18 @@ function getAxisViewColors(element: HTMLElement) {
       light: Color4.toRgbaString(Colors.BoardHighlightWhite),
     },
   }
+}
+
+function getAxisViewVisibleTargetCells(snapshot: GameAxisViewSnapshot): GameAxisViewTargetCell[] {
+  const result: GameAxisViewTargetCell[] = []
+  const seen = new Set<string>()
+  for (const cell of snapshot.targetCells) {
+    const key = `${cell.columnIndex}:${cell.rowIndex}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(cell)
+  }
+  return result
 }
 
 function getCssColor(style: CSSStyleDeclaration, name: string, fallback: string) {
@@ -445,10 +488,12 @@ function getAxisViewFileLabel(file: number): string {
 function handlePointerMove(event: PointerEvent) {
   const item = getHitItemAtEvent(event)
   hoveredBoardKey.value = item ? getBoardKey(item.column) : null
+  hoveredPieceKey.value = item?.piece ? getPieceCellKey(item.piece) : null
 }
 
 function handlePointerLeave() {
   hoveredBoardKey.value = null
+  hoveredPieceKey.value = null
 }
 
 function handleClick(event: MouseEvent) {
@@ -481,6 +526,10 @@ function isPointInCanvasRect(x: number, y: number, rect: CanvasRect): boolean {
 
 function getBoardKey({ l, m }: Pick<GameAxisViewBoardColumn, 'l' | 'm'>): string {
   return `${l}:${m}`
+}
+
+function getPieceCellKey({ columnIndex, rowIndex }: Pick<GameAxisViewPieceCell, 'columnIndex' | 'rowIndex'>): string {
+  return `${columnIndex}:${rowIndex}`
 }
 </script>
 

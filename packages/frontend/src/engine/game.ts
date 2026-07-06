@@ -1567,6 +1567,7 @@ export class Game extends Disposable(Empty) {
   public getAxisViewSnapshot(
     mode: GameAxisViewMode,
     fixedCoord: number,
+    hoveredPieceKey: string | null = null,
   ): GameAxisViewSnapshot | null {
     const focusedBoard = this.getValidFocusedBoard()
     const lineEntry = this.getAxisViewLineEntry(focusedBoard?.l)
@@ -1583,6 +1584,7 @@ export class Game extends Disposable(Empty) {
     const rowCoords = getAxisViewRowCoords(mode, boardSize, this.viewPlayer)
     const columns: GameAxisViewBoardColumn[] = []
     const pieces: GameAxisViewPieceCell[] = []
+    let hoveredAxisPieceTargets: { player: Player, targets: Coord[] } | null = null
 
     for (const [m, board] of Line.getBoardEntries(line)) {
       if (! board) continue
@@ -1602,19 +1604,47 @@ export class Game extends Disposable(Empty) {
         const coord = getAxisViewSpacelikeCoord(mode, fixedBoardCoord, rowCoords[rowIndex]!)
         const piece = Board.getPiece(coord, board)
         if (piece === Piece.E) continue
+        const player = Pieces.getPlayer(piece)
+        const from = player === null
+          ? null
+          : {
+              ...coord,
+              l,
+              t: Coord.turn(m, player),
+            }
 
-        pieces.push({
+        const pieceCell = {
           columnIndex,
           l,
           m,
           piece,
-          player: Pieces.getPlayer(piece),
+          player,
           rowIndex,
-        })
+        }
+        pieces.push(pieceCell)
+
+        if (from && player !== null && hoveredPieceKey === getAxisViewPieceCellKey(pieceCell)) {
+          hoveredAxisPieceTargets = {
+            player,
+            targets: Multiverse.getMoveTargets(this.multiverse, from, player),
+          }
+        }
       }
     }
 
     if (columns.length === 0) return null
+    const selectedTargetCells = this.getAxisViewSelectedTargetCells(mode, l, fixedBoardCoord, rowCoords, columns)
+    const hoveredTargetCells = hoveredAxisPieceTargets
+      ? getAxisViewTargetCellsForTargets(
+          mode,
+          l,
+          fixedBoardCoord,
+          rowCoords,
+          columns,
+          hoveredAxisPieceTargets.player,
+          hoveredAxisPieceTargets.targets,
+        )
+      : []
 
     return {
       boardSize,
@@ -1630,12 +1660,12 @@ export class Game extends Disposable(Empty) {
       pieces,
       rowCoords,
       rowLabels: getAxisViewRowLabels(mode, rowCoords, boardSize, this.viewPlayer),
-      targetCells: this.getAxisViewTargetCells(mode, l, fixedBoardCoord, rowCoords, columns),
+      targetCells: [...selectedTargetCells, ...hoveredTargetCells],
       viewPlayer: this.viewPlayer,
     }
   }
 
-  private getAxisViewTargetCells(
+  private getAxisViewSelectedTargetCells(
     mode: GameAxisViewMode,
     l: number,
     fixedBoardCoord: number,
@@ -1645,28 +1675,7 @@ export class Game extends Disposable(Empty) {
     const selection = this.selectedPiece ?? this.hoverPiece
     if (! selection) return []
 
-    const columnIndexByM = new Map(columns.map((column, index) => [column.m, index]))
-    const rowIndexByCoord = new Map(rowCoords.map((coord, index) => [coord, index]))
-    const targetCells: GameAxisViewTargetCell[] = []
-    const seen = new Set<string>()
-
-    for (const target of selection.targets) {
-      if (target.l !== l) continue
-      if (! isAxisViewTargetInSlice(mode, target, fixedBoardCoord)) continue
-
-      const columnIndex = columnIndexByM.get(Coord.boardIndex(target, selection.player))
-      if (columnIndex === undefined) continue
-
-      const rowIndex = rowIndexByCoord.get(getAxisViewTargetRowCoord(mode, target))
-      if (rowIndex === undefined) continue
-
-      const key = `${columnIndex}:${rowIndex}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      targetCells.push({ columnIndex, rowIndex })
-    }
-
-    return targetCells
+    return getAxisViewTargetCellsForTargets(mode, l, fixedBoardCoord, rowCoords, columns, selection.player, selection.targets)
   }
 
   private getViewportWorldRect(): Rect {
@@ -4996,6 +5005,39 @@ function getAxisViewSpacelikeCoord(
     : { x: rowCoord, y: fixedCoord }
 }
 
+function getAxisViewTargetCellsForTargets(
+  mode: GameAxisViewMode,
+  l: number,
+  fixedBoardCoord: number,
+  rowCoords: number[],
+  columns: GameAxisViewBoardColumn[],
+  player: Player,
+  targets: Coord[],
+): GameAxisViewTargetCell[] {
+  const columnIndexByM = new Map(columns.map((column, index) => [column.m, index]))
+  const rowIndexByCoord = new Map(rowCoords.map((coord, index) => [coord, index]))
+  const targetCells: GameAxisViewTargetCell[] = []
+  const seen = new Set<string>()
+
+  for (const target of targets) {
+    if (target.l !== l) continue
+    if (! isAxisViewTargetInSlice(mode, target, fixedBoardCoord)) continue
+
+    const columnIndex = columnIndexByM.get(Coord.boardIndex(target, player))
+    if (columnIndex === undefined) continue
+
+    const rowIndex = rowIndexByCoord.get(getAxisViewTargetRowCoord(mode, target))
+    if (rowIndex === undefined) continue
+
+    const key = `${columnIndex}:${rowIndex}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    targetCells.push({ columnIndex, rowIndex })
+  }
+
+  return targetCells
+}
+
 function isAxisViewTargetInSlice(mode: GameAxisViewMode, target: CoordSpacelike, fixedCoord: number): boolean {
   return mode === 'yt'
     ? target.x === fixedCoord
@@ -5004,6 +5046,10 @@ function isAxisViewTargetInSlice(mode: GameAxisViewMode, target: CoordSpacelike,
 
 function getAxisViewTargetRowCoord(mode: GameAxisViewMode, target: CoordSpacelike): number {
   return mode === 'yt' ? target.y : target.x
+}
+
+function getAxisViewPieceCellKey({ columnIndex, rowIndex }: Pick<GameAxisViewPieceCell, 'columnIndex' | 'rowIndex'>): string {
+  return `${columnIndex}:${rowIndex}`
 }
 
 function getAxisViewColumnLabel(m: number, player: Player): string {
