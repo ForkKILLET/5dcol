@@ -193,6 +193,11 @@ interface FENBoardBlock {
   player: Player
 }
 
+interface BoardSize {
+  width: number
+  height: number
+}
+
 interface MoveFormatContext {
   piece: Piece
   capture: boolean
@@ -262,6 +267,7 @@ const DEFAULT_HEADER_VALUES: Record<string, string> = {
   Black: 'Black',
   Mode: '5D',
   Board: 'Standard',
+  Size: '8x8',
 }
 
 const HEADER_ORDER = [
@@ -275,6 +281,7 @@ const HEADER_ORDER = [
   'Result',
   'Mode',
   'Board',
+  'Size',
 ]
 
 const DEFAULT_EXPORT_OPTIONS: ResolvedExportOptions = {
@@ -781,6 +788,7 @@ class Parser {
   private cursor = 0
   private readonly fenBlocks: FENBoardBlock[] = []
   private readonly studyHeaders = new Map<string, string[]>()
+  private boardSize = DEFAULT_BOARD_SIZE
   private studyGlyphsByNag = new Map(STANDARD_NAG_GLYPHS)
 
   constructor(private readonly input: string) {}
@@ -978,10 +986,20 @@ class Parser {
       if (this.peek() !== '[') return
       const content = this.readBracketBlock()
       if (isBoardFenBlock(content)) {
-        this.fenBlocks.push(parseFENBlock(content))
+        this.fenBlocks.push(parseFENBlock(content, this.boardSize))
         continue
       }
       const header = parseHeaderBlock(content)
+      if (header?.key === 'Size') {
+        try {
+          this.boardSize = parseBoardSizeHeader(header.value)
+          assertSupportedBoardSize(this.boardSize)
+        }
+        catch (error) {
+          throw this.error(error instanceof Error ? error.message : 'Invalid 5DPGN Size')
+        }
+        continue
+      }
       if (header?.key.startsWith('5DStudy_')) {
         const values = this.studyHeaders.get(header.key) ?? []
         values.push(header.value)
@@ -1510,11 +1528,31 @@ const isFile = (char: string): boolean => FILES.includes(char)
 
 const isRank = (char: string): boolean => char >= '1' && char <= '8'
 
-const parseFENBlock = (content: string): FENBoardBlock => {
+const DEFAULT_BOARD_SIZE: BoardSize = { width: 8, height: 8 }
+
+const formatBoardSize = ({ width, height }: BoardSize): string => `${width}x${height}`
+
+const parseBoardSizeHeader = (value: string): BoardSize => {
+  const match = /^(\d+)\s*x\s*(\d+)$/i.exec(value.trim())
+  if (! match) throw new Error(`Invalid 5DPGN Size "${value}"`)
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (! Number.isSafeInteger(width) || ! Number.isSafeInteger(height) || width <= 0 || height <= 0) {
+    throw new Error(`Invalid 5DPGN Size "${value}"`)
+  }
+  return { width, height }
+}
+
+const assertSupportedBoardSize = (size: BoardSize): void => {
+  if (size.width === DEFAULT_BOARD_SIZE.width && size.height === DEFAULT_BOARD_SIZE.height) return
+  throw new Error(`Unsupported 5DPGN Size "${formatBoardSize(size)}"; only 8x8 is supported`)
+}
+
+const parseFENBlock = (content: string, boardSize: BoardSize): FENBoardBlock => {
   const match = /^(.*):([+-]?\d+):(\d+):([wb])$/.exec(content)
   if (! match) throw new Error(`Invalid 5DFEN block "[${content}]"`)
   return {
-    board: parseBoardFEN(match[1]!),
+    board: parseBoardFEN(match[1]!, boardSize),
     l: Number(match[2]),
     t: Number(match[3]),
     player: match[4] === 'w' ? Player.W : Player.B,
@@ -1557,11 +1595,12 @@ const createMultiverseFromFENBlocks = (blocks: FENBoardBlock[]): Multiverse => {
   }
 }
 
-const parseBoardFEN = (fen: string): Board => {
+const parseBoardFEN = (fen: string, boardSize: BoardSize = DEFAULT_BOARD_SIZE): Board => {
+  assertSupportedBoardSize(boardSize)
   const rows = fen.split('/')
-  if (rows.length !== 8) throw new Error(`Invalid 5DFEN board "${fen}"`)
+  if (rows.length !== boardSize.height) throw new Error(`Invalid 5DFEN board "${fen}"`)
 
-  const pieces = Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => Piece.E))
+  const pieces = Array.from({ length: boardSize.width }, () => Array.from({ length: boardSize.height }, () => Piece.E))
   const unmoved = new Set<string>()
 
   for (let y = 0; y < rows.length; y += 1) {
@@ -1575,7 +1614,7 @@ const parseBoardFEN = (fen: string): Board => {
 
       const piece = fenCharToPiece(char)
       if (piece === null) throw new Error(`Unsupported 5DFEN piece "${char}"`)
-      if (x >= 8) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
+      if (x >= boardSize.width) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
       pieces[x]![y] = piece
       if (rows[y]![index + 1] === '*') {
         unmoved.add(`${x},${y}`)
@@ -1583,7 +1622,7 @@ const parseBoardFEN = (fen: string): Board => {
       }
       x += 1
     }
-    if (x !== 8) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
+    if (x !== boardSize.width) throw new Error(`Invalid 5DFEN row "${rows[y]}"`)
   }
 
   return {
@@ -1609,12 +1648,13 @@ const hasUnmovedPiece = (
   pieces[x]?.[y] === piece && unmoved.has(`${x},${y}`)
 )
 
-const formatBoardFEN = (board: Board): string => {
+const formatBoardFEN = (board: Board, boardSize: BoardSize = DEFAULT_BOARD_SIZE): string => {
+  assertSupportedBoardSize(boardSize)
   const rows: string[] = []
-  for (let y = 0; y < 8; y += 1) {
+  for (let y = 0; y < boardSize.height; y += 1) {
     let row = ''
     let empty = 0
-    for (let x = 0; x < 8; x += 1) {
+    for (let x = 0; x < boardSize.width; x += 1) {
       const piece = Board.getPiece({ x, y }, board)
       if (piece === Piece.E) {
         empty += 1
