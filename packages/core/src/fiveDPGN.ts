@@ -1000,6 +1000,9 @@ class Parser {
         continue
       }
       const header = parseHeaderBlock(content)
+      if (! header && isHeaderLikeBlock(content)) {
+        throw this.error(`Invalid 5DPGN header "[${content}]"; header values must be quoted`)
+      }
       if (header?.key === 'Size') {
         try {
           this.boardSize = parseBoardSizeHeader(header.value)
@@ -1988,6 +1991,10 @@ const parseHeaderBlock = (content: string): { key: string, value: string } | nul
     value: unescapeHeaderValue(match[2]!),
   }
 }
+
+const isHeaderLikeBlock = (content: string): boolean => (
+  /^[A-Za-z0-9_]+\s+/.test(content.trim())
+)
 
 const unescapeHeaderValue = (value: string): string => (
   value.replace(/\\(["\\])/g, '$1')
