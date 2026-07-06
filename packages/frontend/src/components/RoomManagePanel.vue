@@ -13,6 +13,7 @@ withDefaults(defineProps<{
   deleteConfirmLabel: string
   deleteLabel: string
   dangerTitle: string
+  dialog?: boolean
   meta?: string
   nameLabel: string
   namePlaceholder: string
@@ -22,6 +23,7 @@ withDefaults(defineProps<{
   visibilityLabel?: string
   visibilityPrivateLabel?: string
 }>(), {
+  dialog: false,
   meta: '',
   showVisibility: false,
   visibilityLabel: '',
@@ -64,7 +66,10 @@ function clickSave() {
 </script>
 
 <template>
-  <GamePanel class="room-manage-panel">
+  <GamePanel
+    class="room-manage-panel"
+    :class="{ 'room-manage-panel--dialog': dialog }"
+  >
     <div class="room-manage-panel__body">
       <div class="room-manage-panel__header">
         <div class="room-manage-panel__heading">
@@ -135,7 +140,14 @@ function clickSave() {
 <style scoped>
 .room-manage-panel {
   flex: 1 1 auto;
-  min-height: 0;
+  box-sizing: border-box;
+  min-height: min(360px, calc(var(--app-height) - var(--button-top) * 2));
+  max-height: calc(var(--app-height) - var(--button-top) * 2);
+}
+
+.room-manage-panel--dialog {
+  border: var(--button-border) solid var(--menu-card-border-color);
+  box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
 }
 
 .room-manage-panel__body {

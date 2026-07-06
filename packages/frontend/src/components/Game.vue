@@ -78,6 +78,7 @@ import MainMenuAnimation from './MainMenuAnimation.vue'
 import MembersPanel from './MembersPanel.vue'
 import MinimapPanel from './MinimapPanel.vue'
 import RecordPanel from './RecordPanel.vue'
+import RoomManagePanel from './RoomManagePanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
 import StudyPage from './StudyPage.vue'
 import VersusPage from './VersusPage.vue'
@@ -121,13 +122,17 @@ let recordFocusedMovePulseId = 0
 let focusedOnlineStudyMemberPulseId = 0
 const focusedOnlineStudyMember = ref<{ userId: string; pulseId: number } | null>(null)
 const secondaryMenuOpen = ref(false)
-type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room'
+type DialogMode = 'language' | 'help' | 'settings' | 'import' | 'export' | 'share' | 'shared-room' | 'room-manage'
 type GameImportFormat = 'pgn' | 'fen'
 type GameImportTarget = 'active-game' | 'local-study'
 type SettingsDialogTab = 'volume' | 'appearance' | 'game' | 'study' | 'online' | 'fiveDPGN'
 type StudyOpenSource =
   | { kind: 'local' }
-  | { kind: 'online', serverAddress: string, roomId: string, version: number }
+  | { kind: 'online', private?: boolean, serverAddress: string, roomId: string, version: number }
+type RoomManageTarget =
+  | { kind: 'local-versus', id: string }
+  | { kind: 'local-study', id: string }
+  | { kind: 'online-study', serverAddress: string, roomId: string }
 type MainMenuMode = 'home' | 'versus' | 'study'
 const dialogStack = useDialogStack<DialogMode>()
 const dialogMode = dialogStack.current
@@ -155,6 +160,11 @@ const mainMenuMode = ref<MainMenuMode>('home')
 const activeLocalVersus = ref<LocalVersusSummary | null>(null)
 const activeLocalStudy = ref<{ id: string; title: string } | null>(null)
 const activeOnlineStudy = ref<{ serverAddress: string; roomId: string; version: number; title: string } | null>(null)
+const activeOnlineStudyPrivate = ref(false)
+const roomManageTarget = ref<RoomManageTarget | null>(null)
+const roomManageName = ref('')
+const roomManagePrivate = ref(false)
+const roomManageError = ref('')
 const coarsePointerQuery = window.matchMedia('(hover: none) and (pointer: coarse)')
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
 const initialViewportSize = getViewportSize()
@@ -285,11 +295,16 @@ const {
   createGame: createLocalVersusGame,
   deleteGame: deleteLocalVersusGame,
   getGame: getLocalVersusGame,
+  renameGame: renameLocalVersusGame,
+  summaries: localVersusSummaries,
   touchGame: touchLocalVersusGame,
 } = useLocalVersus()
 const {
   createStudyFromText: createLocalStudyFromText,
+  deleteStudy: deleteLocalStudy,
   getStudy: getLocalStudy,
+  renameStudy: renameLocalStudy,
+  summaries: localStudySummaries,
   upsertStudy: upsertLocalStudy,
 } = useLocalStudies()
 const {
@@ -433,6 +448,99 @@ const recordActionButtons = computed(() => (
 const menuButtons = computed(() => (
   secondaryButtons.value.filter(button => ! recordActionButtonIds.has(button.id))
 ))
+const currentOnlineStudyMember = computed(() => (
+  matchUserId.value
+    ? onlineStudyMembers.value.find(member => member.userId === matchUserId.value) ?? null
+    : null
+))
+const canManageCurrentRoom = computed(() => (
+  activeLocalVersus.value !== null
+  || activeLocalStudy.value !== null
+  || (
+    activeOnlineStudy.value !== null
+    && currentOnlineStudyMember.value?.role === 'owner'
+  )
+))
+const managedLocalVersus = computed(() => {
+  const target = roomManageTarget.value
+  if (target?.kind !== 'local-versus') return null
+  return localVersusSummaries.value.find(game => game.id === target.id)
+    ?? (activeLocalVersus.value?.id === target.id ? activeLocalVersus.value : null)
+})
+const managedLocalStudy = computed(() => {
+  const target = roomManageTarget.value
+  if (target?.kind !== 'local-study') return null
+  return localStudySummaries.value.find(study => study.id === target.id)
+    ?? (
+      activeLocalStudy.value?.id === target.id
+        ? {
+          id: activeLocalStudy.value.id,
+          title: activeLocalStudy.value.title,
+          actionCount: recordActions.value.length,
+          annotationCount: game?.getStudyDocument(activeLocalStudy.value).annotations.length ?? 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }
+        : null
+    )
+})
+const roomManageDialog = computed(() => {
+  const target = roomManageTarget.value
+  if (! target) return null
+
+  if (target.kind === 'local-versus') {
+    const localVersus = managedLocalVersus.value
+    if (! localVersus) return null
+    return {
+      title: t('versus.manageLocalTitle'),
+      meta: t('versus.meta', {
+        actions: localVersus.actionCount,
+        annotations: localVersus.annotationCount,
+        date: new Date(localVersus.updatedAt).toLocaleDateString(),
+      }),
+      nameLabel: t('versus.gameName'),
+      namePlaceholder: t('versus.namePlaceholder'),
+      showVisibility: false,
+    }
+  }
+
+  if (target.kind === 'local-study') {
+    const localStudy = managedLocalStudy.value
+    if (! localStudy) return null
+    return {
+      title: t('study.manageLocalTitle'),
+      meta: t('study.meta', {
+        actions: localStudy.actionCount,
+        annotations: localStudy.annotationCount,
+        date: new Date(localStudy.updatedAt).toLocaleDateString(),
+      }),
+      nameLabel: t('study.studyName'),
+      namePlaceholder: t('study.namePlaceholder'),
+      showVisibility: false,
+    }
+  }
+
+  const onlineStudy = activeOnlineStudy.value
+  if (
+    ! onlineStudy
+    || onlineStudy.serverAddress !== target.serverAddress
+    || onlineStudy.roomId !== target.roomId
+  ) return null
+
+  return {
+    title: t('study.manageOnlineTitle'),
+    meta: [
+      onlineStudy.serverAddress.replace(/^https?:\/\//, ''),
+      t('study.members', {
+        count: String(onlineStudyMembers.value.length),
+      }),
+      activeOnlineStudyPrivate.value ? t('study.private') : t('study.public'),
+    ].filter(Boolean).join(' - '),
+    nameLabel: t('study.studyName'),
+    namePlaceholder: t('study.namePlaceholder'),
+    showVisibility: true,
+  }
+})
 const panelSides = ['left', 'right'] as const
 const PANEL_DRAG_THRESHOLD_PX = 6
 const PANEL_DRAG_GHOST_OFFSET_PX = 12
@@ -1980,6 +2088,161 @@ function closeStudyPage() {
   mainMenuMode.value = 'home'
 }
 
+function createCurrentRoomManageTarget(): RoomManageTarget | null {
+  const localVersus = activeLocalVersus.value
+  if (localVersus) {
+    return {
+      kind: 'local-versus',
+      id: localVersus.id,
+    }
+  }
+
+  const localStudy = activeLocalStudy.value
+  if (localStudy) {
+    return {
+      kind: 'local-study',
+      id: localStudy.id,
+    }
+  }
+
+  const onlineStudy = activeOnlineStudy.value
+  if (
+    onlineStudy
+    && currentOnlineStudyMember.value?.role === 'owner'
+  ) {
+    return {
+      kind: 'online-study',
+      serverAddress: onlineStudy.serverAddress,
+      roomId: onlineStudy.roomId,
+    }
+  }
+
+  return null
+}
+
+function openCurrentRoomManagePanel() {
+  const target = createCurrentRoomManageTarget()
+  if (! target) return
+
+  playUISound()
+  secondaryMenuOpen.value = false
+
+  roomManageTarget.value = target
+  roomManageError.value = ''
+  roomManagePrivate.value = false
+  if (target.kind === 'local-versus') {
+    roomManageName.value = managedLocalVersus.value?.title ?? activeLocalVersus.value?.title ?? ''
+  }
+  else if (target.kind === 'local-study') {
+    roomManageName.value = managedLocalStudy.value?.title ?? activeLocalStudy.value?.title ?? ''
+  }
+  else {
+    roomManageName.value = activeOnlineStudy.value?.title ?? ''
+    roomManagePrivate.value = activeOnlineStudyPrivate.value
+  }
+  dialogStack.open('room-manage')
+}
+
+function closeRoomManageDialog(playSound = true) {
+  if (playSound) playUISound()
+  roomManageTarget.value = null
+  roomManageName.value = ''
+  roomManagePrivate.value = false
+  roomManageError.value = ''
+  closeDialog(false)
+}
+
+async function saveRoomManageDialog() {
+  const target = roomManageTarget.value
+  if (! target) return
+
+  playUISound()
+  roomManageError.value = ''
+  if (target.kind === 'local-versus') {
+    renameLocalVersusGame(target.id, roomManageName.value)
+    const updated = getLocalVersusGame(target.id)
+    if (updated && activeLocalVersus.value?.id === target.id) activeLocalVersus.value = updated
+    closeRoomManageDialog(false)
+    return
+  }
+
+  if (target.kind === 'local-study') {
+    renameLocalStudy(target.id, roomManageName.value)
+    const updated = getLocalStudy(target.id)
+    if (updated && activeLocalStudy.value?.id === target.id) {
+      activeLocalStudy.value = {
+        id: updated.id,
+        title: updated.title,
+      }
+    }
+    closeRoomManageDialog(false)
+    return
+  }
+
+  if (! matchUserId.value) return
+  try {
+    const client = new MatchClient(target.serverAddress)
+    const response = await client.updateStudy(target.roomId, {
+      userId: matchUserId.value,
+      name: roomManageName.value,
+      private: roomManagePrivate.value,
+    })
+    const current = activeOnlineStudy.value
+    if (
+      current
+      && current.serverAddress === target.serverAddress
+      && current.roomId === target.roomId
+    ) {
+      activeOnlineStudy.value = {
+        ...current,
+        version: response.room.version,
+        title: response.room.document.title,
+      }
+      activeOnlineStudyPrivate.value = response.room.private
+      onlineStudyMembers.value = response.room.members
+    }
+    closeRoomManageDialog(false)
+  }
+  catch (err) {
+    roomManageError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function deleteRoomManageDialog() {
+  const target = roomManageTarget.value
+  if (! target) return
+
+  playUISound()
+  roomManageError.value = ''
+  if (target.kind === 'local-versus') {
+    deleteLocalVersusGame(target.id)
+    closeRoomManageDialog(false)
+    returnToMainMenu({ clearSave: false })
+    return
+  }
+
+  if (target.kind === 'local-study') {
+    deleteLocalStudy(target.id)
+    handleLocalStudyDeleted(target.id)
+    closeRoomManageDialog(false)
+    returnToMainMenu({ clearSave: false })
+    return
+  }
+
+  if (! matchUserId.value) return
+  try {
+    const client = new MatchClient(target.serverAddress)
+    await client.deleteStudy(target.roomId, {
+      userId: matchUserId.value,
+    })
+    closeRoomManageDialog(false)
+    returnToMainMenu({ clearSave: false })
+  }
+  catch (err) {
+    roomManageError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 async function returnToSharedRoom() {
   const state = sharedRoom.value
   if (! state?.room || state.kind !== 'match') return
@@ -2016,6 +2279,7 @@ async function openSharedStudy() {
     serverAddress: state.server.address,
     roomId: response.room.id,
     version: response.room.version,
+    private: response.room.private,
   })
 }
 
@@ -2562,6 +2826,7 @@ async function autoEnterOnlineStudyRoom(room: Extract<LastRoom, { kind: 'online-
     serverAddress: room.serverAddress,
     roomId: response.room.id,
     version: response.room.version,
+    private: response.room.private,
   }, { playSound: false })
 }
 
@@ -2584,6 +2849,7 @@ function startLocalGame(
   activeLocalVersus.value = localVersus
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
+  activeOnlineStudyPrivate.value = false
   stopOnlineStudyStateSubscription()
   onlineStudySubmitPending = false
   game = new Game({
@@ -2636,6 +2902,7 @@ function startStudyGame(
   activeLocalVersus.value = null
   activeLocalStudy.value = null
   activeOnlineStudy.value = null
+  activeOnlineStudyPrivate.value = false
   onlineRoomRef.value = null
   stopOnlineStudyStateSubscription()
   onlineError.value = ''
@@ -2709,6 +2976,7 @@ function startStudyGame(
       version: source.version,
       title: study.title,
     }
+    activeOnlineStudyPrivate.value = source.private ?? false
     startOnlineStudyStateSubscription(source.serverAddress, source.roomId, matchUserId.value)
   }
   game.loadStudyDocument(study, { workspace })
@@ -2737,6 +3005,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
   activeLocalStudy.value = null
   activeLocalVersus.value = null
   activeOnlineStudy.value = null
+  activeOnlineStudyPrivate.value = false
   stopOnlineStudyStateSubscription()
   if (state.session) storeOnlineSession(serverAddress, state)
   stopOnlinePolling()
@@ -3019,6 +3288,7 @@ function startOnlineStudyStateSubscription(
             version: event.room.version,
             title: event.room.document.title,
           }
+          activeOnlineStudyPrivate.value = event.room.private
           break
         case 'study-patch':
           {
@@ -3036,6 +3306,12 @@ function startOnlineStudyStateSubscription(
           activeOnlineStudy.value = {
             ...current,
             version: event.version,
+            title: event.patch.type === 'update-title'
+              ? event.patch.title
+              : current.title,
+          }
+          if (event.patch.type === 'update-private') {
+            activeOnlineStudyPrivate.value = event.patch.private
           }
           break
         case 'command-rejected':
@@ -3151,6 +3427,7 @@ async function syncOnlineStudyState(serverAddress: string, roomId: string) {
       version: state.room.version,
       title: state.room.document.title,
     }
+    activeOnlineStudyPrivate.value = state.room.private
     onlineStudyMembers.value = state.room.members
     onlineStudyPresence.value = state.presence
     onlineStudyChatMessages.value = [...state.chat].sort((a, b) => a.createdAt - b.createdAt)
@@ -3994,6 +4271,14 @@ watch([exportFormat, exportMode], () => {
             <span>{{ t('main.settings') }}</span>
           </GameButton>
           <GameButton
+            v-if="canManageCurrentRoom"
+            size="secondary"
+            :style="menuButtonStyle"
+            @click="openCurrentRoomManagePanel"
+          >
+            <span>{{ t('button.manage') }}</span>
+          </GameButton>
+          <GameButton
             v-if="onlineRoomRef || activeOnlineStudy"
             size="secondary"
             :style="menuButtonStyle"
@@ -4262,6 +4547,42 @@ watch([exportFormat, exportMode], () => {
             <span>{{ t('button.close') }}</span>
           </GameButton>
         </template>
+      </GameDialog>
+
+      <GameDialog
+        v-else-if="dialogMode === 'room-manage'"
+        card-class="dialog-card--room-manage"
+        :button-style="menuButtonStyle"
+        @close="closeRoomManageDialog()"
+      >
+        <RoomManagePanel
+          v-if="roomManageDialog"
+          v-model:name="roomManageName"
+          v-model:visibility-private="roomManagePrivate"
+          dialog
+          :title="roomManageDialog.title"
+          :meta="roomManageDialog.meta"
+          :name-label="roomManageDialog.nameLabel"
+          :name-placeholder="roomManageDialog.namePlaceholder"
+          :show-visibility="roomManageDialog.showVisibility"
+          :visibility-label="t('room.visibility')"
+          :visibility-private-label="t('study.private')"
+          :danger-title="t('room.dangerZone')"
+          :delete-label="t('button.delete')"
+          :delete-confirm-label="t('room.confirmDelete')"
+          :back-label="t('button.back')"
+          :save-label="t('button.save')"
+          @back="closeRoomManageDialog"
+          @save="saveRoomManageDialog"
+          @delete="deleteRoomManageDialog"
+        />
+        <p
+          class="dialog-message dialog-message-error"
+          :class="{ 'dialog-message--empty': !roomManageError }"
+          aria-live="polite"
+        >
+          {{ roomManageError || '\u00a0' }}
+        </p>
       </GameDialog>
 
       <GameDialog

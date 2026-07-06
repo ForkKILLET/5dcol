@@ -36,7 +36,7 @@ const emit = defineEmits<{
 
 type StudyOpenSource =
   | { kind: 'local' }
-  | { kind: 'online', serverAddress: string, roomId: string, version: number }
+  | { kind: 'online', private?: boolean, serverAddress: string, roomId: string, version: number }
 
 type StudySourceKind = 'empty' | 'import'
 
@@ -307,6 +307,10 @@ function openStudyCreatePanel(target: StudyCreateTarget, source: StudySourceKind
 
 function openStudyManagePanel(id: string, title: string) {
   emit('uiSound')
+  setLocalStudyManagePanel(id, title)
+}
+
+function setLocalStudyManagePanel(id: string, title: string) {
   closeStudyCreatePanel({ sound: false })
   managingOnlineStudy.value = null
   managingOnlineStudyTitle.value = ''
@@ -317,6 +321,10 @@ function openStudyManagePanel(id: string, title: string) {
 function openOnlineStudyManagePanel(server: StudyServerState, study: StudyRoom) {
   if (! canManageOnlineStudy(study)) return
   emit('uiSound')
+  setOnlineStudyManagePanel(server, study)
+}
+
+function setOnlineStudyManagePanel(server: StudyServerState, study: StudyRoom) {
   closeStudyCreatePanel({ sound: false })
   managingStudyId.value = null
   managingStudyTitle.value = ''
@@ -393,6 +401,7 @@ async function createOnlineStudy(
       serverAddress: server.address,
       roomId: response.room.id,
       version: response.room.version,
+      private: response.room.private,
     })
     closeStudyCreatePanel({ sound: false })
   }
@@ -431,6 +440,7 @@ async function openOnlineStudy(server: StudyServerState, study: StudyRoom) {
       serverAddress: server.address,
       roomId: response.room.id,
       version: response.room.version,
+      private: response.room.private,
     })
   }
   catch (err) {

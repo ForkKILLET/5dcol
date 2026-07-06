@@ -208,6 +208,10 @@ function openLocalGame(id: string) {
 
 function openLocalManagePanel(id: string, title: string) {
   emit('uiSound')
+  setLocalManagePanel(id, title)
+}
+
+function setLocalManagePanel(id: string, title: string) {
   closeLocalCreatePanel({ sound: false })
   managingLocalGameId.value = id
   managingLocalGameTitle.value = title

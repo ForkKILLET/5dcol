@@ -185,6 +185,17 @@ function trapTab(e: KeyboardEvent) {
   height: min(620px, calc(var(--app-height) - var(--button-top) * 2));
 }
 
+.dialog-card--room-manage {
+  width: min(720px, calc(100vw - var(--button-top) * 4));
+  max-height: calc(var(--app-height) - var(--button-top) * 2);
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .dialog-card--narrow {
   align-items: center;
   width: fit-content;
