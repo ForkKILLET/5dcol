@@ -152,7 +152,7 @@ function drawSnapshot(
       fillCanvasRect(ctx, cellRect)
     }
 
-    if (column.focused || getBoardKey(column) === hoverKey) {
+    if (getBoardKey(column) === hoverKey) {
       ctx.fillStyle = colors.columnHighlightFill
       fillCanvasRect(ctx, columnRect)
     }
@@ -174,9 +174,29 @@ function drawSnapshot(
   }
   ctx.globalAlpha = 1
 
+  drawTargetCells(ctx, snapshot, layout, visibleColumnIndexes, colors)
   drawPieces(ctx, snapshot, layout, visibleColumnIndexes)
   drawAxisViewColumnSeparators(ctx, layout, visibleColumns.length, snapshot.rowLabels.length, colors)
   ctx.restore()
+}
+
+function drawTargetCells(
+  ctx: CanvasRenderingContext2D,
+  snapshot: GameAxisViewSnapshot,
+  layout: AxisViewCanvasLayout,
+  visibleColumnIndexes: Map<number, number>,
+  colors: ReturnType<typeof getAxisViewColors>,
+) {
+  for (const targetCell of snapshot.targetCells) {
+    const visibleColumnIndex = visibleColumnIndexes.get(targetCell.columnIndex)
+    if (visibleColumnIndex === undefined) continue
+
+    const cellRect = getAxisViewCellRect(layout, visibleColumnIndex, targetCell.rowIndex)
+    ctx.fillStyle = isAxisViewRowLight(snapshot, targetCell.rowIndex)
+      ? colors.targetHighlight.light
+      : colors.targetHighlight.dark
+    fillCanvasRect(ctx, cellRect)
+  }
 }
 
 function drawPieces(
@@ -323,6 +343,10 @@ function getAxisViewColors(element: HTMLElement) {
     columnHighlightFill: withAlpha(Color4.toRgbaString(Colors.BoardHighlightWhite), 0.58),
     columnSeparator: withAlpha(Color4.toRgbaString(Colors.BoardBorderBlack), 0.42),
     labelText: getCssColor(style, '--button-text-color', 'rgba(244, 245, 237, 1)'),
+    targetHighlight: {
+      dark: Color4.toRgbaString(Colors.BoardHighlightBlack),
+      light: Color4.toRgbaString(Colors.BoardHighlightWhite),
+    },
   }
 }
 

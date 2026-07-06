@@ -168,6 +168,11 @@ export interface GameAxisViewPieceCell {
   rowIndex: number
 }
 
+export interface GameAxisViewTargetCell {
+  columnIndex: number
+  rowIndex: number
+}
+
 export interface GameAxisViewSnapshot {
   boardSize: BoardSize
   columns: GameAxisViewBoardColumn[]
@@ -179,6 +184,7 @@ export interface GameAxisViewSnapshot {
   pieces: GameAxisViewPieceCell[]
   rowCoords: number[]
   rowLabels: string[]
+  targetCells: GameAxisViewTargetCell[]
   viewPlayer: Player
 }
 
@@ -1624,8 +1630,43 @@ export class Game extends Disposable(Empty) {
       pieces,
       rowCoords,
       rowLabels: getAxisViewRowLabels(mode, rowCoords, boardSize, this.viewPlayer),
+      targetCells: this.getAxisViewTargetCells(mode, l, fixedBoardCoord, rowCoords, columns),
       viewPlayer: this.viewPlayer,
     }
+  }
+
+  private getAxisViewTargetCells(
+    mode: GameAxisViewMode,
+    l: number,
+    fixedBoardCoord: number,
+    rowCoords: number[],
+    columns: GameAxisViewBoardColumn[],
+  ): GameAxisViewTargetCell[] {
+    const selection = this.selectedPiece ?? this.hoverPiece
+    if (! selection) return []
+
+    const columnIndexByM = new Map(columns.map((column, index) => [column.m, index]))
+    const rowIndexByCoord = new Map(rowCoords.map((coord, index) => [coord, index]))
+    const targetCells: GameAxisViewTargetCell[] = []
+    const seen = new Set<string>()
+
+    for (const target of selection.targets) {
+      if (target.l !== l) continue
+      if (! isAxisViewTargetInSlice(mode, target, fixedBoardCoord)) continue
+
+      const columnIndex = columnIndexByM.get(Coord.boardIndex(target, selection.player))
+      if (columnIndex === undefined) continue
+
+      const rowIndex = rowIndexByCoord.get(getAxisViewTargetRowCoord(mode, target))
+      if (rowIndex === undefined) continue
+
+      const key = `${columnIndex}:${rowIndex}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      targetCells.push({ columnIndex, rowIndex })
+    }
+
+    return targetCells
   }
 
   private getViewportWorldRect(): Rect {
@@ -4953,6 +4994,16 @@ function getAxisViewSpacelikeCoord(
   return mode === 'yt'
     ? { x: fixedCoord, y: rowCoord }
     : { x: rowCoord, y: fixedCoord }
+}
+
+function isAxisViewTargetInSlice(mode: GameAxisViewMode, target: CoordSpacelike, fixedCoord: number): boolean {
+  return mode === 'yt'
+    ? target.x === fixedCoord
+    : target.y === fixedCoord
+}
+
+function getAxisViewTargetRowCoord(mode: GameAxisViewMode, target: CoordSpacelike): number {
+  return mode === 'yt' ? target.y : target.x
 }
 
 function getAxisViewColumnLabel(m: number, player: Player): string {
