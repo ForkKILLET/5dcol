@@ -126,6 +126,9 @@ const branchBlockKeyAliases = ref<Record<number, string>>({})
 const currentCursorKey = computed(() => (
   props.rows.find(row => isCurrentRecordRow(row))?.recordKey ?? ''
 ))
+const currentRecordLineId = computed(() => (
+  props.rows.find(row => isCurrentRecordRow(row))?.recordLineId ?? null
+))
 const focusedMoveKey = computed(() => (
   props.focusedMove
     ? `${getCursorPresenceKey(props.focusedMove.recordLineId, props.focusedMove.recordActionIndex)}:${props.focusedMove.moveIndex}:${props.focusedMove.segmentIndex}:${props.focusedMove.pulseId}`
@@ -331,6 +334,13 @@ function isFocusedRecordMove(row: GameRecordRow, moveIndex: number) {
 function isFocusedRecordSegment(row: GameRecordRow, moveIndex: number, segmentIndex: number) {
   return isFocusedRecordMove(row, moveIndex)
     && props.focusedMove?.segmentIndex === segmentIndex
+}
+
+function isRecordSegmentDisabled(segment: GameRecordMoveSegment) {
+  return props.hasPendingMoves
+    && currentRecordLineId.value !== null
+    && segment.recordLineId !== undefined
+    && segment.recordLineId !== currentRecordLineId.value
 }
 
 function canJumpToRecordCursor(cursor: GameRecordCursor) {
@@ -1091,6 +1101,7 @@ onBeforeUnmount(() => {
                       class="record-segment"
                       :class="{ 'record-segment--focused': isFocusedRecordSegment(row, moveIndex, segmentIndex) }"
                       type="button"
+                      :disabled="isRecordSegmentDisabled(segment)"
                       :data-focused-record-move="isFocusedRecordSegment(row, moveIndex, segmentIndex) ? 'true' : undefined"
                       @click.stop="emit('focusSegment', segment)"
                     >
@@ -2100,8 +2111,13 @@ onBeforeUnmount(() => {
     box-shadow 160ms ease;
 }
 
-.record-segment:hover,
-.record-segment:focus-visible {
+.record-segment:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.record-segment:not(:disabled):hover,
+.record-segment:not(:disabled):focus-visible {
   background: color-mix(in srgb, var(--button-hover-fill-color) 58%, transparent);
   outline: none;
 }

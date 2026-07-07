@@ -627,14 +627,21 @@ export class Game extends Disposable(Empty) {
     return true
   }
 
-  private rollbackToRecordCursorTarget(target: RecordCursorTarget): boolean {
+  private rollbackToRecordCursorTarget(
+    target: RecordCursorTarget,
+    {
+      focus = true,
+    }: {
+      focus?: boolean
+    } = {},
+  ): boolean {
     this.recordDocument.deleteActiveEmptyLineIfLeaving(target.recordLineId)
 
     const actions = this.recordDocument.getLineFullActions(target.recordLineId)
     const targetActionIndex = this.recordDocument.getLinePrefixActions(target.recordLineId).length
       + target.recordActionIndex
     this.recordDocument.setActiveLine(target.recordLineId)
-    this.applyRecordActionPath(actions, targetActionIndex)
+    this.applyRecordActionPath(actions, targetActionIndex, { focus })
     return true
   }
 
@@ -1842,10 +1849,39 @@ export class Game extends Disposable(Empty) {
     }
   }
 
-  public focusRecordMoveSegment(segment: GameRecordMoveSegment): boolean {
+  public focusRecordMoveSegment(
+    segment: GameRecordMoveSegment,
+    {
+      moveCursor = true,
+    }: {
+      moveCursor?: boolean
+    } = {},
+  ): boolean {
     const board = segment.focusBoard ?? { l: segment.l, m: segment.m }
+    if (moveCursor) {
+      const target = this.getRecordMoveSegmentCursorTarget(segment)
+      if (! target) return false
+      if (
+        this.pendingMoves.length > 0
+        && target.recordLineId !== this.recordDocument.activeRecordLineId
+      ) return false
+      if (! this.rollbackToRecordCursorTarget(target, { focus: false })) return false
+    }
     this.focusBoard(board.l, board.m)
     return true
+  }
+
+  private getRecordMoveSegmentCursorTarget(segment: GameRecordMoveSegment): RecordCursorTarget | null {
+    if (
+      segment.recordLineId === undefined
+      || segment.recordActionIndex === undefined
+    ) return null
+
+    const isSourceSegment = (segment.segmentIndex ?? 0) === 0 && (segment.segmentCount ?? 1) > 1
+    return {
+      recordLineId: segment.recordLineId,
+      recordActionIndex: segment.recordActionIndex + (isSourceSegment ? 0 : 1),
+    }
   }
 
   private getValidFocusedBoard(): GameBoardFocus | null {

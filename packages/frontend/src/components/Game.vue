@@ -1858,8 +1858,14 @@ function playMainMenuAnnihilateSound() {
 
 function focusRecordSegment(segment: GameRecordMoveSegment) {
   if (! gameStarted.value) return
+  const moveCursor = ! onlineSession.value || activeOnlineStudy.value !== null
+  if (! game?.focusRecordMoveSegment(segment, { moveCursor })) return
+  if (
+    moveCursor
+    && activeOnlineStudy.value
+    && ! shouldPreserveOnlineStudyFollowOnManualCursorMove()
+  ) setOnlineStudyFollowUser(null)
   playUISound()
-  game?.focusRecordMoveSegment(segment)
   if (
     segment.recordLineId !== undefined
     && segment.recordActionIndex !== undefined
