@@ -146,7 +146,7 @@ export function createBackendServer(options: BackendServerOptions) {
 
   void app.register(cors, {
     origin: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type'],
   })
   void app.register(websocket)
