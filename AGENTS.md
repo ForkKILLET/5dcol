@@ -23,4 +23,5 @@
   - `pnpm -F @5dcol/backend check`
 - Independent, non-trivial changes may be committed without asking first when they are cleanly separable from unrelated worktree changes.
 - Follow the existing commit message style, such as `feat(frontend): ...` and `fix(core, frontend): ...`.
+- When changing backend behavior, APIs, deployment/runtime behavior, or anything that affects the published backend Docker image, update `packages/backend/package.json` according to semver so `/health` reports a meaningful server version.
 - Documents under `work/` are planning notes, should be written in Chinese, and normally should not be committed.
