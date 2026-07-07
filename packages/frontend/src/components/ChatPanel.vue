@@ -99,7 +99,8 @@ function getAuthorName(message: ChatMessage) {
   gap: calc(var(--button-content-gap) * 0.75);
   min-height: 120px;
   overflow: auto;
-  padding-right: calc(var(--button-content-gap) * 0.5);
+  padding-right: var(--scrollbar-content-gap);
+  scrollbar-gutter: stable;
 }
 
 .chat-empty {

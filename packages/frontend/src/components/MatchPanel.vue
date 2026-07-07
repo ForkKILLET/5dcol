@@ -169,8 +169,9 @@ function forwardViewRoom(server: MatchServerState, room: MatchRoom) {
   flex-direction: column;
   gap: var(--button-content-gap);
   min-height: 0;
-  padding-right: calc(var(--button-content-gap) * 0.5);
+  padding-right: var(--scrollbar-content-gap);
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .match-card-actions {

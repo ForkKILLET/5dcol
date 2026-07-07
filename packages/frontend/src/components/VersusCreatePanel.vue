@@ -118,8 +118,9 @@ function create() {
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 2);
   min-height: 0;
-  padding-right: calc(var(--button-content-gap) * 0.5);
+  padding-right: var(--scrollbar-content-gap);
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .versus-create-panel__header,

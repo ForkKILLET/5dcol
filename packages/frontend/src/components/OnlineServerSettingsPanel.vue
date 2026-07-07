@@ -250,7 +250,9 @@ function getServerDynamicMeta(server: SettingsServerState) {
   flex-direction: column;
   gap: calc(var(--button-content-gap) * 1.5);
   min-height: 0;
+  padding-right: var(--scrollbar-content-gap);
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .online-server-settings-panel__list :deep(.game-icon) {

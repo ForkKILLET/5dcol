@@ -84,7 +84,9 @@ const emit = defineEmits<{
   z-index: var(--z-ui-floating);
   width: min(620px, calc(100vw - var(--button-top) * 2));
   max-height: min(520px, calc(var(--app-height) - var(--button-top) * 4));
+  padding-right: var(--scrollbar-content-gap);
   overflow: auto;
+  scrollbar-gutter: stable;
   pointer-events: auto;
   transform: translateX(-50%);
 }

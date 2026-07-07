@@ -333,7 +333,9 @@ function setActiveTab(tab: SettingsTab) {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  padding-right: var(--scrollbar-content-gap);
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .settings-panel > .settings-list {

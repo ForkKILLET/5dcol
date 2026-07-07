@@ -1409,7 +1409,7 @@ onBeforeUnmount(() => {
 }
 
 .record-content {
-  --record-scrollbar-outset: 8px;
+  --record-scrollbar-outset: var(--scrollbar-content-gap);
   --record-action-min-width: 280px;
 
   flex: 1 1 auto;
@@ -1421,6 +1421,8 @@ onBeforeUnmount(() => {
   margin-right: calc(-1 * var(--record-scrollbar-outset));
   padding: 0;
   padding-right: var(--record-scrollbar-outset);
+  padding-bottom: var(--scrollbar-content-bottom-gap);
+  scrollbar-gutter: stable;
   color: var(--button-text-color);
   font-family: var(--latin-serif-font);
   font-size: 18px;

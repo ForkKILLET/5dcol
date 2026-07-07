@@ -5057,12 +5057,14 @@ canvas {
   max-height: max(160px, calc(var(--app-height) - var(--button-top) * 2));
   overflow: auto;
   padding: calc(var(--button-content-gap) * 5);
+  padding-right: calc(var(--button-content-gap) * 5 + var(--scrollbar-content-gap));
   border: var(--button-border) solid var(--menu-card-border-color);
   border-radius: 8px;
   background: var(--menu-card-fill-color);
   box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
   outline: none;
   pointer-events: auto;
+  scrollbar-gutter: stable;
   transform: translate(-50%, -50%);
 }
 
@@ -5170,7 +5172,10 @@ canvas {
   min-height: 0;
   max-height: min(58vh, 560px);
   max-height: min(58dvh, 560px);
+  padding-right: var(--scrollbar-content-gap);
+  padding-bottom: var(--scrollbar-content-bottom-gap);
   overflow: auto;
+  scrollbar-gutter: stable;
   color: var(--button-text-color);
   font-size: 18px;
   line-height: 1.35;

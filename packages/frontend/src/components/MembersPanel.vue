@@ -173,7 +173,7 @@ function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
 
 .members-list {
   --member-pulse-spread: 8px;
-  --members-list-scroll-padding: calc(var(--button-content-gap) * 0.5);
+  --members-list-scroll-padding: var(--scrollbar-content-gap);
 
   display: flex;
   flex-direction: column;
@@ -186,6 +186,7 @@ function getMemberBadgeInitial(member: MembersPanelMemberBadge) {
     var(--member-pulse-spread)
     var(--member-pulse-spread);
   overflow: auto;
+  scrollbar-gutter: stable;
   list-style: none;
 }
 

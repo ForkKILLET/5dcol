@@ -69,10 +69,10 @@ const { t } = useI18n({ useScope: 'global' })
 
 <style scoped>
 .match-settings-panel {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .match-settings-list {

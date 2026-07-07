@@ -3,6 +3,29 @@
   src: local("Times New Roman"), local("Georgia"), local("Palatino Linotype"), local("Liberation Serif");
 }
 
+:root {
+  --scrollbar-content-gap: 12px;
+  --scrollbar-content-bottom-gap: calc(var(--button-shadow-offset, 5px) + var(--scrollbar-content-gap));
+}
+
+.match-server-list::after,
+.versus-create-panel__body::after,
+.study-create-panel__body::after,
+.settings-panel > .settings-list::after,
+.study-list::after,
+.versus-local-list::after,
+.room-manage-panel__body::after,
+.online-server-settings-panel__list::after,
+.game-panel-picker::after,
+.dialog-card::after,
+.secondary-menu-card::after,
+.chat-message-list::after,
+.members-list::after {
+  flex: 0 0 var(--scrollbar-content-bottom-gap);
+  display: block;
+  content: '';
+}
+
 html,
 body,
 #root {
