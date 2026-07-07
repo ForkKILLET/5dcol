@@ -398,6 +398,10 @@ export class Game extends Disposable(Empty) {
   private submitRequestedDuringMoveAnimation = false
   private toolbarSignature = ''
   private recordSignature = ''
+  private recordRowsSignature = ''
+  private recordRowsCache: GameRecordRow[] = []
+  private recordHeaderTextSignature = ''
+  private recordHeaderTextCache = ''
   private statusSignature = ''
   private recordRecoveryMode = false
   private gameInputDisabled = false
@@ -514,6 +518,8 @@ export class Game extends Disposable(Empty) {
   }
 
   public setFiveDPGNOptions(options: FiveDPGN.ExportOptions) {
+    if (JSON.stringify(options) === JSON.stringify(this.fiveDPGNOptions)) return
+
     this.fiveDPGNOptions = { ...options }
     this.recordSignature = ''
     this.syncRecord()
@@ -1510,8 +1516,7 @@ export class Game extends Disposable(Empty) {
       heldForMotion: false,
       releaseStartedAt: null,
     }
-    this.syncWorkspace()
-    this.persistGameState()
+    this.persistWorkspaceState(this.syncWorkspace())
   }
 
   public getAxisViewState(): GameAxisViewState {
@@ -1530,8 +1535,7 @@ export class Game extends Disposable(Empty) {
     ) return
 
     this.axisViewState = next
-    this.syncWorkspace()
-    this.persistGameState()
+    this.persistWorkspaceState(this.syncWorkspace())
   }
 
   public setAxisViewVisible(visible: boolean) {
@@ -1800,8 +1804,10 @@ export class Game extends Disposable(Empty) {
     return restored
   }
 
-  private syncWorkspace() {
-    this.ctx.onWorkspaceChange?.(this.getWorkspaceState())
+  private syncWorkspace(): GameWorkspaceState {
+    const workspace = this.getWorkspaceState()
+    this.ctx.onWorkspaceChange?.(workspace)
+    return workspace
   }
 
   private getWorkspaceState(): GameWorkspaceState {
@@ -1809,6 +1815,30 @@ export class Game extends Disposable(Empty) {
       axisView: this.getValidAxisViewState(),
       recordCursor: this.getCurrentRecordCursorTarget(),
       focusedBoard: this.getValidFocusedBoard(),
+    }
+  }
+
+  private persistWorkspaceState(workspace: GameWorkspaceState = this.getWorkspaceState()) {
+    if (this.isOnlineGame()) return
+
+    const storageKey = this.getStorageKey()
+    const storage = getLocalStorage()
+    if (! storage || ! storageKey) return
+
+    try {
+      const rawState = storage.getItem(storageKey)
+      if (! rawState) return
+
+      const parsedState = JSON.parse(rawState) as Partial<StoredGameState>
+      if (! isStoredGameState(parsedState)) return
+
+      storage.setItem(storageKey, JSON.stringify({
+        ...parsedState,
+        workspace,
+      }))
+    }
+    catch {
+      this.logger.error('Failed to save workspace state')
     }
   }
 
@@ -2149,10 +2179,18 @@ export class Game extends Disposable(Empty) {
   private syncRecord() {
     if (! this.ctx.onRecordChange) return
 
-    const request = this.getFiveDPGNExport()
-    const signature = JSON.stringify(request)
+    const rowsSignature = this.getRecordRowsSignature()
+    const headerTextSignature = this.getRecordHeaderTextSignature()
+    const signature = JSON.stringify({
+      rowsSignature,
+      headerTextSignature,
+      currentCursor: this.getCurrentRecordCursorTarget(),
+      currentActionIndex: this.actionIndex,
+      hasPendingMoves: this.pendingMoves.length > 0,
+    })
     if (signature === this.recordSignature) return
 
+    const request = this.buildRecordView({ headerTextSignature, rowsSignature })
     this.recordSignature = signature
     this.ctx.onRecordChange(request)
   }
@@ -2752,7 +2790,7 @@ export class Game extends Disposable(Empty) {
       studyAnnotations: this.recordDocument.serializeFiveDPGNAnnotations(),
     }
     const text = this.getFiveDPGNExportText(mode, format, options)
-    const actions = this.tryBuildRecordActionsForDisplay()
+    const actions = this.getRecordRowsForDisplay()
     return {
       text,
       format,
@@ -2762,6 +2800,72 @@ export class Game extends Disposable(Empty) {
       currentCursor: this.getCurrentRecordCursorTarget(),
       actions,
     }
+  }
+
+  public getRecordView(): GameExportRequest {
+    return this.buildRecordView()
+  }
+
+  private buildRecordView(signatures: {
+    headerTextSignature?: string
+    rowsSignature?: string
+  } = {}): GameExportRequest {
+    return {
+      text: this.getRecordHeaderText(signatures.headerTextSignature),
+      format: 'pgn',
+      mode: 'tree',
+      hasPendingMoves: this.pendingMoves.length > 0,
+      currentActionIndex: this.actionIndex,
+      currentCursor: this.getCurrentRecordCursorTarget(),
+      actions: this.getRecordRowsForDisplay(signatures.rowsSignature),
+    }
+  }
+
+  private getRecordHeaderText(signature = this.getRecordHeaderTextSignature()): string {
+    if (signature === this.recordHeaderTextSignature) return this.recordHeaderTextCache
+
+    const options: FiveDPGN.ExportOptions = {
+      ...this.getFiveDPGNExportOptions(),
+      initialMultiverse: this.initialMultiverse,
+    }
+    try {
+      this.recordHeaderTextCache = FiveDPGN.exportActionTree({ variations: [] }, options)
+    }
+    catch (error) {
+      this.logger.error(error instanceof Error ? error.message : String(error))
+      this.recordHeaderTextCache = ''
+    }
+    this.recordHeaderTextSignature = signature
+    return this.recordHeaderTextCache
+  }
+
+  private getRecordHeaderTextSignature(): string {
+    return JSON.stringify({
+      options: this.getFiveDPGNExportOptions(),
+      initialMultiverse: this.initialMultiverse,
+    })
+  }
+
+  private getRecordRowsForDisplay(signature = this.getRecordRowsSignature()): GameRecordRow[] {
+    if (signature === this.recordRowsSignature) return this.recordRowsCache
+
+    this.recordRowsCache = this.tryBuildRecordActionsForDisplay()
+    this.recordRowsSignature = signature
+    return this.recordRowsCache
+  }
+
+  private getRecordRowsSignature(): string {
+    return JSON.stringify({
+      actionIndex: this.actionIndex,
+      pendingMoves: this.getPendingMoves(),
+      initialMultiverse: this.initialMultiverse,
+      lines: this.recordDocument.serializeLines(),
+      annotations: this.recordDocument.serializeAnnotations(),
+      activeRecordLineId: this.recordDocument.activeRecordLineId,
+      nextRecordLineId: this.recordDocument.nextRecordLineId,
+      options: this.fiveDPGNOptions,
+      recoveryMode: this.recordRecoveryMode,
+    })
   }
 
   private getFiveDPGNExportText(

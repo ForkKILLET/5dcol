@@ -986,7 +986,7 @@ function toggleRecordPanel() {
   if (! gameStarted.value) return
   playUISound()
   if (! recordPanelOpen.value) {
-    const request = game?.getFiveDPGNExport()
+    const request = game?.getRecordView()
     if (request) updateRecord(request)
   }
   recordPanelOpen.value = ! recordPanelOpen.value
@@ -994,8 +994,10 @@ function toggleRecordPanel() {
 
 function focusRecordMoveFromBoard(target: GameRecordMoveFocusTarget) {
   if (! gameStarted.value) return
-  const request = game?.getFiveDPGNExport()
-  if (request) updateRecord(request)
+  if (recordActions.value.length === 0) {
+    const request = game?.getRecordView()
+    if (request) updateRecord(request)
+  }
   recordFocusedMove.value = { ...target, pulseId: ++ recordFocusedMovePulseId }
   recordPanelOpen.value = true
 }
@@ -1675,7 +1677,7 @@ function focusMinimapBoard(board: { axisFocus?: GameAxisViewFocusTarget, l: numb
 }
 
 function prepareRecordPanelOpen() {
-  const request = game?.getFiveDPGNExport()
+  const request = game?.getRecordView()
   if (request) updateRecord(request)
 }
 
