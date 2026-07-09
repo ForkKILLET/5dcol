@@ -112,6 +112,42 @@ describe('Board.getMoveTargets2D', () => {
     expect(targets).toContainEqual({ x: 4, y: 3 })
     expect(targets).toContainEqual({ x: 4, y: 2 })
   })
+
+  it('adds en passant targets from the previous board state', () => {
+    const previousBoard = createEmptyBoard(8, 8)
+    Board.setPiece({ x: 4, y: 3 }, previousBoard, Piece.PW)
+    Board.setPiece({ x: 3, y: 1 }, previousBoard, Piece.PB)
+
+    const board = Board.clone(previousBoard)
+    Board.setPiece({ x: 3, y: 1 }, board, Piece.E)
+    Board.setPiece({ x: 3, y: 3 }, board, Piece.PB)
+
+    const targets = Board.getMoveTargets2D(board, { x: 4, y: 3 }, {
+      previousBoard,
+    })
+
+    expect(targets).toContainEqual({ x: 3, y: 2 })
+  })
+
+  it('allows castling only when the full king path is safe', () => {
+    const board = createEmptyBoard(8, 8)
+    board.canCastleQW = true
+    board.canCastleKW = true
+    Board.setPiece({ x: 4, y: 7 }, board, Piece.KW)
+    Board.setPiece({ x: 0, y: 7 }, board, Piece.RW)
+    Board.setPiece({ x: 7, y: 7 }, board, Piece.RW)
+
+    let targets = Board.getMoveTargets2D(board, { x: 4, y: 7 })
+
+    expect(targets).toContainEqual({ x: 6, y: 7 })
+    expect(targets).toContainEqual({ x: 2, y: 7 })
+
+    Board.setPiece({ x: 5, y: 0 }, board, Piece.RB)
+    targets = Board.getMoveTargets2D(board, { x: 4, y: 7 })
+
+    expect(targets).not.toContainEqual({ x: 6, y: 7 })
+    expect(targets).toContainEqual({ x: 2, y: 7 })
+  })
 })
 
 describe('Pieces.promotePawn', () => {
@@ -197,6 +233,42 @@ describe('Multiverse timeline state', () => {
 
     expect(board && Board.getPiece({ x: 0, y: 0 }, board)).toBe(Piece.QW)
   })
+
+  it('removes the captured pawn when applying en passant', () => {
+    const multiverse = createBoardRangeMultiverse(0, 0, [1])
+    const board = getBoard(multiverse, 0, 1)
+    Board.setPiece({ x: 4, y: 3 }, board, Piece.PW)
+    Board.setPiece({ x: 3, y: 3 }, board, Piece.PB)
+
+    const next = Multiverse.applyMove({
+      from: { l: 0, t: 1, x: 4, y: 3 },
+      to: { l: 0, t: 1, x: 3, y: 2 },
+    }, Player.W, multiverse)
+    const nextBoard = Multiverse.getBoard(next, { l: 0, t: 1 }, Player.B)
+
+    expect(nextBoard && Board.getPiece({ x: 3, y: 2 }, nextBoard)).toBe(Piece.PW)
+    expect(nextBoard && Board.getPiece({ x: 3, y: 3 }, nextBoard)).toBe(Piece.E)
+    expect(nextBoard && Board.getPiece({ x: 4, y: 3 }, nextBoard)).toBe(Piece.E)
+  })
+
+  it('moves the rook when applying castling', () => {
+    const multiverse = createBoardRangeMultiverse(0, 0, [1])
+    const board = getBoard(multiverse, 0, 1)
+    board.canCastleKW = true
+    Board.setPiece({ x: 4, y: 7 }, board, Piece.KW)
+    Board.setPiece({ x: 7, y: 7 }, board, Piece.RW)
+
+    const next = Multiverse.applyMove({
+      from: { l: 0, t: 1, x: 4, y: 7 },
+      to: { l: 0, t: 1, x: 6, y: 7 },
+    }, Player.W, multiverse)
+    const nextBoard = Multiverse.getBoard(next, { l: 0, t: 1 }, Player.B)
+
+    expect(nextBoard && Board.getPiece({ x: 6, y: 7 }, nextBoard)).toBe(Piece.KW)
+    expect(nextBoard && Board.getPiece({ x: 5, y: 7 }, nextBoard)).toBe(Piece.RW)
+    expect(nextBoard && Board.getPiece({ x: 7, y: 7 }, nextBoard)).toBe(Piece.E)
+    expect(nextBoard && Board.getPiece({ x: 4, y: 7 }, nextBoard)).toBe(Piece.E)
+  })
 })
 
 describe('GameState.findPassCheckWarnings', () => {
@@ -279,6 +351,53 @@ describe('5DPGN import', () => {
         to: { l: 0, t: 1, x: 4, y: 5 },
       }],
     }])
+  })
+
+  it('imports en passant notation', () => {
+    const state = FiveDPGN.importGameState(`
+[Mode "5D"]
+[Board "Standard"]
+[Size "8x8"]
+
+1. e4 / a6
+2. e5 / d5
+3. exd6
+*
+`)
+
+    expect(state.actions[4]?.moves[0]).toEqual({
+      from: { l: 0, t: 3, x: 4, y: 3 },
+      to: { l: 0, t: 3, x: 3, y: 2 },
+    })
+
+    const board = Multiverse.getBoard(state.multiverseCommitted, { l: 0, t: 3 }, Player.B)
+
+    expect(board && Board.getPiece({ x: 3, y: 2 }, board)).toBe(Piece.PW)
+    expect(board && Board.getPiece({ x: 3, y: 3 }, board)).toBe(Piece.E)
+  })
+
+  it('imports castling notation from a 5dchess-notation sample', () => {
+    const state = FiveDPGN.importGameState(`
+[Mode "5D"]
+[Board "Standard"]
+[Size "8x8"]
+
+1. g3 / g6
+2. Bg2 / Bg7
+3. Nf3 / c5
+4. O-O / Bf6
+*
+`)
+
+    expect(state.actions[6]?.moves[0]).toEqual({
+      from: { l: 0, t: 4, x: 4, y: 7 },
+      to: { l: 0, t: 4, x: 6, y: 7 },
+    })
+
+    const board = Multiverse.getBoard(state.multiverseCommitted, { l: 0, t: 4 }, Player.B)
+
+    expect(board && Board.getPiece({ x: 6, y: 7 }, board)).toBe(Piece.KW)
+    expect(board && Board.getPiece({ x: 5, y: 7 }, board)).toBe(Piece.RW)
   })
 
   it('imports a 5dchess-engine very-small time-travel sample', () => {
