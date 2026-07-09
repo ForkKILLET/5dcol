@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Board, Multiverse, Piece, Player, type Board as BoardState } from './index'
+import { Board, GameState, Multiverse, Piece, Pieces, Player, type Board as BoardState } from './index'
 import * as FiveDPGN from './fiveDPGN'
 
 const createEmptyBoard = (width: number, height: number, withUnmoved = true): BoardState => ({
@@ -59,6 +59,28 @@ const getBoard = (
 }
 
 describe('Board.getMoveTargets2D', () => {
+  it('normalizes legacy board sizes from the piece matrix', () => {
+    const legacyBoard = {
+      pieces: Array.from({ length: 5 }, () => Array.from({ length: 6 }, () => Piece.E)),
+      canCastleQW: false,
+      canCastleKW: false,
+      canCastleQB: false,
+      canCastleKB: false,
+      createdBy: null,
+      createdByPlayer: null,
+      createdByRole: null,
+      createdByOrder: null,
+    } as BoardState
+
+    const board = Board.clone(legacyBoard)
+
+    expect(Board.getSize(board)).toEqual({ width: 5, height: 6 })
+    expect(board.width).toBe(5)
+    expect(board.height).toBe(6)
+    expect(Board.getHomeRank(board, Player.W)).toBe(5)
+    expect(Board.getKingSideRookFile(board)).toBe(4)
+  })
+
   it('allows pawn double moves when the board marks it as a first move', () => {
     const board = createEmptyBoard(5, 5)
     Board.setPiece({ x: 4, y: 4 }, board, Piece.PW)
@@ -89,6 +111,17 @@ describe('Board.getMoveTargets2D', () => {
 
     expect(targets).toContainEqual({ x: 4, y: 3 })
     expect(targets).toContainEqual({ x: 4, y: 2 })
+  })
+})
+
+describe('Pieces.promotePawn', () => {
+  it('promotes pawnlike pieces using the actual board height', () => {
+    const size = { width: 5, height: 5 }
+
+    expect(Pieces.promotePawn(Piece.PW, { x: 0, y: 0 }, size)).toBe(Piece.QW)
+    expect(Pieces.promotePawn(Piece.PB, { x: 0, y: 4 }, size)).toBe(Piece.QB)
+    expect(Pieces.promotePawn(Piece.WW, { x: 0, y: 0 }, size)).toBe(Piece.QW)
+    expect(Pieces.promotePawn(Piece.WB, { x: 0, y: 4 }, size)).toBe(Piece.QB)
   })
 })
 
@@ -131,6 +164,65 @@ describe('Multiverse.getMoveTargets', () => {
       from: { l: 0, t: 12, x: 3, y: 3 },
       to: { l: 0, t: 2, x: 3, y: 3 },
     })
+  })
+})
+
+describe('Multiverse timeline state', () => {
+  it('identifies the present player from the present board index', () => {
+    const multiverse = Multiverse.createInitial()
+    const present = Multiverse.getPresent(multiverse, Player.W)
+
+    expect(present).toMatchObject({ m: 2, lines: [0] })
+    expect(present && Multiverse.getPresentPlayer(present)).toBe(Player.W)
+    expect(Multiverse.hasSubmittedPresentMoves(multiverse, Player.W)).toBe(false)
+    expect(Multiverse.hasSubmittedPresentMoves(multiverse, Player.B)).toBe(true)
+  })
+
+  it('does not treat opponent half-turn coordinates as playable boards', () => {
+    const multiverse = Multiverse.createInitial()
+
+    expect(Multiverse.isPlayableBoard(multiverse, Player.W, { l: 0, t: 1 })).toBe(true)
+    expect(Multiverse.isPlayableBoard(multiverse, Player.B, { l: 0, t: 0.5 })).toBe(false)
+  })
+
+  it('promotes physical moves on non-standard board sizes', () => {
+    const multiverse = createBoardRangeMultiverse(0, 0, [1])
+    Board.setPiece({ x: 0, y: 1 }, getBoard(multiverse, 0, 1), Piece.PW)
+
+    const next = Multiverse.applyMove({
+      from: { l: 0, t: 1, x: 0, y: 1 },
+      to: { l: 0, t: 1, x: 0, y: 0 },
+    }, Player.W, multiverse)
+    const board = Multiverse.getBoard(next, { l: 0, t: 1 }, Player.B)
+
+    expect(board && Board.getPiece({ x: 0, y: 0 }, board)).toBe(Piece.QW)
+  })
+})
+
+describe('GameState.findPassCheckWarnings', () => {
+  it('warns when passing a mandatory board creates a new check', () => {
+    const multiverse = createBoardRangeMultiverse(0, 0, [1])
+    const board = getBoard(multiverse, 0, 1)
+    Board.setPiece({ x: 4, y: 0 }, board, Piece.RB)
+    Board.setPiece({ x: 4, y: 7 }, board, Piece.KW)
+
+    const warnings = GameState.findPassCheckWarnings({ multiverse, player: Player.W })
+
+    expect(warnings).toEqual([{ l: 0, m: 2 }])
+  })
+})
+
+describe('GameState.findLegalAction', () => {
+  it('can find legal moves while the player is currently in check', () => {
+    const multiverse = createBoardRangeMultiverse(0, 0, [1])
+    const board = getBoard(multiverse, 0, 1)
+    Board.setPiece({ x: 4, y: 0 }, board, Piece.RB)
+    Board.setPiece({ x: 4, y: 7 }, board, Piece.KW)
+
+    const action = GameState.findLegalAction({ multiverse, player: Player.W })
+
+    expect(action).not.toBeNull()
+    expect(action?.moves.length).toBeGreaterThan(0)
   })
 })
 
