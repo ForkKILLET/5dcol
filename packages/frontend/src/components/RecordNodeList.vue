@@ -208,7 +208,7 @@ function getNodeClasses(node: RecordDisplayNode) {
   padding-bottom: 0;
   margin-top: 0;
   overflow: visible;
-  transition: opacity 240ms ease;
+  transition: opacity 320ms ease;
 }
 
 .record-node-transition-enter-from,

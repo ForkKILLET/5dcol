@@ -116,8 +116,10 @@ const customGlyphTemplates = computed({
   set: value => emit('updateCustomGlyphTemplates', uniqueRecordGlyphTemplates(value)),
 })
 let clearPendingSubmitTransitionTimer: number | null = null
+let clearHoverCursorTimer: number | null = null
 let nextPendingBlockKeyId = 1
 const MAX_VISIBLE_PRESENCE_CURSORS = 3
+const HOVER_CURSOR_CLEAR_DELAY_MS = 140
 
 const pendingSubmitTransitionKind = ref<'append' | 'branch' | 'absorb' | 'undo' | null>(null)
 const pendingBlockKey = ref<string | null>(null)
@@ -150,6 +152,7 @@ const recordNodes = computed(() => buildRecordDisplayTree({
   pendingBlockKey: pendingBlockKey.value,
   branchBlockKeyAliases: branchBlockKeyAliases.value,
 }))
+const cursorAdjacencyByKey = computed(() => getCursorAdjacencyByKey(recordNodes.value))
 const deleteFuturePreviewKeys = computed(() => (
   confirmingDeleteFutureCursorKey.value
     ? getDeleteFuturePreviewKeys(recordNodes.value, confirmingDeleteFutureCursorKey.value)
@@ -195,6 +198,7 @@ watch(() => props.rows, (rows) => {
     activeHoverCursorKey.value
     && ! rows.some(row => getRecordRowKey(row) === activeHoverCursorKey.value)
   ) {
+    cancelPendingHoverCursorClear()
     activeHoverCursorKey.value = null
   }
 })
@@ -424,14 +428,29 @@ function setHoverCursor(row: GameRecordRow) {
   if (! isRecordCursorRow(row)) return
   if (! hasHoverRecordCursorIcon(row)) return
 
+  cancelPendingHoverCursorClear()
   activeHoverCursorKey.value = getRecordRowKey(row)
 }
 
 function clearHoverCursor(row: GameRecordRow) {
   if (! isRecordCursorRow(row)) return
-  if (activeHoverCursorKey.value !== getRecordRowKey(row)) return
+  const key = getRecordRowKey(row)
+  if (activeHoverCursorKey.value !== key) return
 
-  activeHoverCursorKey.value = null
+  cancelPendingHoverCursorClear()
+  clearHoverCursorTimer = window.setTimeout(() => {
+    if (activeHoverCursorKey.value === key) {
+      activeHoverCursorKey.value = null
+    }
+    clearHoverCursorTimer = null
+  }, HOVER_CURSOR_CLEAR_DELAY_MS)
+}
+
+function cancelPendingHoverCursorClear() {
+  if (clearHoverCursorTimer === null) return
+
+  window.clearTimeout(clearHoverCursorTimer)
+  clearHoverCursorTimer = null
 }
 
 function handleRecordRowMouseLeave(row: GameRecordRow, event: MouseEvent) {
@@ -510,6 +529,39 @@ function collectRecordNodeKeys(node: RecordDisplayNode, keys: Set<string>) {
   node.children.forEach(child => collectRecordNodeKeys(child, keys))
 }
 
+function getCursorAdjacencyByKey(nodes: RecordDisplayNode[]) {
+  const rows: Array<{ key: string, row: GameRecordRow }> = []
+  collectVisibleRecordRows(nodes, rows)
+
+  const adjacency = new Map<string, { before: boolean, after: boolean }>()
+  rows.forEach((entry, index) => {
+    if (! isRecordCursorRow(entry.row)) return
+
+    const previous = rows[index - 1]?.row
+    const next = rows[index + 1]?.row
+    adjacency.set(entry.key, {
+      before: previous !== undefined && isRecordCursorRow(previous),
+      after: next !== undefined && isRecordCursorRow(next),
+    })
+  })
+
+  return adjacency
+}
+
+function collectVisibleRecordRows(
+  nodes: RecordDisplayNode[],
+  rows: Array<{ key: string, row: GameRecordRow }>,
+) {
+  nodes.forEach((node) => {
+    if (node.kind === 'row') {
+      rows.push({ key: node.key, row: node.row })
+      return
+    }
+
+    collectVisibleRecordRows(node.children, rows)
+  })
+}
+
 function getRecordMoveKey(row: GameRecordAction, moveIndex: number) {
   return `${row.recordKey ?? row.serial}:${moveIndex}`
 }
@@ -523,12 +575,17 @@ function getRecordSegmentKey(row: GameRecordAction, moveIndex: number, segmentIn
 
 function getRecordRowClasses(row: GameRecordRow) {
   const isCursor = isRecordCursorRow(row)
+  const cursorAdjacency = isCursor
+    ? cursorAdjacencyByKey.value.get(getRecordRowKey(row))
+    : null
   return {
     'record-row--black': isRecordActionRow(row) && row.player === 'b',
     'record-row--white': isRecordActionRow(row) && row.player !== 'b',
     'record-row--cursor': isCursor,
     'record-row--cursor-current': isCursor && isCurrentRecordRow(row),
     'record-row--cursor-interactive': isCursor && hasHoverRecordCursorIcon(row),
+    'record-row--cursor-adjacent-before': isCursor && cursorAdjacency?.before === true,
+    'record-row--cursor-adjacent-after': isCursor && cursorAdjacency?.after === true,
     'record-row--cursor-dimmed': isCursor
       && isCurrentRecordRow(row)
       && activeHoverCursorKey.value !== null
@@ -978,6 +1035,7 @@ onBeforeUnmount(() => {
   if (clearPendingSubmitTransitionTimer !== null) {
     window.clearTimeout(clearPendingSubmitTransitionTimer)
   }
+  cancelPendingHoverCursorClear()
 })
 </script>
 
@@ -1313,6 +1371,7 @@ onBeforeUnmount(() => {
                 </span>
               </template>
               <template v-else-if="isRecordCursorRow(row)">
+                <span class="record-cursor-hit-area" />
                 <span class="record-cursor-guide" />
                 <span
                   v-if="getPresenceCursorsAtCursor(row).length > 0"
@@ -1505,6 +1564,13 @@ onBeforeUnmount(() => {
   --record-cursor-tag-height: calc(var(--record-cursor-size) + var(--record-cursor-tag-padding-y) * 2);
   --record-cursor-guide-fade-start: calc(var(--record-guide-start-offset) * 0.45);
   --record-cursor-guide-fade-width: calc(var(--button-content-gap) * 2.2);
+  --record-cursor-guide-tag-overlap: 1.5px;
+  --record-cursor-hit-before: calc(var(--record-cursor-tag-height) * 0.78);
+  --record-cursor-hit-after: calc(var(--record-cursor-tag-height) * 0.78);
+  --record-cursor-hit-core: 2px;
+  --record-cursor-transition-duration: 320ms;
+  --record-cursor-content-fade-duration: 160ms;
+  --record-cursor-content-collapse-delay: 220ms;
 
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
@@ -1522,6 +1588,14 @@ onBeforeUnmount(() => {
   color: var(--button-text-color);
   pointer-events: none;
   z-index: var(--z-content-panel);
+}
+
+.record-row--cursor-adjacent-before {
+  --record-cursor-hit-before: 0px;
+}
+
+.record-row--cursor-adjacent-after {
+  --record-cursor-hit-after: 0px;
 }
 
 .record-row--cursor-interactive:hover,
@@ -1800,18 +1874,40 @@ onBeforeUnmount(() => {
   padding-bottom: var(--button-tiny-shadow-offset);
 }
 
-.record-cursor-guide {
+.record-cursor-hit-area {
   position: absolute;
   z-index: var(--z-content-panel);
-  top: 50%;
-  right: calc(
-    var(--record-cursor-tag-offset)
-    + var(--button-content-gap)
-  );
+  right: 0;
   left: calc(var(--record-guide-start-offset) * -1);
-  height: calc(var(--record-cursor-tag-height) * 0.25);
+}
+
+.record-cursor-hit-area {
+  top: calc(50% - var(--record-cursor-hit-before) - var(--record-cursor-hit-core) * 0.5);
+  height: calc(var(--record-cursor-hit-before) + var(--record-cursor-hit-after) + var(--record-cursor-hit-core));
+  pointer-events: none;
+}
+
+.record-row--cursor-interactive .record-cursor-hit-area {
   pointer-events: auto;
-  transform: translateY(-50%);
+}
+
+.record-cursor-guide {
+  position: relative;
+  z-index: var(--z-content-panel);
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: stretch;
+  width: calc(
+    100%
+    + var(--button-content-gap)
+    + var(--record-cursor-tag-offset)
+    + var(--record-guide-start-offset)
+    + var(--record-cursor-guide-tag-overlap)
+  );
+  min-width: 0;
+  height: calc(var(--record-cursor-tag-height) * 0.25);
+  pointer-events: none;
+  transform: translateX(calc(var(--record-guide-start-offset) * -1));
 }
 
 .record-cursor-guide::before {
@@ -1838,10 +1934,10 @@ onBeforeUnmount(() => {
   );
   opacity: 0;
   transform: scaleX(0);
-  transform-origin: left center;
+  transform-origin: right center;
   transition:
-    opacity 240ms ease,
-    transform 240ms ease;
+    opacity var(--record-cursor-transition-duration) ease,
+    transform var(--record-cursor-transition-duration) ease;
 }
 
 .record-action-icons {
@@ -1917,8 +2013,11 @@ onBeforeUnmount(() => {
     var(--record-cursor-tag-padding-y)
     calc(var(--record-cursor-tip-size) + var(--record-cursor-size) * 0.14);
   color: var(--record-cursor-tag-fg);
-  pointer-events: auto;
+  opacity: 1;
+  pointer-events: none;
   transform: translateX(var(--record-cursor-tag-offset));
+  transform-origin: right center;
+  transition: opacity 180ms ease;
 }
 
 .record-row--cursor .record-action-icons::before,
@@ -1937,18 +2036,17 @@ onBeforeUnmount(() => {
   opacity: 0;
   transform-origin: right center;
   transition:
-    opacity 240ms ease,
-    transform 240ms ease;
+    opacity var(--record-cursor-transition-duration) ease,
+    transform var(--record-cursor-transition-duration) ease;
 }
 
 .record-row--cursor .record-action-icons::before {
   background: var(--button-shadow-color);
-  transform: translate(var(--record-cursor-tag-shadow-offset), var(--record-cursor-tag-shadow-offset)) scaleX(0);
+  transform: translate(var(--record-cursor-tag-shadow-offset), var(--record-cursor-tag-shadow-offset));
 }
 
 .record-row--cursor .record-action-icons::after {
   background: var(--record-cursor-tag-bg);
-  transform: scaleX(0);
 }
 
 .record-row--cursor-current .record-cursor-guide::before,
@@ -1960,6 +2058,12 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
+.record-row--cursor-current .record-action-icons,
+.record-row--cursor-interactive:hover .record-action-icons,
+.record-row--cursor-interactive:focus-within .record-action-icons {
+  pointer-events: auto;
+}
+
 .record-row--cursor-current .record-cursor-guide::before,
 .record-row--cursor-interactive:hover .record-cursor-guide::before,
 .record-row--cursor-interactive:focus-within .record-cursor-guide::before {
@@ -1969,23 +2073,23 @@ onBeforeUnmount(() => {
 .record-row--cursor-current .record-action-icons::before,
 .record-row--cursor-interactive:hover .record-action-icons::before,
 .record-row--cursor-interactive:focus-within .record-action-icons::before {
-  transform: translate(var(--record-cursor-tag-shadow-offset), var(--record-cursor-tag-shadow-offset)) scaleX(1);
+  transform: translate(var(--record-cursor-tag-shadow-offset), var(--record-cursor-tag-shadow-offset));
 }
 
 .record-row--cursor-current .record-action-icons::after,
 .record-row--cursor-interactive:hover .record-action-icons::after,
 .record-row--cursor-interactive:focus-within .record-action-icons::after {
   opacity: 1;
-  transform: scaleX(1);
 }
 
 .record-row--cursor-dimmed .record-cursor-guide::before {
   opacity: 0.34;
+  transition-delay: 120ms, 0ms;
 }
 
 .record-row--cursor-dimmed .record-action-icons {
   opacity: 0.44;
-  transition: opacity 160ms ease;
+  transition-delay: 120ms;
 }
 
 .record-action-icon {
@@ -2014,9 +2118,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
   pointer-events: none;
   transition:
-    width 120ms ease,
-    margin-right 120ms ease,
-    opacity 120ms ease;
+    width 120ms ease var(--record-cursor-content-collapse-delay),
+    margin-right 120ms ease var(--record-cursor-content-collapse-delay),
+    opacity var(--record-cursor-content-fade-duration) ease;
 }
 
 .record-row:hover .record-action-icon--delete-future,
@@ -2027,12 +2131,14 @@ onBeforeUnmount(() => {
   width: calc(var(--button-icon-size) * 0.85);
   opacity: 0.72;
   pointer-events: auto;
+  transition-delay: 0ms;
 }
 
 .record-row:hover .record-action-icon--side-action,
 .record-row:focus-within .record-action-icon--side-action,
 .record-row--cursor-current .record-action-icons:hover .record-action-icon--side-action {
   margin-right: calc(var(--button-content-gap) * 0.38);
+  transition-delay: 0ms;
 }
 
 .record-action-icon--delete-future:hover,
