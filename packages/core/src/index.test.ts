@@ -19,6 +19,45 @@ const createEmptyBoard = (width: number, height: number, withUnmoved = true): Bo
   createdByOrder: null,
 })
 
+const createBoardRangeMultiverse = (
+  lMin: number,
+  lMax: number,
+  turns: readonly number[],
+  player = Player.W,
+) => {
+  const lOffset = -lMin
+  const lines = []
+  for (let l = lMin; l <= lMax; l += 1) {
+    const boards: BoardState[] = []
+    for (const t of turns) {
+      boards[t * 2 + player] = createEmptyBoard(8, 8)
+    }
+    lines[l + lOffset] = {
+      boards,
+      mStart: Math.min(...turns.map(t => t * 2 + player)),
+    }
+  }
+
+  return {
+    lines,
+    lOffset,
+    lFurthestB: 0,
+    lFurthestW: lMax - lMin,
+    lastMove: null,
+  }
+}
+
+const getBoard = (
+  multiverse: ReturnType<typeof createBoardRangeMultiverse>,
+  l: number,
+  t: number,
+  player = Player.W,
+): BoardState => {
+  const board = Multiverse.getBoard(multiverse, { l, t }, player)
+  if (! board) throw new Error(`Missing test board (${l}T${t})`)
+  return board
+}
+
 describe('Board.getMoveTargets2D', () => {
   it('allows pawn double moves when the board marks it as a first move', () => {
     const board = createEmptyBoard(5, 5)
@@ -50,6 +89,48 @@ describe('Board.getMoveTargets2D', () => {
 
     expect(targets).toContainEqual({ x: 4, y: 3 })
     expect(targets).toContainEqual({ x: 4, y: 2 })
+  })
+})
+
+describe('Multiverse.getMoveTargets', () => {
+  it('allows pure time-axis sliding moves longer than seven boards', () => {
+    const multiverse = createBoardRangeMultiverse(0, 0, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    Board.setPiece({ x: 3, y: 3 }, getBoard(multiverse, 0, 12), Piece.QW)
+
+    const targets = Multiverse.getMoveTargets(multiverse, { l: 0, t: 12, x: 3, y: 3 }, Player.W)
+
+    expect(targets).toContainEqual({ l: 0, t: 3, x: 3, y: 3 })
+  })
+
+  it('allows pure timeline-axis sliding moves longer than seven timelines', () => {
+    const multiverse = createBoardRangeMultiverse(-9, 0, [5])
+    Board.setPiece({ x: 3, y: 3 }, getBoard(multiverse, 0, 5), Piece.RW)
+
+    const targets = Multiverse.getMoveTargets(multiverse, { l: 0, t: 5, x: 3, y: 3 }, Player.W)
+
+    expect(targets).toContainEqual({ l: -9, t: 5, x: 3, y: 3 })
+  })
+
+  it('allows diagonal TL sliding moves longer than seven boards', () => {
+    const multiverse = createBoardRangeMultiverse(-9, 0, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    Board.setPiece({ x: 3, y: 3 }, getBoard(multiverse, 0, 10), Piece.BW)
+
+    const targets = Multiverse.getMoveTargets(multiverse, { l: 0, t: 10, x: 3, y: 3 }, Player.W)
+
+    expect(targets).toContainEqual({ l: -8, t: 2, x: 3, y: 3 })
+  })
+
+  it('uses long time-axis sliding moves in check detection', () => {
+    const multiverse = createBoardRangeMultiverse(0, 0, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    Board.setPiece({ x: 3, y: 3 }, getBoard(multiverse, 0, 12), Piece.QW)
+    Board.setPiece({ x: 3, y: 3 }, getBoard(multiverse, 0, 2), Piece.KB)
+
+    const checks = Multiverse.findChecks(multiverse, Player.W)
+
+    expect(checks).toContainEqual({
+      from: { l: 0, t: 12, x: 3, y: 3 },
+      to: { l: 0, t: 2, x: 3, y: 3 },
+    })
   })
 })
 
