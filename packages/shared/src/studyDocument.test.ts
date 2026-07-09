@@ -4,6 +4,8 @@ import type { StudyDocument, StudyRoom } from './protocol'
 import {
   applyStudyPatchToStudyRoom,
   createStudyPatchFromCommand,
+  isStudyDocumentPatch,
+  requiresExistingStudyEditPermission,
   resolveStudyPosition,
 } from './studyDocument'
 
@@ -137,6 +139,42 @@ describe('study document patches', () => {
       .toMatchObject({ actionIndex: 0 })
   })
 
+  it('rejects submitting an action that already exists at the cursor position', () => {
+    const room = createRoom()
+    const result = createStudyPatchFromCommand(room, 'user:1', {
+      type: 'submit-action',
+      position: { type: 'head', branchId: 'branch:root' },
+      action: action(0),
+    })
+
+    expect(result).toEqual({ reason: 'conflict' })
+  })
+
+  it('rejects creating duplicate sibling branches for the same action', () => {
+    const room = createRoom()
+    room.document.branches.push({
+      id: 'branch:existing',
+      parent: { type: 'head', branchId: 'branch:root' },
+      actionIds: ['action:existing'],
+      createdAt: 2,
+    })
+    room.document.actions.push({
+      id: 'action:existing',
+      branchId: 'branch:existing',
+      action: action(2),
+      authorId: 'user:2',
+      createdAt: 2,
+    })
+
+    const result = createStudyPatchFromCommand(room, 'user:1', {
+      type: 'submit-action',
+      position: { type: 'head', branchId: 'branch:root' },
+      action: action(2),
+    })
+
+    expect(result).toEqual({ reason: 'conflict' })
+  })
+
   it('removes future actions, child branches, and removed annotations together', () => {
     const room = createRoom()
     room.document.branches.push({
@@ -182,5 +220,88 @@ describe('study document patches', () => {
     expect(room.document.branches.map(branch => branch.id)).toEqual(['branch:root'])
     expect(room.document.actions).toHaveLength(0)
     expect(room.document.annotations).toHaveLength(0)
+  })
+
+  it('updates titles after trimming command input', () => {
+    const room = createRoom()
+    const result = createStudyPatchFromCommand(room, 'owner', {
+      type: 'update-title',
+      title: '  Renamed study  ',
+    })
+
+    expect(result).toEqual({
+      patch: {
+        type: 'update-title',
+        title: 'Renamed study',
+      },
+    })
+
+    if ('patch' in result) applyStudyPatchToStudyRoom(room, result.patch, { now: () => 40 })
+
+    expect(room.name).toBe('Renamed study')
+    expect(room.document.title).toBe('Renamed study')
+    expect(room.version).toBe(1)
+    expect(room.updatedAt).toBe(40)
+  })
+
+  it('replaces existing annotations by id', () => {
+    const room = createRoom()
+    const result = createStudyPatchFromCommand(room, 'owner', {
+      type: 'upsert-annotation',
+      annotation: {
+        id: 'comment:root-1',
+        type: 'comment',
+        target: {
+          type: 'action',
+          actionId: 'action:root-1',
+          position: 'after',
+        },
+        authorId: 'owner',
+        text: 'updated',
+        createdAt: 1,
+        updatedAt: 50,
+      },
+    })
+
+    if ('patch' in result) applyStudyPatchToStudyRoom(room, result.patch)
+
+    expect(room.document.annotations).toHaveLength(1)
+    expect(room.document.annotations[0]).toMatchObject({
+      id: 'comment:root-1',
+      text: 'updated',
+      updatedAt: 50,
+    })
+  })
+
+  it('classifies private room updates separately from document patches', () => {
+    const room = createRoom()
+    const noop = createStudyPatchFromCommand(room, 'owner', {
+      type: 'update-private',
+      private: true,
+    })
+    const result = createStudyPatchFromCommand(room, 'owner', {
+      type: 'update-private',
+      private: false,
+    })
+
+    expect(noop).toEqual({ reason: 'conflict' })
+    expect(requiresExistingStudyEditPermission({ type: 'update-private', private: false })).toBe(true)
+
+    expect(result).toEqual({
+      patch: {
+        type: 'update-private',
+        private: false,
+      },
+    })
+
+    if ('patch' in result) {
+      expect(isStudyDocumentPatch(result.patch)).toBe(false)
+      applyStudyPatchToStudyRoom(room, result.patch, { now: () => 60 })
+    }
+
+    expect(room.private).toBe(false)
+    expect(room.document.updatedAt).toBe(1)
+    expect(room.version).toBe(1)
+    expect(room.updatedAt).toBe(60)
   })
 })
