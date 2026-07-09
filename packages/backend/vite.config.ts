@@ -31,6 +31,7 @@ export default defineConfig({
       '@5dcol/core': path.resolve(dirname, '../core/src'),
       '@5dcol/shared': path.resolve(dirname, '../shared/src'),
       '@5dcol/shared/protocol': path.resolve(dirname, '../shared/src/protocol.ts'),
+      '@5dcol/shared/studyDocument': path.resolve(dirname, '../shared/src/studyDocument.ts'),
     },
   },
   build: {

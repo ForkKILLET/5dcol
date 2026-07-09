@@ -15,7 +15,8 @@
       "@5dcol/core": ["../core/src/index.ts"],
       "@5dcol/core/fiveDPGN": ["../core/src/fiveDPGN.ts"],
       "@5dcol/shared": ["../shared/src/index.ts"],
-      "@5dcol/shared/protocol": ["../shared/src/protocol.ts"]
+      "@5dcol/shared/protocol": ["../shared/src/protocol.ts"],
+      "@5dcol/shared/studyDocument": ["../shared/src/studyDocument.ts"]
     }
   },
   "include": ["./src"]

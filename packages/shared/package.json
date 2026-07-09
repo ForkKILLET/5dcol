@@ -13,6 +13,11 @@
       "types": "./dist/protocol.d.ts",
       "import": "./dist/protocol.js",
       "require": "./dist/protocol.cjs"
+    },
+    "./studyDocument": {
+      "types": "./dist/studyDocument.d.ts",
+      "import": "./dist/studyDocument.js",
+      "require": "./dist/studyDocument.cjs"
     }
   },
   "main": "./dist/index.cjs",
@@ -24,7 +29,8 @@
   "scripts": {
     "build": "vite build && tsc -p tsconfig.build.json",
     "dev": "vite build --watch",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@5dcol/core": "workspace:*",
@@ -33,6 +39,7 @@
   "devDependencies": {
     "@types/node": "^24.12.4",
     "typescript": "^5.9.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.10"
   }
 }
