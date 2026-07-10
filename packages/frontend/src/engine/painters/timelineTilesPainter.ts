@@ -190,7 +190,7 @@ export class TimelineTilesPainter {
     endedWhite: Color4,
     endedBlack: Color4,
   ): Color4 {
-    return (t + l) % 2 === 0
+    return (t + this.layout.getDisplayLine(l)) % 2 === 0
       ? Color4.mix(Colors.BoardTimeWhite, endedWhite, endedProgress)
       : Color4.mix(Colors.BoardTimeBlack, endedBlack, endedProgress)
   }
@@ -207,6 +207,6 @@ export class TimelineTilesPainter {
   }
 
   private formatLineLabel(l: number): string {
-    return `${l > 0 ? '+' : ''}${l}L`
+    return `${l > 0 ? '+' : ''}${Multiverse.formatLine(l)}L`
   }
 }

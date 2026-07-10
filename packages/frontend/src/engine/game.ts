@@ -335,6 +335,7 @@ export class Game extends Disposable(Empty) {
     this.fiveDPGNOptions = ctx.fiveDPGNOptions ?? {}
     this.squareMarkerDisplayMode = ctx.squareMarkerDisplayMode ?? 'highlight'
     this.layout.setViewPlayer(this.viewPlayer)
+    this.syncLayoutMultiverse()
   }
 
   public readonly logger: Logger
@@ -420,10 +421,15 @@ export class Game extends Disposable(Empty) {
   private gameDisposed = false
   private canvasCursor = ''
 
+  private syncLayoutMultiverse(multiverse: Multiverse = this.multiverse) {
+    this.layout.setMultiverse(multiverse)
+  }
+
   public start() {
     const restored = this.ctx.initialActions
       ? this.restoreInitialActions(this.ctx.initialActions)
       : this.restoreGameState()
+    this.syncLayoutMultiverse()
     this.renderer.start()
     const workspace = this.ctx.initialWorkspace ?? this.restoredWorkspace
     if (restored) {
@@ -695,6 +701,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private applyViewPlayer(player: Player) {
+    this.syncLayoutMultiverse()
     if (this.viewPlayer === player) return
 
     const shouldMirrorCameraY = this.layout.getDisplayLine(1) !== (
@@ -708,6 +715,7 @@ export class Game extends Disposable(Empty) {
     }
     this.viewPlayer = player
     this.layout.setViewPlayer(player)
+    this.syncLayoutMultiverse()
     this.ctx.onViewPlayerChange?.(player)
     this.cameraMotion = null
     this.updateCameraBounds()
@@ -1479,6 +1487,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private setViewportImmediate(camera: Partial<Camera>, options: ViewportMoveOptions = {}) {
+    this.syncLayoutMultiverse()
     if (options.cancelMotion) this.cameraMotion = null
 
     if (camera.scale !== undefined) {
@@ -1504,10 +1513,12 @@ export class Game extends Disposable(Empty) {
   }
 
   public focusTurn(l: number, m: number, options: ViewportFocusOptions = {}) {
+    this.syncLayoutMultiverse()
     this.focusRect(this.layout.getTurnRect(l, m), options)
   }
 
   public focusBoard(l: number, m: number, options: ViewportFocusOptions = {}) {
+    this.syncLayoutMultiverse()
     const motion = this.focusRect(this.layout.getBoardRect(l, m), options)
     this.focusedBoard = { l, m }
     this.axisViewState = {
@@ -1567,6 +1578,7 @@ export class Game extends Disposable(Empty) {
   }
 
   public getMinimapSnapshot(): GameMinimapSnapshot {
+    this.syncLayoutMultiverse()
     const status = Multiverse.getTimelineStatus(this.multiverse, this.player)
     const mandatoryLines = new Set(status.mandatory)
     const activeLines = new Set([...status.mandatory, ...status.optional])
@@ -1609,7 +1621,7 @@ export class Game extends Disposable(Empty) {
           gridCells.push({
             l,
             t,
-            white: (t + l) % 2 === 0,
+            white: (t + this.layout.getDisplayLine(l)) % 2 === 0,
             rect: this.layout.getTurnRect(l, t),
           })
         }
@@ -1943,6 +1955,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private focusRects(rects: Rect[], padding = 0, options: ViewportFocusOptions = {}) {
+    this.syncLayoutMultiverse()
     const bounds = Rect.bounds(rects)
     if (! bounds) return
 
@@ -1961,6 +1974,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private loop = () => {
+    this.syncLayoutMultiverse()
     this.updateScreen()
     this.updateCameraMotion()
     this.updateCameraBounds()
@@ -3718,6 +3732,7 @@ export class Game extends Disposable(Empty) {
   }
 
   private renderMultiverse() {
+    this.syncLayoutMultiverse()
     this.timelineTilesPainter.render(this.multiverse, {
       endedProgress: this.getGameEndBackgroundProgress(),
       endedStatus: this.gameEndBackgroundStatus,

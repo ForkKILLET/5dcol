@@ -27,17 +27,24 @@ export class GameLayout {
 
   private viewportInsets: ViewportInsets = { ...DEFAULT_VIEWPORT_INSETS }
   private viewPlayer: Player = Player.W
+  private hasNegativeZeroLine = false
 
   setViewPlayer(player: Player) {
     this.viewPlayer = player
   }
 
+  setMultiverse(multiverse: Multiverse) {
+    this.hasNegativeZeroLine = Multiverse.hasNegativeZeroLine(multiverse)
+  }
+
   getDisplayLine(l: number): number {
-    return this.viewPlayer === Player.W ? l : -l
+    const displayLine = this.getLineDisplayOffset(l)
+    return this.viewPlayer === Player.W ? displayLine : -displayLine
   }
 
   getLogicalLine(displayLine: number): number {
-    return this.viewPlayer === Player.W ? displayLine : -displayLine
+    const displayOffset = this.viewPlayer === Player.W ? displayLine : -displayLine
+    return this.getLineFromDisplayOffset(displayOffset)
   }
 
   setViewportInsets(insets: Partial<ViewportInsets>) {
@@ -243,5 +250,17 @@ export class GameLayout {
       Vec2.sub(this.getViewportCenterScreen(), [widthCss / 2, heightCss / 2]),
       1 / scale,
     )
+  }
+
+  private getLineDisplayOffset(l: number): number {
+    const offset = Multiverse.lineToIndexOffset(l)
+    return ! this.hasNegativeZeroLine && offset < 0 ? offset + 1 : offset
+  }
+
+  private getLineFromDisplayOffset(displayOffset: number): number {
+    const offset = ! this.hasNegativeZeroLine && displayOffset < 0
+      ? displayOffset - 1
+      : displayOffset
+    return Multiverse.indexOffsetToLine(offset)
   }
 }
