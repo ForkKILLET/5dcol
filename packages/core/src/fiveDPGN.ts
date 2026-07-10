@@ -316,7 +316,7 @@ export const exportFEN = (
     for (const [m, board] of Line.getBoardEntries(line)) {
       if (! board) continue
       const player = m % 2
-      blocks.push(`[${formatBoardFEN(board)}:${l}:${Coord.turn(m, player)}:${player === Player.W ? 'w' : 'b'}]`)
+      blocks.push(`[${formatBoardFEN(board)}:${Multiverse.formatLine(l)}:${Coord.turn(m, player)}:${player === Player.W ? 'w' : 'b'}]`)
     }
   }
   return `${blocks.join('\n')}\n`
@@ -1520,7 +1520,7 @@ const matchesMovePattern = (
 
 const matchesBoardPattern = (coord: CoordTimelike, pattern: BoardPattern | undefined): boolean => (
   ! pattern
-  || (pattern.l === undefined || coord.l === pattern.l)
+  || (pattern.l === undefined || Multiverse.isSameLine(coord.l, pattern.l))
   && (pattern.t === undefined || coord.t === pattern.t)
 )
 
@@ -1638,25 +1638,27 @@ const parseFENBlock = (content: string, boardSize: BoardSize): FENBoardBlock => 
 const createMultiverseFromFENBlocks = (blocks: FENBoardBlock[]): Multiverse => {
   if (blocks.length === 0) return Multiverse.createInitial()
 
-  const lMin = Math.min(...blocks.map(block => block.l))
-  const lMax = Math.max(...blocks.map(block => block.l))
+  const lineOffsets = blocks.map(block => Multiverse.lineToIndexOffset(block.l))
+  const lMin = Math.min(...lineOffsets)
+  const lMax = Math.max(...lineOffsets)
   const lOffset = Math.max(Multiverse.LINE_OFFSET_INITIAL, -lMin)
   const lines: Line[] = []
   const blocksByLine = new Map<number, Array<{ m: number, board: Board }>>()
 
   for (const block of blocks) {
     const m = Coord.time(block.t, block.player)
-    const lineBlocks = blocksByLine.get(block.l) ?? []
+    const lineOffset = Multiverse.lineToIndexOffset(block.l)
+    const lineBlocks = blocksByLine.get(lineOffset) ?? []
     lineBlocks.push({ m, board: block.board })
-    blocksByLine.set(block.l, lineBlocks)
+    blocksByLine.set(lineOffset, lineBlocks)
   }
 
-  for (const [l, lineBlocks] of blocksByLine) {
+  for (const [lineOffset, lineBlocks] of blocksByLine) {
     const boards: Board[] = []
     for (const { m, board } of lineBlocks) {
       boards[m] = board
     }
-    lines[l + lOffset] = {
+    lines[lineOffset + lOffset] = {
       boards,
       mStart: Math.min(...lineBlocks.map(block => block.m)),
     }
@@ -2550,7 +2552,7 @@ const isSameMove = (p: Move, q: Move): boolean => (
   Coord.isSame(p.from, q.from) && Coord.isSame(p.to, q.to)
 )
 
-const formatBoard = ({ l, t }: CoordTimelike): string => `(${l}T${t})`
+const formatBoard = ({ l, t }: CoordTimelike): string => `(${Multiverse.formatLine(l)}T${t})`
 
 const formatSquare = ({ x, y }: CoordSpacelike, { height }: BoardSize = STANDARD_BOARD_SIZE): string => (
   `${FILES[x]}${height - y}`

@@ -94,6 +94,70 @@ export interface TimelineStatus {
 }
 
 export namespace Multiverse {
+  export const isNegativeZeroLine = (l: number): boolean => Object.is(l, -0)
+
+  export const isSameLine = (p: number, q: number): boolean => Object.is(p, q)
+
+  export const lineToIndexOffset = (l: number): number => (
+    l < 0 || isNegativeZeroLine(l) ? l - 1 : l
+  )
+
+  export const indexOffsetToLine = (offset: number): number => {
+    if (offset === -1) return -0
+    if (offset < -1) return offset + 1
+    return offset
+  }
+
+  export const lineKey = (l: number): string => (
+    isNegativeZeroLine(l) ? '-0' : String(l)
+  )
+
+  export const compareLines = (p: number, q: number): number => (
+    lineToIndexOffset(p) - lineToIndexOffset(q)
+  )
+
+  export const addLineDelta = (multiverse: Multiverse, l: number, delta: number): number => {
+    const offset = lineToIndexOffset(l)
+    let target = offset + delta
+    if (! hasNegativeZeroLine(multiverse)) {
+      if (delta < 0 && offset >= 0 && target <= -1) target -= 1
+      else if (delta > 0 && offset <= -2 && target >= -1) target += 1
+    }
+    return indexOffsetToLine(target)
+  }
+
+  export const formatLine = (l: number): string => (
+    isNegativeZeroLine(l) ? '-0' : String(l)
+  )
+
+  export const hasNegativeZeroLine = (multiverse: Multiverse): boolean => (
+    Boolean(multiverse.lines[multiverse.lOffset - 1])
+  )
+
+  export const lineFromSideRank = (
+    multiverse: Multiverse,
+    player: Player,
+    rank: number,
+  ): number => {
+    if (rank === 0) return 0
+    if (player === Player.W) return rank
+    return hasNegativeZeroLine(multiverse) ? -(rank - 1) : -rank
+  }
+
+  const getLineSideRank = (
+    multiverse: Multiverse,
+    l: number,
+  ): number => {
+    if (l > 0) return l
+    if (isNegativeZeroLine(l)) return 1
+    if (l < 0) return -l + (hasNegativeZeroLine(multiverse) ? 1 : 0)
+    return 0
+  }
+
+  const getLineStorageIndex = (multiverse: Multiverse, l: number): number => (
+    multiverse.lOffset + lineToIndexOffset(l)
+  )
+
   export const expand = (multiverse: Multiverse) => {
     const { lOffset: l0 } = multiverse
     multiverse.lOffset += l0
@@ -104,16 +168,17 @@ export namespace Multiverse {
 
   export function * getLineEntries(multiverse: Multiverse) {
     for (let n = multiverse.lFurthestB; n <= multiverse.lFurthestW; n ++) {
-      yield [n - multiverse.lOffset, multiverse.lines[n]] as const
+      yield [indexOffsetToLine(n - multiverse.lOffset), multiverse.lines[n]] as const
     }
   }
 
   export const getLine = (multiverse: Multiverse, l: number): Line => {
-    return multiverse.lines[l + multiverse.lOffset]
+    return multiverse.lines[getLineStorageIndex(multiverse, l)]
   }
 
   export const getLBoundaries = ({ lOffset, lFurthestB, lFurthestW }: Multiverse): [number, number] => [
-    lFurthestB - lOffset, lFurthestW - lOffset
+    indexOffsetToLine(lFurthestB - lOffset),
+    indexOffsetToLine(lFurthestW - lOffset),
   ]
 
   export const getInitialLBoundaries = (): [number, number] => [0, 0]
@@ -123,9 +188,11 @@ export namespace Multiverse {
   ): [number, number] => {
     const whiteCount = Multiverse.getCreatedTimelineCount(multiverse, Player.W)
     const blackCount = Multiverse.getCreatedTimelineCount(multiverse, Player.B)
+    const activeBlackRank = blackCount > whiteCount + 1 ? whiteCount + 1 : blackCount
+    const activeWhiteRank = whiteCount > blackCount + 1 ? blackCount + 1 : whiteCount
     return [
-      blackCount > whiteCount + 1 ? -whiteCount - 1 : -blackCount,
-      whiteCount > blackCount + 1 ? blackCount + 1 : whiteCount,
+      lineFromSideRank(multiverse, Player.B, activeBlackRank),
+      lineFromSideRank(multiverse, Player.W, activeWhiteRank),
     ]
   }
 
@@ -133,8 +200,7 @@ export namespace Multiverse {
     multiverse: Multiverse,
     player: Player,
   ): number => {
-    const [lMin, lMax] = Multiverse.getLBoundaries(multiverse)
-    return player === Player.W ? lMax + 1 : lMin - 1
+    return lineFromSideRank(multiverse, player, Multiverse.getCreatedTimelineCount(multiverse, player) + 1)
   }
 
   export const getTimelineEnd = (
@@ -164,20 +230,20 @@ export namespace Multiverse {
   }
 
   export const getCreatedTimelineCount = (
-    { lOffset, lFurthestB, lFurthestW }: Multiverse,
+    multiverse: Multiverse,
     player: Player,
   ): number => {
-    switch (player) {
-      case Player.W:
-        return lFurthestW - lOffset
-      case Player.B:
-        return lOffset - lFurthestB
+    let count = 0
+    for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
+      if (! line) continue
+      if (Multiverse.getLinePlayer(l) === player) count += 1
     }
+    return count
   }
 
   export const getLinePlayer = (l: number): Player | null => {
     if (l > 0) return Player.W
-    if (l < 0) return Player.B
+    if (l < 0 || isNegativeZeroLine(l)) return Player.B
     return null
   }
 
@@ -193,7 +259,7 @@ export namespace Multiverse {
       multiverse,
       player === Player.W ? Player.B : Player.W,
     )
-    return Math.abs(l) > opponentCount + 1 && ownCount > opponentCount + 1
+    return getLineSideRank(multiverse, l) > opponentCount + 1 && ownCount > opponentCount + 1
   }
 
   export const canCreateActiveTimeline = (
@@ -260,7 +326,9 @@ export namespace Multiverse {
     { l, t }: CoordTimelike,
   ): boolean => {
     const present = Multiverse.getPresent(multiverse, player)
-    return present !== null && present.m === t && present.lines.includes(l)
+    return present !== null
+      && present.m === t
+      && present.lines.some(line => Multiverse.isSameLine(line, l))
   }
 
   export const getTimelineStatus = (
@@ -390,7 +458,9 @@ export namespace Coord {
     (time - player) / 2
   )
 
-  export const isSameBoard = (p: CoordTimelike, q: CoordTimelike) => p.l === q.l && p.t === q.t
+  export const isSameBoard = (p: CoordTimelike, q: CoordTimelike) => (
+    Multiverse.isSameLine(p.l, q.l) && p.t === q.t
+  )
 
   export const isSameSpace = (p: CoordSpacelike, q: CoordSpacelike) => p.x === q.x && p.y === q.y
 
@@ -1115,7 +1185,7 @@ export namespace Multiverse {
     const { mandatory, optional } = Multiverse.getTimelineStatus(multiverse, player, presentM)
     const movablePieces: Coord[] = []
 
-    for (const l of [...mandatory, ...optional].sort((a, b) => a - b)) {
+    for (const l of [...mandatory, ...optional].sort(Multiverse.compareLines)) {
       const line = Multiverse.getLine(multiverse, l)
       const m = Line.getLatestBoardIndex(line)
       if (m === null) continue
@@ -1228,9 +1298,7 @@ export namespace Multiverse {
     if (Coord.isSameBoard(from, to)) return { l: from.l, m: Coord.boardIndex(from, player) + 1 }
     if (Coord.isFreshBoard(to, multiverse, player)) return { l: to.l, m: toM + 1 }
     return {
-      l: player === Player.W
-        ? multiverse.lFurthestW - multiverse.lOffset + 1
-        : multiverse.lFurthestB - multiverse.lOffset - 1,
+      l: Multiverse.getNewLineIndex(multiverse, player),
       m: toM + 1,
     }
   }
@@ -1298,7 +1366,7 @@ export namespace Multiverse {
       : [{ t: 1, l: 1 }, { t: -1, l: 1 }]
 
     for (const delta of captureDeltas) {
-      const target = { ...from, t: from.t + delta.t, l: from.l + delta.l }
+      const target = { ...from, t: from.t + delta.t, l: Multiverse.addLineDelta(multiverse, from.l, delta.l) }
       const board = Multiverse.getBoard(multiverse, target, player)
       if (! board) continue
       if (Pieces.getPlayer(Board.getPiece(target, board)) === Players.opponent(player)) {
@@ -1306,7 +1374,7 @@ export namespace Multiverse {
       }
     }
 
-    const forward = { ...from, l: from.l + lForward }
+    const forward = { ...from, l: Multiverse.addLineDelta(multiverse, from.l, lForward) }
     const forwardBoard = Multiverse.getBoard(multiverse, forward, player)
     if (! forwardBoard || Board.getPiece(forward, forwardBoard) !== Piece.E) return
 
@@ -1314,7 +1382,7 @@ export namespace Multiverse {
 
     if (! Board.isUnmoved(from, sourceBoard)) return
 
-    const doubleForward = { ...from, l: from.l + lForward * 2 }
+    const doubleForward = { ...from, l: Multiverse.addLineDelta(multiverse, from.l, lForward * 2) }
     const doubleForwardBoard = Multiverse.getBoard(multiverse, doubleForward, player)
     if (doubleForwardBoard && Board.getPiece(doubleForward, doubleForwardBoard) === Piece.E) {
       addStepTarget(targets, multiverse, from, player, { x: 0, y: 0, t: 0, l: lForward * 2 })
@@ -1400,7 +1468,7 @@ export namespace Multiverse {
       x: from.x + delta.x,
       y: from.y + delta.y,
       t: from.t + delta.t,
-      l: from.l + delta.l,
+      l: Multiverse.addLineDelta(multiverse, from.l, delta.l),
     }
 
     const board = Multiverse.getBoard(multiverse, target, player)
@@ -1425,7 +1493,7 @@ export namespace Multiverse {
       x: from.x + delta.x,
       y: from.y + delta.y,
       t: from.t + delta.t,
-      l: from.l + delta.l,
+      l: Multiverse.addLineDelta(multiverse, from.l, delta.l),
     }
 
     const board = Multiverse.getBoard(multiverse, target, player)
@@ -1467,15 +1535,17 @@ export namespace Multiverse {
       mStart,
     }
 
-    let nNew: number
+    const lNew = Multiverse.getNewLineIndex(multiverse, player)
+    let nNew = multiverse.lOffset + Multiverse.lineToIndexOffset(lNew)
     if (player === Player.W) {
-      nNew = ++ multiverse.lFurthestW
+      multiverse.lFurthestW = nNew
     }
     else {
-      nNew = -- multiverse.lFurthestB
+      multiverse.lFurthestB = nNew
       if (nNew < 0) {
         nNew += multiverse.lOffset
         Multiverse.expand(multiverse)
+        multiverse.lFurthestB = nNew
       }
     }
     multiverse.lines[nNew] = lineNew
@@ -1658,7 +1728,7 @@ interface HypercuboidInfo {
   multiverse: Multiverse
   player: Player
   presentT: number
-  lineToAxis: Map<number, number>
+  lineToAxis: Map<string, number>
   axisCoords: Semimove[][]
   newAxis: number
   dimension: number
@@ -1704,11 +1774,11 @@ const buildHypercuboid = (
   const { mandatory, optional } = Multiverse.getTimelineStatus(multiverse, player, present.m)
   const playableLines = [...mandatory, ...optional]
 
-  const lineToAxis = new Map<number, number>()
+  const lineToAxis = new Map<string, number>()
   const axisCoords: Semimove[][] = []
-  const arrivesTo = new Map<number, Move[]>()
-  const staysOn = new Map<number, Move[]>()
-  const departsFrom = new Map<number, Coord[]>()
+  const arrivesTo = new Map<string, Move[]>()
+  const staysOn = new Map<string, Move[]>()
+  const departsFrom = new Map<string, Coord[]>()
   const jumpIndices = new Map<string, number>()
 
   for (const from of Multiverse.getMovablePieces(multiverse, player, present.m)) {
@@ -1717,28 +1787,28 @@ const buildHypercuboid = (
       const move = { from, to }
       if (! Coord.isSameBoard(from, to)) {
         if (! hasDepart) {
-          getOrCreate(departsFrom, from.l).push(from)
+          getOrCreate(departsFrom, Multiverse.lineKey(from.l)).push(from)
           hasDepart = true
         }
-        getOrCreate(arrivesTo, to.l).push(move)
+        getOrCreate(arrivesTo, Multiverse.lineKey(to.l)).push(move)
       }
       else {
-        getOrCreate(staysOn, from.l).push(move)
+        getOrCreate(staysOn, Multiverse.lineKey(from.l)).push(move)
       }
     }
   }
 
-  for (const l of playableLines.sort((a, b) => a - b)) {
+  for (const l of playableLines.sort(Multiverse.compareLines)) {
     const locs: Semimove[] = [{ kind: 'null', tl: { t: presentT, l } }]
 
-    for (const move of staysOn.get(l) ?? []) {
+    for (const move of staysOn.get(Multiverse.lineKey(l)) ?? []) {
       const board = createPhysicalSemimoveBoard(multiverse, move, player)
       if (! Board.hasPhysicalCheck(board, player)) {
         locs.push({ kind: 'physical', move, board })
       }
     }
 
-    for (const from of departsFrom.get(l) ?? []) {
+    for (const from of departsFrom.get(Multiverse.lineKey(l)) ?? []) {
       const board = createDepartingSemimoveBoard(multiverse, from, player)
       if (! Board.hasPhysicalCheck(board, player)) {
         jumpIndices.set(coordKey(from), locs.length)
@@ -1746,7 +1816,7 @@ const buildHypercuboid = (
       }
     }
 
-    for (const move of arrivesTo.get(l) ?? []) {
+    for (const move of arrivesTo.get(Multiverse.lineKey(l)) ?? []) {
       const timelineEnd = Multiverse.getTimelineEnd(multiverse, move.to.l)
       const targetM = Coord.boardIndex(move.to, player)
       if (timelineEnd?.m !== targetM) continue
@@ -1757,7 +1827,7 @@ const buildHypercuboid = (
       }
     }
 
-    lineToAxis.set(l, axisCoords.length)
+    lineToAxis.set(Multiverse.lineKey(l), axisCoords.length)
     axisCoords.push(locs)
   }
 
@@ -1768,7 +1838,6 @@ const buildHypercuboid = (
   }
 
   const newLine = Multiverse.getNewLineIndex(multiverse, player)
-  const newLineSign = player === Player.W ? 1 : -1
   const branchLocs: Semimove[] = [{ kind: 'null', tl: { t: presentT, l: newLine } }]
   for (const arrives of arrivesTo.values()) {
     for (const move of arrives) {
@@ -1787,8 +1856,12 @@ const buildHypercuboid = (
   }
 
   for (let i = 0; i < maxBranch; i += 1) {
-    const l = newLine + newLineSign * i
-    lineToAxis.set(l, newAxis + i)
+    const l = Multiverse.lineFromSideRank(
+      multiverse,
+      player,
+      Multiverse.getCreatedTimelineCount(multiverse, player) + 1 + i,
+    )
+    lineToAxis.set(Multiverse.lineKey(l), newAxis + i)
     axisCoords.push(branchLocs.map(cloneSemimove))
   }
 
@@ -1867,7 +1940,7 @@ const takeHypercuboidPoint = (
         }
       }
       else if (loc.kind === 'arriving') {
-        const fromAxis = info.lineToAxis.get(loc.move.from.l)
+        const fromAxis = info.lineToAxis.get(Multiverse.lineKey(loc.move.from.l))
         if (fromAxis === undefined || ! hc.axes[fromAxis].has(loc.departingIndex)) {
           ghostArrivals.push(i)
           continue
@@ -1925,7 +1998,7 @@ const jumpOrderConsistent = (
     if (loc.kind !== 'arriving') continue
 
     const { from, to } = loc.move
-    const toAxis = info.lineToAxis.get(to.l)
+    const toAxis = info.lineToAxis.get(Multiverse.lineKey(to.l))
     const targetEnd = Multiverse.getTimelineEnd(info.multiverse, to.l)
     if (toAxis !== undefined && targetEnd?.t === to.t && targetEnd.player === info.player) {
       const toLoc = info.axisCoords[toAxis][point[toAxis]]
@@ -1989,7 +2062,7 @@ const testHypercuboidPresent = (
   let reactivateMoveAxis: number | null = null
 
   for (const l of info.mandatoryLines) {
-    const axis = info.lineToAxis.get(l)
+    const axis = info.lineToAxis.get(Multiverse.lineKey(l))
     if (axis === undefined) continue
     if (info.axisCoords[axis][point[axis]].kind === 'null') {
       passCoord = [axis, point[axis]]
@@ -2039,7 +2112,7 @@ const testHypercuboidPresent = (
       const timelineEnd = Multiverse.getTimelineEnd(info.multiverse, reactivated)
       if (timelineEnd && timelineEnd.t <= minT && timelineEnd.player === info.player) {
         minT = timelineEnd.t
-        const axis = info.lineToAxis.get(reactivated)
+        const axis = info.lineToAxis.get(Multiverse.lineKey(reactivated))
         if (axis !== undefined && info.axisCoords[axis][point[axis]].kind === 'null') {
           passCoord = [axis, point[axis]]
           reactivateMoveAxis = n
@@ -2107,7 +2180,7 @@ const findHypercuboidChecks = (
     ? Board.getPiece(check.from, Multiverse.getBoard(multiverseNext, check.from, attackingPlayer)!)
     : Piece.E
 
-  const sourceAxis = info.lineToAxis.get(check.from.l)
+  const sourceAxis = info.lineToAxis.get(Multiverse.lineKey(check.from.l))
   if (sourceAxis !== undefined) {
     const notTaking = new Set<number>()
     for (const i of hc.axes[sourceAxis]) {
@@ -2129,7 +2202,7 @@ const findHypercuboidChecks = (
     problem.fixedAxes.set(sourceAxis, notTaking)
   }
 
-  const targetAxis = info.lineToAxis.get(check.to.l)
+  const targetAxis = info.lineToAxis.get(Multiverse.lineKey(check.to.l))
   if (targetAxis !== undefined) {
     const selected = info.axisCoords[targetAxis][point[targetAxis]]
     if (semimoveCreatesBoardAt(selected, check.to.t, isNext)) {
@@ -2148,7 +2221,7 @@ const findHypercuboidChecks = (
   }
 
   for (const crossed of path) {
-    const axis = info.lineToAxis.get(crossed.l)
+    const axis = info.lineToAxis.get(Multiverse.lineKey(crossed.l))
     if (axis === undefined) continue
 
     const selected = info.axisCoords[axis][point[axis]]
@@ -2186,7 +2259,7 @@ const hypercuboidPointToAction = (
   point: number[],
 ): Move[] => {
   const moves: Move[] = []
-  for (const [, axis] of [...info.lineToAxis.entries()].sort(([a], [b]) => a - b)) {
+  for (const [, axis] of [...info.lineToAxis.entries()].sort(([, a], [, b]) => a - b)) {
     const loc = info.axisCoords[axis][point[axis]]
     if (loc.kind === 'physical' || loc.kind === 'arriving') {
       moves.push(loc.move)
@@ -2305,9 +2378,9 @@ const getMovePath = (
 
   const path: Coord[] = []
   for (
-    let current = addCoordDelta(move.from, step);
+    let current = addCoordDelta(multiverse, move.from, step);
     ! Coord.isSameBoard(current, move.to) || ! Coord.isSameSpace(current, move.to);
-    current = addCoordDelta(current, step)
+    current = addCoordDelta(multiverse, current, step)
   ) {
     path.push(current)
   }
@@ -2448,18 +2521,19 @@ const getOrCreate = <K, V>(map: Map<K, V[]>, key: K): V[] => {
 }
 
 const addCoordDelta = (
+  multiverse: Multiverse,
   coord: Coord,
   delta: { x: number, y: number, t: number, l: number },
 ): Coord => ({
   x: coord.x + delta.x,
   y: coord.y + delta.y,
   t: coord.t + delta.t,
-  l: coord.l + delta.l,
+  l: Multiverse.addLineDelta(multiverse, coord.l, delta.l),
 })
 
-const coordKey = ({ x, y, t, l }: Coord): string => `${l},${t},${x},${y}`
+const coordKey = ({ x, y, t, l }: Coord): string => `${Multiverse.lineKey(l)},${t},${x},${y}`
 
-const coordTimelikeKey = ({ t, l }: CoordTimelike): string => `${l},${t}`
+const coordTimelikeKey = ({ t, l }: CoordTimelike): string => `${Multiverse.lineKey(l)},${t}`
 
 const edgeKey = (u: number, v: number): string => `${u},${v}`
 
@@ -2616,12 +2690,12 @@ export namespace GameState {
     const warnings: CheckWarningBoard[] = []
     const warningKeys = new Set<string>()
     const { mandatory } = Multiverse.getTimelineStatus(multiverse, player)
-    const mandatoryLines = new Set(mandatory)
+    const mandatoryLines = new Set(mandatory.map(Multiverse.lineKey))
     const currentChecks = new Set(
       Multiverse.findChecks(multiverse, attackingPlayer).map(getMoveKey),
     )
     const addWarning = (l: number, m: number) => {
-      const key = `${l}:${m}`
+      const key = `${Multiverse.lineKey(l)}:${m}`
       if (warningKeys.has(key)) return
       warningKeys.add(key)
       warnings.push({ l, m })
@@ -2648,7 +2722,7 @@ export namespace GameState {
         if (currentChecks.has(getMoveKey(check))) continue
 
         const l = check.to.l
-        if (! mandatoryLines.has(l)) continue
+        if (! mandatoryLines.has(Multiverse.lineKey(l))) continue
 
         const m = Coord.boardIndex(check.to, attackingPlayer) - 1
         const line = Multiverse.getLine(multiverse, l)
@@ -2662,7 +2736,7 @@ export namespace GameState {
   }
 
   const getMoveKey = ({ from, to }: Move): string => (
-    `${from.l}:${from.t}:${from.x}:${from.y}->${to.l}:${to.t}:${to.x}:${to.y}`
+    `${Multiverse.lineKey(from.l)}:${from.t}:${from.x}:${from.y}->${Multiverse.lineKey(to.l)}:${to.t}:${to.x}:${to.y}`
   )
 
   export const getCheckmateResult = (
@@ -2758,7 +2832,8 @@ export namespace GameState {
     l: number,
     lineLimit: number,
   ): boolean => {
-    return player === Player.B ? l > lineLimit : l < lineLimit
+    const order = Multiverse.compareLines(l, lineLimit)
+    return player === Player.B ? order > 0 : order < 0
   }
 
   const applyMoves = (

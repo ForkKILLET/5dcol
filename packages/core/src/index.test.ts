@@ -25,14 +25,18 @@ const createBoardRangeMultiverse = (
   turns: readonly number[],
   player = Player.W,
 ) => {
-  const lOffset = -lMin
+  const lineOffsets = Array.from(
+    { length: lMax - lMin + 1 },
+    (_, index) => Multiverse.lineToIndexOffset(lMin + index),
+  )
+  const lOffset = Math.max(0, -Math.min(...lineOffsets))
   const lines = []
   for (let l = lMin; l <= lMax; l += 1) {
     const boards: BoardState[] = []
     for (const t of turns) {
       boards[t * 2 + player] = createEmptyBoard(8, 8)
     }
-    lines[l + lOffset] = {
+    lines[Multiverse.lineToIndexOffset(l) + lOffset] = {
       boards,
       mStart: Math.min(...turns.map(t => t * 2 + player)),
     }
@@ -41,8 +45,8 @@ const createBoardRangeMultiverse = (
   return {
     lines,
     lOffset,
-    lFurthestB: 0,
-    lFurthestW: lMax - lMin,
+    lFurthestB: Math.min(...lineOffsets) + lOffset,
+    lFurthestW: Math.max(...lineOffsets) + lOffset,
     lastMove: null,
   }
 }
@@ -189,6 +193,27 @@ describe('Multiverse.getMoveTargets', () => {
     expect(targets).toContainEqual({ l: -8, t: 2, x: 3, y: 3 })
   })
 
+  it('treats positive and negative zero timelines as adjacent when both exist', () => {
+    const state = FiveDPGN.importGameState(`
+[Mode "5D"]
+[Size "4x4"]
+[Board "custom"]
+
+[4/4/4/R3:+0:1:w]
+[4/4/4/4:-0:1:w]
+*
+`)
+
+    const targets = Multiverse.getMoveTargets(state.initialMultiverse, { l: 0, t: 1, x: 0, y: 3 }, Player.W)
+
+    expect(targets.some(target => (
+      Multiverse.isSameLine(target.l, -0)
+      && target.t === 1
+      && target.x === 0
+      && target.y === 3
+    ))).toBe(true)
+  })
+
   it('uses long time-axis sliding moves in check detection', () => {
     const multiverse = createBoardRangeMultiverse(0, 0, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
     Board.setPiece({ x: 3, y: 3 }, getBoard(multiverse, 0, 12), Piece.QW)
@@ -313,6 +338,32 @@ describe('5DPGN import', () => {
 
     expect(board).not.toBeNull()
     expect(board && Board.getSize(board)).toEqual({ width: 5, height: 5 })
+  })
+
+  it('distinguishes positive and negative zero timelines in initial 5DFEN', () => {
+    const state = FiveDPGN.importGameState(`
+[Mode "5D"]
+[Size "4x4"]
+[Board "custom"]
+
+[nbr*u/4/4/K*P*P*P*:+0:1:w]
+[k*p*p*p*/4/4/NBR*U:-0:1:b]
+*
+`)
+
+    const positiveZeroBoard = Multiverse.getBoard(state.initialMultiverse, { l: 0, t: 1 }, Player.W)
+    const negativeZeroBoard = Multiverse.getBoard(state.initialMultiverse, { l: -0, t: 1 }, Player.B)
+    const lines = [...Multiverse.getLineEntries(state.initialMultiverse)]
+      .filter(([, line]) => Boolean(line))
+      .map(([l]) => Multiverse.formatLine(l))
+
+    expect(lines).toEqual(['-0', '0'])
+    expect(positiveZeroBoard).not.toBeNull()
+    expect(negativeZeroBoard).not.toBeNull()
+    expect(positiveZeroBoard && Board.getPiece({ x: 0, y: 3 }, positiveZeroBoard)).toBe(Piece.KW)
+    expect(negativeZeroBoard && Board.getPiece({ x: 0, y: 0 }, negativeZeroBoard)).toBe(Piece.KB)
+    expect(FiveDPGN.exportFEN(state.initialMultiverse)).toContain(':-0:1:b')
+    expect(GameState.findLegalAction(state)).not.toBeNull()
   })
 
   it('requires an initial FEN position for non-standard board sizes', () => {
