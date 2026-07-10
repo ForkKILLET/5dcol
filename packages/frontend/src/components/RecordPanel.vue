@@ -1371,7 +1371,6 @@ onBeforeUnmount(() => {
                 </span>
               </template>
               <template v-else-if="isRecordCursorRow(row)">
-                <span class="record-cursor-hit-area" />
                 <span class="record-cursor-guide" />
                 <span
                   v-if="getPresenceCursorsAtCursor(row).length > 0"
@@ -1564,10 +1563,8 @@ onBeforeUnmount(() => {
   --record-cursor-tag-height: calc(var(--record-cursor-size) + var(--record-cursor-tag-padding-y) * 2);
   --record-cursor-guide-fade-start: calc(var(--record-guide-start-offset) * 0.45);
   --record-cursor-guide-fade-width: calc(var(--button-content-gap) * 2.2);
+  --record-cursor-guide-hit-padding: calc(var(--record-cursor-tag-height) * 0.18);
   --record-cursor-guide-tag-overlap: 1.5px;
-  --record-cursor-hit-before: calc(var(--record-cursor-tag-height) * 0.78);
-  --record-cursor-hit-after: calc(var(--record-cursor-tag-height) * 0.78);
-  --record-cursor-hit-core: 2px;
   --record-cursor-transition-duration: 320ms;
   --record-cursor-content-fade-duration: 160ms;
   --record-cursor-content-collapse-delay: 220ms;
@@ -1588,14 +1585,6 @@ onBeforeUnmount(() => {
   color: var(--button-text-color);
   pointer-events: none;
   z-index: var(--z-content-panel);
-}
-
-.record-row--cursor-adjacent-before {
-  --record-cursor-hit-before: 0px;
-}
-
-.record-row--cursor-adjacent-after {
-  --record-cursor-hit-after: 0px;
 }
 
 .record-row--cursor-interactive:hover,
@@ -1874,23 +1863,6 @@ onBeforeUnmount(() => {
   padding-bottom: var(--button-tiny-shadow-offset);
 }
 
-.record-cursor-hit-area {
-  position: absolute;
-  z-index: var(--z-content-panel);
-  right: 0;
-  left: calc(var(--record-guide-start-offset) * -1);
-}
-
-.record-cursor-hit-area {
-  top: calc(50% - var(--record-cursor-hit-before) - var(--record-cursor-hit-core) * 0.5);
-  height: calc(var(--record-cursor-hit-before) + var(--record-cursor-hit-after) + var(--record-cursor-hit-core));
-  pointer-events: none;
-}
-
-.record-row--cursor-interactive .record-cursor-hit-area {
-  pointer-events: auto;
-}
-
 .record-cursor-guide {
   position: relative;
   z-index: var(--z-content-panel);
@@ -1906,8 +1878,14 @@ onBeforeUnmount(() => {
   );
   min-width: 0;
   height: calc(var(--record-cursor-tag-height) * 0.25);
+  padding-block: var(--record-cursor-guide-hit-padding);
   pointer-events: none;
   transform: translateX(calc(var(--record-guide-start-offset) * -1));
+}
+
+.record-row--cursor-interactive .record-cursor-guide {
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .record-cursor-guide::before {
