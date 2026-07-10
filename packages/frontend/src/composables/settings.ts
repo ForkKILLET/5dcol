@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { GameKeybindingSettingsSchema } from '@engine/keybinding'
 import { RendererPreferenceSchema, type RendererPreference } from '@engine/rendererFactory'
 import { SQUARE_MARKER_DISPLAY_MODES, type SquareMarkerDisplayMode } from '@engine/recordMarker'
 import { useStorageReactive } from './storage'
@@ -62,6 +63,7 @@ export const GameSettingsSchema = z.preprocess(
     themeColor: ThemeColorSchema.catch('view' satisfies ThemeColor),
     renderer: RendererPreferenceSchema.catch('auto' satisfies RendererPreference),
     fiveDPGN: FiveDPGNSettingsSchema.catch(() => FiveDPGNSettingsSchema.parse({})),
+    keybindings: GameKeybindingSettingsSchema.catch(() => GameKeybindingSettingsSchema.parse({})),
     autoFullscreen: BooleanWithDefault(true),
     autoEnterLastRoom: BooleanWithDefault(false),
     autoSwitchViewPlayer: BooleanWithDefault(true),

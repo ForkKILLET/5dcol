@@ -6,8 +6,14 @@ import { Color4, CubicBezier, Mat3, Rect, Scalar, Vec2, type Camera } from '@eng
 import { getBoardRenderLayers } from '@engine/board'
 import { ButtonColors, type ButtonColorPreset, CameraControl, Colors, LabelVisibility, RenderLayer, Sizes, Animations } from '@engine/constant'
 import { Easing } from '@engine/easing'
-import { isModifierKeyEvent, isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
+import { isSameLocatedSquare, isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, getLocalStorage, isStoredGameState, type GameAxisViewMode, type GameAxisViewState, type GameBoardFocus, type GameWorkspaceState, type PendingMove, type StoredGameState } from '@engine/gameState'
+import {
+  DEFAULT_GAME_KEYBINDINGS,
+  getGameKeybindingAction,
+  type GameKeybindingAction,
+  type GameKeybindingSettings,
+} from '@engine/keybinding'
 import { GameLayout, type ViewportInsets } from '@engine/layout'
 import { LinePainter } from '@engine/painters/linePainter'
 import { type Logger } from '@engine/logger'
@@ -62,6 +68,7 @@ export interface GameContext {
   getUISoundVolume?: () => number
   getBellSoundVolume?: () => number
   getPointerDragThreshold?: () => number
+  getKeybindings?: () => GameKeybindingSettings
   getRecordAuthorId?: () => string
   getRecordAuthorColor?: (authorId: string) => string
   getRecordGlyphColor?: (glyph: string) => Color4
@@ -303,6 +310,11 @@ interface PendingCheck {
   fromBoard: { l: number, m: number }
   toBoard: { l: number, m: number }
 }
+interface PendingMoveRedoEntry {
+  move: Move
+  isPass: boolean
+  from: { l: number, m: number }
+}
 interface GameEndBackgroundAnimation {
   from: number
   to: number
@@ -316,6 +328,20 @@ interface ViewFlipTransition {
 }
 const DEFAULT_POINTER_DRAG_THRESHOLD = 8
 const PIECE_GHOST_ALPHA = 0.45
+const GAME_INPUT_KEYBINDING_ACTIONS = [
+  'undoMove',
+  'redoMove',
+  'undoAllMoves',
+  'submitMoves',
+  'panUp',
+  'panLeft',
+  'panDown',
+  'panRight',
+  'zoomOut',
+  'zoomIn',
+  'toggleViewPlayer',
+] satisfies GameKeybindingAction[]
+
 export class Game extends Disposable(Empty) {
   constructor(public readonly ctx: GameContext) {
     super()
@@ -379,6 +405,7 @@ export class Game extends Disposable(Empty) {
   private dragArrowMarkerStart: RecordMarkerSquare | null = null
   private pendingMove: PendingMove | null = null
   private pendingMoves: PendingMove[] = []
+  private pendingMoveRedoStack: PendingMoveRedoEntry[] = []
   private checkWarningBoards: Array<{ l: number, m: number }> = []
   private checkWarningBoardKeys = new Set<string>()
   private pendingChecks: PendingCheck[] = []
@@ -423,6 +450,14 @@ export class Game extends Disposable(Empty) {
 
   private syncLayoutMultiverse(multiverse: Multiverse = this.multiverse) {
     this.layout.setMultiverse(multiverse)
+  }
+
+  private getKeybindings(): GameKeybindingSettings {
+    return this.ctx.getKeybindings?.() ?? DEFAULT_GAME_KEYBINDINGS
+  }
+
+  private getKeybindingAction(e: KeyboardEvent, actions: readonly GameKeybindingAction[]): GameKeybindingAction | null {
+    return getGameKeybindingAction(e, this.getKeybindings(), actions)
   }
 
   public start() {
@@ -667,6 +702,7 @@ export class Game extends Disposable(Empty) {
     const { pendingMoves, multiverse } = this.createPendingMoves(moves)
     this.pendingMoves = pendingMoves
     this.pendingMove = pendingMoves.at(-1) ?? null
+    this.clearPendingMoveRedoStack()
     this.multiverse = multiverse
     this.gameEndStatus = null
     this.clearMoveAnimation()
@@ -692,6 +728,7 @@ export class Game extends Disposable(Empty) {
     if (this.pendingMoves.length === 0) return
     this.pendingMoves = []
     this.pendingMove = null
+    this.clearPendingMoveRedoStack()
     this.multiverse = this.multiverseCommitted
     this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
@@ -939,6 +976,7 @@ export class Game extends Disposable(Empty) {
       this.pendingMoves = preview.pendingMoves
       this.multiverse = preview.multiverse
       this.pendingMove = this.pendingMoves.at(-1) ?? null
+      this.clearPendingMoveRedoStack()
       this.restoredWorkspace = state.workspace ?? null
       this.clearMoveAnimation()
       this.submitRequestedDuringMoveAnimation = false
@@ -1031,6 +1069,7 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.pendingMove = null
     this.pendingMoves = []
+    this.clearPendingMoveRedoStack()
     this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.gameEndTrial = false
@@ -1380,49 +1419,53 @@ export class Game extends Disposable(Empty) {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
-    if (this.gameInputDisabled || e.repeat || isModifierKeyEvent(e) || isTextInputEvent(e)) return
+    if (this.gameInputDisabled || e.repeat || isTextInputEvent(e)) return
 
-    switch (e.key) {
-      case 'z':
-      case 'Backspace':
+    const action = this.getKeybindingAction(e, GAME_INPUT_KEYBINDING_ACTIONS)
+    if (! action) return
+
+    switch (action) {
+      case 'undoMove':
         e.preventDefault()
         this.undoMove()
         break
-      case 'f':
-      case 'Enter':
+      case 'redoMove':
+        e.preventDefault()
+        this.redoMove()
+        break
+      case 'undoAllMoves':
+        e.preventDefault()
+        this.undoAllMoves()
+        break
+      case 'submitMoves':
         e.preventDefault()
         this.submitMoves()
         break
-      case 'w':
-      case 'ArrowUp':
+      case 'panUp':
         e.preventDefault()
         this.panCameraByKeyboard([0, -1])
         break
-      case 'a':
-      case 'ArrowLeft':
+      case 'panLeft':
         e.preventDefault()
         this.panCameraByKeyboard([-1, 0])
         break
-      case 's':
-      case 'ArrowDown':
+      case 'panDown':
         e.preventDefault()
         this.panCameraByKeyboard([0, 1])
         break
-      case 'd':
-      case 'ArrowRight':
+      case 'panRight':
         e.preventDefault()
         this.panCameraByKeyboard([1, 0])
         break
-      case 'q':
+      case 'zoomOut':
         e.preventDefault()
         this.zoomCameraByStep(- CameraControl.KeyboardZoomStep)
         break
-      case 'e':
+      case 'zoomIn':
         e.preventDefault()
         this.zoomCameraByStep(CameraControl.KeyboardZoomStep)
         break
-      case 'u':
-      case 'U':
+      case 'toggleViewPlayer':
         e.preventDefault()
         this.toggleViewPlayer()
         break
@@ -2509,6 +2552,24 @@ export class Game extends Disposable(Empty) {
   private tryCreatePassAt(screen: Vec2): boolean {
     const warning = this.getCheckWarningBadgeAtScreen(screen)
     if (! warning) return false
+    this.createPendingPass(warning, { playSound: true, persist: true, notify: true })
+    return true
+  }
+
+  private createPendingPass(
+    warning: { l: number, m: number },
+    {
+      playSound,
+      persist,
+      notify = false,
+      clearRedo = true,
+    }: {
+      playSound: boolean
+      persist: boolean
+      notify?: boolean
+      clearRedo?: boolean
+    },
+  ): PendingMove {
     const wasGameEndStatus = this.gameEndStatus
     const wasGameEnded = wasGameEndStatus !== null
 
@@ -2535,6 +2596,7 @@ export class Game extends Disposable(Empty) {
     this.multiverse = Multiverse.createPass(multiverseBefore, this.player, [warning.l])
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
+    if (clearRedo) this.clearPendingMoveRedoStack()
     this.gameEndTrial ||= wasGameEnded
     if (wasGameEndStatus) this.gameEndTrialStatus = wasGameEndStatus
     this.gameEndStatus = null
@@ -2550,10 +2612,11 @@ export class Game extends Disposable(Empty) {
     }
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
-    this.playUISound()
-    this.persistGameState()
-    this.notifyPendingActionChange()
-    return true
+    this.syncToolbarButtons()
+    if (playSound) this.playUISound()
+    if (persist) this.persistGameState()
+    if (notify) this.notifyPendingActionChange()
+    return pendingMove
   }
 
   private tryCreateMoveAt(screen: Vec2): boolean {
@@ -2584,7 +2647,17 @@ export class Game extends Disposable(Empty) {
 
   private createAnimatedPendingMove(
     move: Move,
-    { playSound, persist, notify = false }: { playSound: boolean, persist: boolean, notify?: boolean },
+    {
+      playSound,
+      persist,
+      notify = false,
+      clearRedo = true,
+    }: {
+      playSound: boolean
+      persist: boolean
+      notify?: boolean
+      clearRedo?: boolean
+    },
   ): PendingMove {
     const multiverseBefore = this.multiverse
     const order = this.getMoveOrder(this.pendingMoves.length)
@@ -2602,6 +2675,7 @@ export class Game extends Disposable(Empty) {
     this.multiverse = Multiverse.applyMove(move, this.player, multiverseBefore, order)
     this.pendingMoves.push(pendingMove)
     this.pendingMove = pendingMove
+    if (clearRedo) this.clearPendingMoveRedoStack()
     this.gameEndStatus = null
     this.syncCheckState()
     this.boardActivationAnimation = null
@@ -2615,6 +2689,7 @@ export class Game extends Disposable(Empty) {
     }
     this.submitRequestedDuringMoveAnimation = false
     if (playSound) this.playUISound()
+    this.syncToolbarButtons()
     if (persist) this.persistGameState()
     if (notify) this.notifyPendingActionChange()
     return pendingMove
@@ -2626,6 +2701,7 @@ export class Game extends Disposable(Empty) {
     if (this.pendingMoves.length === 0) return
     const undoneMove = this.pendingMoves.at(-1)!
     this.playUndoSound()
+    this.pendingMoveRedoStack.push(this.getPendingMoveRedoEntry(undoneMove))
     this.pendingMoves.pop()
     this.multiverse = this.replayPendingMoves()
     this.pendingMove = this.pendingMoves.at(-1) ?? null
@@ -2642,8 +2718,71 @@ export class Game extends Disposable(Empty) {
     this.startBoardActivationAnimation(undoneMove)
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
+    this.syncToolbarButtons()
     this.persistGameState()
     this.notifyPendingActionChange()
+  }
+
+  private redoMove() {
+    if (! this.canControlTurn()) return
+    if (this.submitRequestedDuringMoveAnimation) return
+    if (this.pendingMoveRedoStack.length === 0) return
+
+    const entry = this.pendingMoveRedoStack.pop()!
+    if (entry.isPass) {
+      this.createPendingPass(entry.from, {
+        playSound: true,
+        persist: true,
+        notify: true,
+        clearRedo: false,
+      })
+      return
+    }
+
+    this.createAnimatedPendingMove(entry.move, {
+      playSound: true,
+      persist: true,
+      notify: true,
+      clearRedo: false,
+    })
+  }
+
+  private undoAllMoves() {
+    if (! this.canControlTurn()) return
+    if (this.submitRequestedDuringMoveAnimation) return
+    if (this.pendingMoves.length === 0) return
+
+    const undoneMoves = [...this.pendingMoves]
+    for (let i = undoneMoves.length - 1; i >= 0; i --) {
+      this.pendingMoveRedoStack.push(this.getPendingMoveRedoEntry(undoneMoves[i]!))
+    }
+
+    this.playUndoSound()
+    this.pendingMoves = []
+    this.pendingMove = null
+    this.multiverse = this.multiverseCommitted
+    this.gameEndTrial = false
+    this.gameEndTrialStatus = null
+    this.updateGameEndState()
+    this.syncCheckState()
+    this.clearMoveAnimation()
+    this.submitRequestedDuringMoveAnimation = false
+    this.deselectPiece()
+    this.syncToolbarButtons()
+    this.persistGameState()
+    this.notifyPendingActionChange()
+  }
+
+  private getPendingMoveRedoEntry(pendingMove: PendingMove): PendingMoveRedoEntry {
+    return {
+      move: pendingMove.move,
+      isPass: pendingMove.isPass === true,
+      from: { ...pendingMove.from },
+    }
+  }
+
+  private clearPendingMoveRedoStack() {
+    this.pendingMoveRedoStack = []
   }
 
   private startBoardActivationAnimation(pendingMove: PendingMove) {
@@ -2733,6 +2872,7 @@ export class Game extends Disposable(Empty) {
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
+    this.clearPendingMoveRedoStack()
     this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
@@ -2802,6 +2942,7 @@ export class Game extends Disposable(Empty) {
     this.multiverseCommitted = this.multiverse
     this.pendingMove = null
     this.pendingMoves = []
+    this.clearPendingMoveRedoStack()
     this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.deselectPiece()
@@ -3033,6 +3174,7 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.pendingMove = null
     this.pendingMoves = []
+    this.clearPendingMoveRedoStack()
     this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.gameEndTrial = false
@@ -3075,6 +3217,7 @@ export class Game extends Disposable(Empty) {
     this.hoverPiece = null
     this.pendingMove = null
     this.pendingMoves = []
+    this.clearPendingMoveRedoStack()
     this.clearMoveAnimation()
     this.submitRequestedDuringMoveAnimation = false
     this.gameEndTrial = false

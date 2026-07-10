@@ -26,8 +26,9 @@ import {
 import { Color4 } from '@engine/basic'
 import { Animations, ButtonColors, Colors, Sizes, type ButtonColorPreset } from '@engine/constant'
 import { Game, type GameAxisViewFocusTarget, type GameExportFormat, type GameExportMode, type GameExportRequest, type GameRecordCursor, type GameRecordMoveFocusTarget, type GameRecordMoveSegment, type GameRecordRow, type GameStatusView, type GameToolbarButton } from '@engine/game'
-import { isModifierKeyEvent, isTextInputEvent } from '@engine/gameInput'
+import { isTextInputEvent } from '@engine/gameInput'
 import { GAME_STORAGE_KEY, type GameWorkspaceState } from '@engine/gameState'
+import { getGameKeybindingAction, type GameKeybindingAction } from '@engine/keybinding'
 import { Logger, type GameMessage } from '@engine/logger'
 import { getMainMenuLayout } from '@engine/mainMenuLayout'
 import { MatchClient, type MatchRoomStateSubscription, type MatchServerState, type StudyRoomStateSubscription } from '@engine/matchClient'
@@ -262,6 +263,17 @@ type LastRoomInput = LastRoom extends infer Room
   ? Room extends LastRoom ? Omit<Room, 'updatedAt'> : never
   : never
 const primaryButtonIds = new Set(['undo-move', 'deselect-piece', 'submit-moves', 'return-live-game'])
+const WINDOW_KEYBINDING_ACTIONS = [
+  'recordPrevious',
+  'recordNext',
+  'recordBlockStart',
+  'recordBlockEnd',
+  'cycleRecordVariation',
+  'toggleRecordPanel',
+  'togglePanelPicker',
+  'toggleClockPanel',
+] satisfies GameKeybindingAction[]
+const SETTINGS_KEYBINDING_ACTIONS = ['toggleSettings'] satisfies GameKeybindingAction[]
 const recordActionButtonIds = new Set(['export-5dpgn'])
 
 const { t, locale } = useI18n({ useScope: 'global' })
@@ -2632,10 +2644,16 @@ function getSharedRoomDialogTitle() {
 function isShortcutBlocked(e: KeyboardEvent): boolean {
   return (
     e.repeat
-    || isModifierKeyEvent(e)
     || isTextInputEvent(e)
     || dialogMode.value !== 'none'
   )
+}
+
+function getWindowKeybindingAction(
+  e: KeyboardEvent,
+  actions: readonly GameKeybindingAction[],
+): GameKeybindingAction | null {
+  return getGameKeybindingAction(e, gameSettings.keybindings, actions)
 }
 
 function handleWindowKeyDown(e: KeyboardEvent) {
@@ -2656,10 +2674,9 @@ function handleWindowKeyDown(e: KeyboardEvent) {
   }
 
   if (
-    e.key === '`'
+    getWindowKeybindingAction(e, SETTINGS_KEYBINDING_ACTIONS) === 'toggleSettings'
     && ! loading.value
     && ! e.repeat
-    && ! isModifierKeyEvent(e)
     && ! isTextInputEvent(e)
     && (dialogMode.value === 'none' || dialogMode.value === 'settings')
   ) {
@@ -2670,38 +2687,39 @@ function handleWindowKeyDown(e: KeyboardEvent) {
 
   if (! gameStarted.value || isShortcutBlocked(e)) return
 
-  switch (e.key) {
-    case '{':
+  const action = getWindowKeybindingAction(e, WINDOW_KEYBINDING_ACTIONS)
+  if (! action) return
+
+  switch (action) {
+    case 'recordBlockStart':
       e.preventDefault()
       jumpRecordBlockBoundary('start')
       break
-    case '}':
+    case 'recordBlockEnd':
       e.preventDefault()
       jumpRecordBlockBoundary('end')
       break
-    case '[':
+    case 'recordPrevious':
       e.preventDefault()
-      if (e.shiftKey) jumpRecordBlockBoundary('start')
-      else jumpRecordCursor(-1)
+      jumpRecordCursor(-1)
       break
-    case ']':
+    case 'recordNext':
       e.preventDefault()
-      if (e.shiftKey) jumpRecordBlockBoundary('end')
-      else jumpRecordCursor(1)
+      jumpRecordCursor(1)
       break
-    case '\\':
+    case 'cycleRecordVariation':
       e.preventDefault()
       cycleRecordCursorVariation()
       break
-    case 'r':
+    case 'toggleRecordPanel':
       e.preventDefault()
       toggleRecordPanel()
       break
-    case 'p':
+    case 'togglePanelPicker':
       e.preventDefault()
       togglePanelPicker()
       break
-    case 'c':
+    case 'toggleClockPanel':
       e.preventDefault()
       toggleClockPanel()
       break
@@ -2886,6 +2904,7 @@ function startLocalGame(
     onReturnToMainMenuRequest: returnToMainMenu,
     getUISoundVolume: () => gameSettings.uiVolume,
     getBellSoundVolume: () => gameSettings.bellVolume,
+    getKeybindings: () => gameSettings.keybindings,
     getRecordAuthorId,
     getRecordAuthorColor,
     getRecordGlyphColor,
@@ -2949,6 +2968,7 @@ function startStudyGame(
     onReturnToMainMenuRequest: returnToMainMenu,
     getUISoundVolume: () => gameSettings.uiVolume,
     getBellSoundVolume: () => gameSettings.bellVolume,
+    getKeybindings: () => gameSettings.keybindings,
     getRecordAuthorId,
     getRecordAuthorColor,
     getRecordGlyphColor,
@@ -3072,6 +3092,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     onReturnToMainMenuRequest: returnToMainMenu,
     getUISoundVolume: () => gameSettings.uiVolume,
     getBellSoundVolume: () => gameSettings.bellVolume,
+    getKeybindings: () => gameSettings.keybindings,
     getRecordAuthorId,
     getRecordAuthorColor,
     getRecordGlyphColor,

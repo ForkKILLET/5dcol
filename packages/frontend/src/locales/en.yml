@@ -157,7 +157,7 @@ dialog.helpText: |
   R: Toggle record panel
   [ / ]: Jump to previous / next cursor in the current record block
   Shift + [ / ]: Jump to start / end of the current record block
-  \: Enter or cycle the variation at the current record cursor
+  \: Enter or cycle the branch at the current record cursor
   C: Toggle clock
   U: Flip view
   `: Open settings
@@ -165,7 +165,7 @@ dialog.helpText: |
 
   Record
 
-  The Record panel shows live 5dpgn notation. Move segments can be clicked to focus their boards. Cursor tags mark exact positions between actions; use the jump icon or the record shortcuts to move through the current block, jump to block boundaries, or enter/cycle variations.
+  The Record panel shows live 5dpgn notation. Move segments can be clicked to focus their boards. Cursor tags mark exact positions between actions; use the jump icon or the record shortcuts to move through the current block, jump to block boundaries, or enter/cycle branches.
 
   Submitting from an earlier cursor follows the matching future action when one exists. If the move is different, it creates a purple branch instead of deleting later history. The delete-following-history icon trims future actions from a cursor. Pending moves are shown with a yellow marker, and spectator deductions or branches are shown with purple markers.
 
@@ -188,6 +188,7 @@ settings.tab.volume: "Volume"
 settings.tab.appearance: "Appearance"
 settings.tab.game: "Game"
 settings.tab.study: "Study"
+settings.tab.keyboard: "Keyboard"
 settings.tab.online: "Online"
 settings.tab.fiveDPGN: "5DPGN"
 settings.tabsLabel: "Settings sections"
@@ -222,6 +223,32 @@ settings.turnAlertNotification: "Notification"
 settings.squareMarkerDisplay: "Square marker"
 settings.squareMarkerDisplayHighlight: "Highlight"
 settings.squareMarkerDisplayCircle: "Circle"
+settings.keybindingPressKey: "Press key"
+settings.keybindingAdd: "Add keybinding"
+settings.keybindingDelete: "Delete keybinding"
+settings.keybindingReset: "Reset keybinding"
+settings.keybindingCaptureHint: "Press a key to bind it. Esc cancels. Focus a keybinding and press Backspace/Delete to remove it."
+settings.keybindingConflict: "Already used by {action}."
+settings.keybinding.undoMove: "Undo move"
+settings.keybinding.redoMove: "Redo move"
+settings.keybinding.undoAllMoves: "Undo all moves"
+settings.keybinding.submitMoves: "Submit moves"
+settings.keybinding.panUp: "Pan up"
+settings.keybinding.panLeft: "Pan left"
+settings.keybinding.panDown: "Pan down"
+settings.keybinding.panRight: "Pan right"
+settings.keybinding.zoomOut: "Zoom out"
+settings.keybinding.zoomIn: "Zoom in"
+settings.keybinding.toggleViewPlayer: "Toggle view"
+settings.keybinding.recordPrevious: "Record previous"
+settings.keybinding.recordNext: "Record next"
+settings.keybinding.recordBlockStart: "Record block start"
+settings.keybinding.recordBlockEnd: "Record block end"
+settings.keybinding.cycleRecordVariation: "Cycle branch"
+settings.keybinding.toggleRecordPanel: "Toggle record panel"
+settings.keybinding.togglePanelPicker: "Add panels"
+settings.keybinding.toggleClockPanel: "Toggle clock panel"
+settings.keybinding.toggleSettings: "Toggle settings"
 settings.fiveDPGN: "5dpgn"
 settings.fiveDPGNPieceSymbols: "Piece symbols"
 settings.fiveDPGNTravelMarkers: "Travel markers"

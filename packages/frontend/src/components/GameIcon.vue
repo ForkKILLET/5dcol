@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'axis-view' | 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'minimap' | 'panels' | 'plus' | 'record' | 'x'
+  name: 'axis-view' | 'branch' | 'chat' | 'chevron-down' | 'chevron-left' | 'chevron-right' | 'chevron-up' | 'clock' | 'comment' | 'current' | 'delete-future' | 'ellipsis' | 'exclamation' | 'flip' | 'globe' | 'glyph' | 'jump' | 'members' | 'minimap' | 'panels' | 'plus' | 'record' | 'reset' | 'x'
 }>()
 </script>
 
@@ -163,6 +163,10 @@ defineProps<{
     <template v-else-if="name === 'plus'">
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </template>
+    <template v-else-if="name === 'reset'">
+      <path d="M5 8V4h4" />
+      <path d="M5.6 8.2A7 7 0 1 1 5.2 15" />
     </template>
     <template v-else-if="name === 'x'">
       <path d="M6 6l12 12" />
