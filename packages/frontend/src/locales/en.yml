@@ -147,29 +147,25 @@ dialog.helpTitle: "Help"
 dialog.settingsTitle: "Settings"
 dialog.helpPlaceholder: ""
 dialog.helpText: |
-  Shortcuts
+  Play
 
-  Z / Backspace: Undo move
-  F / Enter: Submit moves or finish game
-  Right click: Deselect
-  WASD: Pan viewport
-  Q / E: Zoom out / in
-  R: Toggle record panel
-  [ / ]: Jump to previous / next cursor in the current record block
-  Shift + [ / ]: Jump to start / end of the current record block
-  \: Enter or cycle the branch at the current record cursor
-  C: Toggle clock
-  U: Flip view
-  `: Open settings
-  Esc: Open or close the in-game menu
+  Click a piece to inspect its move range, then click a target square to create a pending move. You can make multiple semimoves before submitting them with Submit; Undo and Redo only affect unsubmitted pending moves. Right click deselects. Keyboard controls can be viewed and customized in Settings > Keyboard.
 
   Record
 
-  The Record panel shows live 5dpgn notation. Move segments can be clicked to focus their boards. Cursor tags mark exact positions between actions; use the jump icon or the record shortcuts to move through the current block, jump to block boundaries, or enter/cycle branches.
+  The Record panel shows the current record tree. Click a move segment to focus its board; focusing from a board scrolls the Record panel to the matching move and highlights it. Cursors represent exact timepoints between actions, so submitting from a cursor either follows matching future history or creates a new branch.
 
-  Submitting from an earlier cursor follows the matching future action when one exists. If the move is different, it creates a purple branch instead of deleting later history. The delete-following-history icon trims future actions from a cursor. Pending moves are shown with a yellow marker, and spectator deductions or branches are shown with purple markers.
+  Branches
 
-  Use Import and Export in the Record panel to load or copy PGN/FEN. Export can output either the current linear line up to the cursor or the full record tree.
+  Purple blocks represent branches or spectator deductions. A branch is another path in the record tree, not an overwrite of later history; submitting a different move from an earlier cursor creates one. Use the delete-following-history icon on a cursor when you intentionally want to trim future actions.
+
+  Study tools
+
+  In Study, actions can have comments, moves can have glyphs, and boards can have square or arrow markers. In online studies, comments, markers, cursors, and member status use participant colors. The Members and Chat panels are used for member presence, following, and conversation.
+
+  Panels and settings
+
+  Record, Minimap, Axis view, Chat, Members, Clock, and other tools can be shown as panels and arranged in the custom layout. Import and Export live in the relevant create/export flows. 5DPGN options, appearance, game behavior, study display, and keyboard bindings can be adjusted in Settings.
 dialog.importTitle: "Import"
 dialog.exportTitle: "Export"
 dialog.shareRoomTitle: "Share room"
