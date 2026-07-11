@@ -372,6 +372,31 @@ describe('5DPGN import', () => {
     expect(GameState.findLegalAction(state)).not.toBeNull()
   })
 
+  it('keeps the first negative branch active and exports source boards when black has two active boards', () => {
+    const state = FiveDPGN.importGameState(`
+[Size "4x4"]
+[5DStudy_Version "1"]
+[5DStudy_GlyphTemplate "{nag: 140, glyph: '9', color: '#1c71d8'}"]
+
+[kp*p*p*/4/4/NBRU:-0:1:b]
+[nbru/4/4/KP*P*P*:0:1:w]
+
+1w. b2
+1b. (-0T1)d3 B>>(-0T1)b3
+*
+`)
+    const exported = FiveDPGN.exportGameState(state, {
+      includePieceSymbols: true,
+      includeTravelMarkers: true,
+      omitSingleMoveSourceBoards: true,
+      omitUnnecessarySourceSquares: true,
+    })
+
+    expect(Multiverse.getLine(state.multiverseCommitted, Multiverse.parseLine('-1'))).toBeTruthy()
+    expect(Multiverse.isInactiveLine(state.multiverseCommitted, Multiverse.parseLine('-1'))).toBe(false)
+    expect(exported).toContain('1b. (-0T1)d3 (0T1)B>>(-0T1)b3')
+  })
+
   it('requires an initial FEN position for non-standard board sizes', () => {
     expect(() => FiveDPGN.importGameState(`
 [Mode "5D"]

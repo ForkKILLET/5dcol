@@ -672,6 +672,7 @@ const formatActionInContext = (
 ): ActionFormatResult => {
   const moves: FormattedMove[] = []
   let nextMultiverse = multiverse
+  const sourceBoardTextOmittedForAction = shouldOmitSourceBoard(multiverse, player, options)
 
   for (let moveIndex = 0; moveIndex < action.moves.length; moveIndex ++) {
     const move = action.moves[moveIndex]!
@@ -679,7 +680,7 @@ const formatActionInContext = (
     const targetBoard = Multiverse.getBoard(nextMultiverse, move.to, player)
     const boardSize = targetBoard ? Board.getSize(targetBoard) : sourceBoard ? Board.getSize(sourceBoard) : STANDARD_BOARD_SIZE
     const piece = sourceBoard ? Board.getPiece(move.from, sourceBoard) : Piece.E
-    const sourceBoardText = shouldOmitSourceBoard(nextMultiverse, player, options)
+    const sourceBoardText = sourceBoardTextOmittedForAction
       ? ''
       : formatBoard(move.from)
     const baseContext = {
