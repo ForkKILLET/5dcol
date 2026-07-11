@@ -13,6 +13,7 @@ export interface RecordDisplayBlockNode {
   key: string
   blockKind: RecordBlockKind
   sectionKey: string
+  recordLineId?: number
   children: RecordDisplayNode[]
 }
 
@@ -67,6 +68,9 @@ export function buildRecordDisplayTree({
         }),
         blockKind,
         sectionKey,
+        ...(blockKind === 'branch' && row.recordLineId !== undefined
+          ? { recordLineId: row.recordLineId }
+          : {}),
         children: [],
       }
 

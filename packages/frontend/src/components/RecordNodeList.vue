@@ -1,22 +1,31 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { GameRecordRow } from '@engine/game'
-import type { RecordDisplayNode } from '../engine/recordDisplayTree'
+import type { RecordDisplayBlockNode, RecordDisplayNode } from '../engine/recordDisplayTree'
+import GameButton from './GameButton.vue'
+import GameIcon from './GameIcon.vue'
 
 defineOptions({ name: 'RecordNodeList' })
 
-defineProps<{
+const props = defineProps<{
   nodes: RecordDisplayNode[]
+  activeBranchLineId: number | null
+  collapsedBranchLineIds: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
   beforeEnter: [element: Element]
   enter: [element: Element]
   beforeLeave: [element: Element]
+  toggleBranchMenu: [recordLineId: number]
+  toggleBranchCollapsed: [recordLineId: number]
 }>()
 
 defineSlots<{
   row(props: { row: GameRecordRow }): unknown
 }>()
+
+const { t } = useI18n({ useScope: 'global' })
 
 function getNodeClasses(node: RecordDisplayNode) {
   return {
@@ -25,6 +34,61 @@ function getNodeClasses(node: RecordDisplayNode) {
     'record-node--block': node.kind === 'block',
     [`record-node--block-${node.kind === 'block' ? node.blockKind : 'none'}`]: node.kind === 'block',
   }
+}
+
+function isBranchBlock(node: RecordDisplayNode): node is RecordDisplayBlockNode & { recordLineId: number } {
+  return node.kind === 'block'
+    && node.blockKind === 'branch'
+    && node.recordLineId !== undefined
+}
+
+function isBranchMenuOpen(node: RecordDisplayNode): boolean {
+  return isBranchBlock(node) && props.activeBranchLineId === node.recordLineId
+}
+
+function isBranchCollapsed(node: RecordDisplayNode): boolean {
+  return isBranchBlock(node) && props.collapsedBranchLineIds.has(node.recordLineId)
+}
+
+function shouldShowBranchToolbar(node: RecordDisplayNode): boolean {
+  return isBranchBlock(node) && (isBranchMenuOpen(node) || isBranchCollapsed(node))
+}
+
+function toggleBranchMenu(node: RecordDisplayNode) {
+  if (isBranchBlock(node)) emit('toggleBranchMenu', node.recordLineId)
+}
+
+function toggleBranchCollapsed(node: RecordDisplayNode) {
+  if (isBranchBlock(node)) emit('toggleBranchCollapsed', node.recordLineId)
+}
+
+function closeBranchMenu(node: RecordDisplayNode) {
+  if (isBranchMenuOpen(node) && isBranchBlock(node)) emit('toggleBranchMenu', node.recordLineId)
+}
+
+function getBranchActionCount(node: RecordDisplayBlockNode): number {
+  return node.children.filter(child => (
+    child.kind === 'row'
+    && child.row.kind === 'action'
+    && child.row.recordLineId === node.recordLineId
+  )).length
+}
+
+function branchContainsCurrentCursor(node: RecordDisplayBlockNode): boolean {
+  return node.children.some(child => {
+    if (child.kind === 'row') return child.row.kind === 'cursor' && child.row.current === true
+    return branchContainsCurrentCursor(child)
+  })
+}
+
+function setBranchTransitionHeight(element: Element) {
+  if (! (element instanceof HTMLElement)) return
+
+  const previousHeight = element.style.height
+  element.style.height = 'auto'
+  const height = element.getBoundingClientRect().height
+  element.style.height = previousHeight
+  element.style.setProperty('--record-branch-transition-height', `${Math.max(0, height)}px`)
 }
 </script>
 
@@ -43,26 +107,87 @@ function getNodeClasses(node: RecordDisplayNode) {
       class="record-node"
       :class="getNodeClasses(node)"
       :data-record-node-key="node.key"
+      :data-record-branch-line-id="isBranchBlock(node) ? node.recordLineId : undefined"
     >
       <slot
         v-if="node.kind === 'row'"
         name="row"
         :row="node.row"
       />
-      <RecordNodeList
-        v-else
-        :nodes="node.children"
-        @before-enter="emit('beforeEnter', $event)"
-        @enter="emit('enter', $event)"
-        @before-leave="emit('beforeLeave', $event)"
-      >
-        <template #row="{ row }">
-          <slot
-            name="row"
-            :row="row"
-          />
-        </template>
-      </RecordNodeList>
+      <template v-else>
+        <button
+          v-if="isBranchBlock(node)"
+          class="record-branch-rail"
+          :class="{ 'record-branch-rail--active': isBranchMenuOpen(node) }"
+          type="button"
+          :title="t('record.branchActions')"
+          :aria-label="t('record.branchActions')"
+          :aria-expanded="isBranchMenuOpen(node)"
+          @click.stop="toggleBranchMenu(node)"
+          @keydown.esc.prevent.stop="closeBranchMenu(node)"
+        />
+        <Transition
+          name="record-branch-toolbar-transition"
+          @before-enter="setBranchTransitionHeight"
+          @enter="setBranchTransitionHeight"
+          @before-leave="setBranchTransitionHeight"
+        >
+          <div
+            v-if="shouldShowBranchToolbar(node)"
+            class="record-branch-toolbar"
+            :data-current-record-cursor="isBranchCollapsed(node) && branchContainsCurrentCursor(node) ? 'true' : undefined"
+            @keydown.esc.prevent.stop="closeBranchMenu(node)"
+          >
+            <span class="record-branch-toolbar-label">
+              <GameIcon name="branch" />
+              <span>{{ t('record.branchSummary', { actions: getBranchActionCount(node) }) }}</span>
+              <span
+                v-if="branchContainsCurrentCursor(node)"
+                class="record-branch-current"
+                :title="t('record.currentAction')"
+                :aria-label="t('record.currentAction')"
+              >
+                <GameIcon name="current" />
+              </span>
+            </span>
+            <GameButton
+              size="tiny"
+              shape="circle"
+              :pressed-indicator="false"
+              :title="t(isBranchCollapsed(node) ? 'record.expandBranch' : 'record.collapseBranch')"
+              :aria-label="t(isBranchCollapsed(node) ? 'record.expandBranch' : 'record.collapseBranch')"
+              @click.stop="toggleBranchCollapsed(node)"
+            >
+              <GameIcon :name="isBranchCollapsed(node) ? 'chevron-down' : 'chevron-up'" />
+            </GameButton>
+          </div>
+        </Transition>
+        <Transition
+          name="record-branch-content-transition"
+          @before-enter="setBranchTransitionHeight"
+          @enter="setBranchTransitionHeight"
+          @before-leave="setBranchTransitionHeight"
+        >
+          <RecordNodeList
+            v-if="!isBranchCollapsed(node)"
+            :nodes="node.children"
+            :active-branch-line-id="activeBranchLineId"
+            :collapsed-branch-line-ids="collapsedBranchLineIds"
+            @before-enter="emit('beforeEnter', $event)"
+            @enter="emit('enter', $event)"
+            @before-leave="emit('beforeLeave', $event)"
+            @toggle-branch-menu="emit('toggleBranchMenu', $event)"
+            @toggle-branch-collapsed="emit('toggleBranchCollapsed', $event)"
+          >
+            <template #row="{ row }">
+              <slot
+                name="row"
+                :row="row"
+              />
+            </template>
+          </RecordNodeList>
+        </Transition>
+      </template>
     </div>
   </TransitionGroup>
 </template>
@@ -124,6 +249,107 @@ function getNodeClasses(node: RecordDisplayNode) {
   padding-left: var(--record-section-padding-left);
 }
 
+.record-branch-rail {
+  position: absolute;
+  z-index: var(--z-content-base);
+  top: 0;
+  bottom: 0;
+  left: calc((var(--record-block-border-width) - var(--record-branch-rail-hit-width)) / 2);
+  width: var(--record-branch-rail-hit-width);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.record-branch-rail::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: calc(var(--record-block-border-width) + 2px);
+  border-radius: calc((var(--record-block-border-width) + 2px) / 2);
+  background: var(--main-arrow-fill-color);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 140ms ease;
+}
+
+.record-branch-rail:hover::before,
+.record-branch-rail:focus-visible::before,
+.record-branch-rail--active::before {
+  opacity: 1;
+}
+
+.record-branch-toolbar {
+  position: relative;
+  z-index: var(--z-content-panel);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--button-content-gap);
+  box-sizing: border-box;
+  min-width: var(--record-action-min-width);
+  padding: 0 0 calc(var(--record-table-row-gap) * 0.75);
+  color: var(--main-arrow-fill-color);
+}
+
+.record-branch-toolbar-label {
+  --button-icon-size: var(--button-tiny-icon-size);
+
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--button-content-gap) * 0.55);
+  min-width: 0;
+  font-size: var(--button-tiny-font-size);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.record-branch-current {
+  --button-icon-size: var(--button-tiny-icon-size);
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--button-tiny-height);
+  height: var(--button-tiny-height);
+  color: var(--main-arrow-fill-color);
+}
+
+.record-branch-toolbar-transition-enter-active,
+.record-branch-toolbar-transition-leave-active,
+.record-branch-content-transition-enter-active,
+.record-branch-content-transition-leave-active {
+  height: var(--record-branch-transition-height);
+  overflow: hidden;
+  transition:
+    height 240ms ease,
+    opacity 180ms ease,
+    transform 240ms ease;
+}
+
+.record-branch-toolbar-transition-enter-from,
+.record-branch-toolbar-transition-leave-to,
+.record-branch-content-transition-enter-from,
+.record-branch-content-transition-leave-to {
+  height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.record-branch-toolbar-transition-enter-to,
+.record-branch-toolbar-transition-leave-from,
+.record-branch-content-transition-enter-to,
+.record-branch-content-transition-leave-from {
+  height: var(--record-branch-transition-height);
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .record-node::before {
   position: absolute;
   z-index: var(--z-content-front);
@@ -135,6 +361,7 @@ function getNodeClasses(node: RecordDisplayNode) {
   background: var(--record-block-line-color, transparent);
   content: "";
   opacity: 0;
+  pointer-events: none;
   transition:
     background-color 420ms ease,
     opacity 320ms ease;

@@ -111,6 +111,8 @@ const customGlyphDraft = ref<CustomRecordGlyphTemplate | null>(null)
 const editingCustomGlyphKey = ref<string | null>(null)
 const confirmingDeleteFutureCursorKey = ref<string | null>(null)
 const activeHoverCursorKey = ref<string | null>(null)
+const activeBranchLineId = ref<number | null>(null)
+const collapsedBranchLineIds = ref<ReadonlySet<number>>(new Set())
 const customGlyphTemplates = computed({
   get: () => props.customGlyphTemplates,
   set: value => emit('updateCustomGlyphTemplates', uniqueRecordGlyphTemplates(value)),
@@ -152,7 +154,10 @@ const recordNodes = computed(() => buildRecordDisplayTree({
   pendingBlockKey: pendingBlockKey.value,
   branchBlockKeyAliases: branchBlockKeyAliases.value,
 }))
-const cursorAdjacencyByKey = computed(() => getCursorAdjacencyByKey(recordNodes.value))
+const cursorAdjacencyByKey = computed(() => getCursorAdjacencyByKey(
+  recordNodes.value,
+  collapsedBranchLineIds.value,
+))
 const deleteFuturePreviewKeys = computed(() => (
   confirmingDeleteFutureCursorKey.value
     ? getDeleteFuturePreviewKeys(recordNodes.value, confirmingDeleteFutureCursorKey.value)
@@ -182,7 +187,8 @@ const customGlyphDraftColor = computed({
     })
   },
 })
-watch(currentCursorKey, async () => {
+watch(currentCursorKey, async (key) => {
+  expandBranchesContainingRecordRow(key)
   await nextTick()
   scrollCurrentCursorIntoView()
 }, { immediate: true })
@@ -201,12 +207,31 @@ watch(() => props.rows, (rows) => {
     cancelPendingHoverCursorClear()
     activeHoverCursorKey.value = null
   }
+
+  const branchLineIds = new Set(rows
+    .filter(row => (row.branchDepth ?? 0) > 0 && row.recordLineId !== undefined)
+    .map(row => row.recordLineId!))
+  if (activeBranchLineId.value !== null && ! branchLineIds.has(activeBranchLineId.value)) {
+    activeBranchLineId.value = null
+  }
+  const retainedCollapsedLineIds = new Set(
+    [...collapsedBranchLineIds.value].filter(lineId => branchLineIds.has(lineId)),
+  )
+  if (retainedCollapsedLineIds.size !== collapsedBranchLineIds.value.size) {
+    collapsedBranchLineIds.value = retainedCollapsedLineIds
+  }
 })
 
 watch(focusedMoveKey, async () => {
+  expandBranchesContainingFocusedMove()
   await nextTick()
   scrollFocusedMoveIntoView()
 }, { immediate: true })
+
+watch(collapsedBranchLineIds, async () => {
+  await nextTick()
+  scrollCurrentCursorIntoView()
+})
 
 watch(() => props.rows, (rows, previousRows) => {
   const currentPending = rows.find(isPendingActionRow)
@@ -494,6 +519,64 @@ function getRecordRowKey(row: GameRecordRow) {
   return row.recordKey ?? `${row.serial}-${row.index}`
 }
 
+function toggleBranchMenu(recordLineId: number) {
+  emit('uiSound')
+  activeBranchLineId.value = activeBranchLineId.value === recordLineId ? null : recordLineId
+}
+
+function toggleBranchCollapsed(recordLineId: number) {
+  emit('uiSound')
+  const next = new Set(collapsedBranchLineIds.value)
+  if (next.has(recordLineId)) next.delete(recordLineId)
+  else next.add(recordLineId)
+  collapsedBranchLineIds.value = next
+  activeBranchLineId.value = recordLineId
+}
+
+function expandBranchesContainingRecordRow(rowKey: string) {
+  if (! rowKey || collapsedBranchLineIds.value.size === 0) return
+
+  const containingLineIds = findBranchLineIdsContainingRow(recordNodes.value, rowKey)
+  if (! containingLineIds || containingLineIds.length === 0) return
+
+  const next = new Set(collapsedBranchLineIds.value)
+  containingLineIds.forEach(lineId => next.delete(lineId))
+  if (next.size !== collapsedBranchLineIds.value.size) collapsedBranchLineIds.value = next
+}
+
+function expandBranchesContainingFocusedMove() {
+  const focusedMove = props.focusedMove
+  if (! focusedMove) return
+
+  const row = props.rows.find(candidate => (
+    isRecordActionRow(candidate)
+    && candidate.recordLineId === focusedMove.recordLineId
+    && candidate.recordActionIndex === focusedMove.recordActionIndex
+  ))
+  if (row) expandBranchesContainingRecordRow(getRecordRowKey(row))
+}
+
+function findBranchLineIdsContainingRow(
+  nodes: RecordDisplayNode[],
+  rowKey: string,
+  ancestors: number[] = [],
+): number[] | null {
+  for (const node of nodes) {
+    if (node.kind === 'row') {
+      if (node.key === rowKey) return ancestors
+      continue
+    }
+
+    const nextAncestors = node.blockKind === 'branch' && node.recordLineId !== undefined
+      ? [...ancestors, node.recordLineId]
+      : ancestors
+    const result = findBranchLineIdsContainingRow(node.children, rowKey, nextAncestors)
+    if (result) return result
+  }
+
+  return null
+}
+
 function getDeleteFuturePreviewKeys(nodes: RecordDisplayNode[], cursorKey: string): Set<string> {
   const keys = new Set<string>()
   collectDeleteFuturePreviewKeys(nodes, cursorKey, keys)
@@ -529,9 +612,12 @@ function collectRecordNodeKeys(node: RecordDisplayNode, keys: Set<string>) {
   node.children.forEach(child => collectRecordNodeKeys(child, keys))
 }
 
-function getCursorAdjacencyByKey(nodes: RecordDisplayNode[]) {
+function getCursorAdjacencyByKey(
+  nodes: RecordDisplayNode[],
+  collapsedLineIds: ReadonlySet<number>,
+) {
   const rows: Array<{ key: string, row: GameRecordRow }> = []
-  collectVisibleRecordRows(nodes, rows)
+  collectVisibleRecordRows(nodes, rows, collapsedLineIds)
 
   const adjacency = new Map<string, { before: boolean, after: boolean }>()
   rows.forEach((entry, index) => {
@@ -551,6 +637,7 @@ function getCursorAdjacencyByKey(nodes: RecordDisplayNode[]) {
 function collectVisibleRecordRows(
   nodes: RecordDisplayNode[],
   rows: Array<{ key: string, row: GameRecordRow }>,
+  collapsedLineIds: ReadonlySet<number>,
 ) {
   nodes.forEach((node) => {
     if (node.kind === 'row') {
@@ -558,7 +645,14 @@ function collectVisibleRecordRows(
       return
     }
 
-    collectVisibleRecordRows(node.children, rows)
+    if (
+      node.blockKind === 'branch'
+      && node.recordLineId !== undefined
+      && collapsedLineIds.has(node.recordLineId)
+    ) {
+      return
+    }
+    collectVisibleRecordRows(node.children, rows, collapsedLineIds)
   })
 }
 
@@ -1100,6 +1194,8 @@ onBeforeUnmount(() => {
       <RecordNodeList
         v-if="rows.length > 0"
         :nodes="recordNodes"
+        :active-branch-line-id="activeBranchLineId"
+        :collapsed-branch-line-ids="collapsedBranchLineIds"
         class="record-table"
         :class="{
           'record-table--pending-submit-append': pendingSubmitTransitionKind === 'append',
@@ -1110,6 +1206,8 @@ onBeforeUnmount(() => {
         @before-enter="setRecordNodeTransitionHeight"
         @enter="setRecordNodeTransitionHeight"
         @before-leave="setRecordNodeTransitionHeight"
+        @toggle-branch-menu="toggleBranchMenu"
+        @toggle-branch-collapsed="toggleBranchCollapsed"
       >
         <template #row="{ row }">
         <div
@@ -1511,6 +1609,7 @@ onBeforeUnmount(() => {
 
 .record-table {
   --record-section-padding-left: calc(var(--button-content-gap) * 1.35);
+  --record-branch-rail-hit-width: calc(var(--record-section-padding-left) * 0.72);
   --record-row-inline-padding: var(--button-content-gap);
   --record-guide-start-offset: var(--record-row-inline-padding);
   --record-table-row-gap: calc(var(--button-content-gap) * 1.05);
