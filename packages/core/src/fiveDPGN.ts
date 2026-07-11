@@ -1457,12 +1457,21 @@ const parseBoardPattern = (content: string): BoardPattern => {
     const [linePart, timePart] = normalized.split('T')
     if (timePart === undefined || timePart === '') throw new Error(`Invalid 5dpgn board "(${content})"`)
     return {
-      ...(linePart ? { l: parseSignedInteger(linePart, content) } : {}),
+      ...(linePart ? { l: parseLineIndex(linePart, content) } : {}),
       t: parseSignedInteger(timePart, content),
     }
   }
   if (normalized === '') throw new Error(`Invalid 5dpgn board "(${content})"`)
-  return { l: parseSignedInteger(normalized, content) }
+  return { l: parseLineIndex(normalized, content) }
+}
+
+const parseLineIndex = (value: string, context: string): number => {
+  try {
+    return Multiverse.parseLine(value)
+  }
+  catch {
+    throw new Error(`Invalid 5dpgn integer "${context}"`)
+  }
 }
 
 const parseSignedInteger = (value: string, context: string): number => {
@@ -1629,7 +1638,7 @@ const parseFENBlock = (content: string, boardSize: BoardSize): FENBoardBlock => 
   if (! match) throw new Error(`Invalid 5DFEN block "[${content}]"`)
   return {
     board: parseBoardFEN(match[1]!, boardSize),
-    l: Number(match[2]),
+    l: Multiverse.parseLine(match[2]!),
     t: Number(match[3]),
     player: match[4] === 'w' ? Player.W : Player.B,
   }
@@ -2400,7 +2409,7 @@ const formatOptionalString = <Key extends string>(
 )
 
 const formatMarkerCoord = (coord: Coord, m: number, boardSize: BoardSize): string => (
-  `(${coord.l}M${m})${formatSquare(coord, boardSize)}`
+  `(${Multiverse.formatLine(coord.l)}M${m})${formatSquare(coord, boardSize)}`
 )
 
 const parseMarkerCoord = (
@@ -2410,7 +2419,7 @@ const parseMarkerCoord = (
   if (value === null) return null
   const match = /^\(([+-]?\d+)M([+-]?\d+)\)([a-z])([1-9]\d*)$/i.exec(value)
   if (! match) return null
-  const l = Number(match[1])
+  const l = Multiverse.parseLine(match[1]!)
   const m = Number(match[2])
   const player = m % 2 === Player.B ? Player.B : Player.W
   const file = match[3]!.toLowerCase()

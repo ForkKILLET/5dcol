@@ -27,16 +27,17 @@ const createBoardRangeMultiverse = (
 ) => {
   const lineOffsets = Array.from(
     { length: lMax - lMin + 1 },
-    (_, index) => Multiverse.lineToIndexOffset(lMin + index),
+    (_, index) => Multiverse.parseLine(String(lMin + index)),
   )
   const lOffset = Math.max(0, -Math.min(...lineOffsets))
   const lines = []
   for (let l = lMin; l <= lMax; l += 1) {
+    const line = Multiverse.parseLine(String(l))
     const boards: BoardState[] = []
     for (const t of turns) {
       boards[t * 2 + player] = createEmptyBoard(8, 8)
     }
-    lines[Multiverse.lineToIndexOffset(l) + lOffset] = {
+    lines[line + lOffset] = {
       boards,
       mStart: Math.min(...turns.map(t => t * 2 + player)),
     }
@@ -57,7 +58,7 @@ const getBoard = (
   t: number,
   player = Player.W,
 ): BoardState => {
-  const board = Multiverse.getBoard(multiverse, { l, t }, player)
+  const board = Multiverse.getBoard(multiverse, { l: Multiverse.parseLine(String(l)), t }, player)
   if (! board) throw new Error(`Missing test board (${l}T${t})`)
   return board
 }
@@ -181,7 +182,7 @@ describe('Multiverse.getMoveTargets', () => {
 
     const targets = Multiverse.getMoveTargets(multiverse, { l: 0, t: 5, x: 3, y: 3 }, Player.W)
 
-    expect(targets).toContainEqual({ l: -9, t: 5, x: 3, y: 3 })
+    expect(targets).toContainEqual({ l: Multiverse.parseLine('-9'), t: 5, x: 3, y: 3 })
   })
 
   it('allows diagonal TL sliding moves longer than seven boards', () => {
@@ -190,7 +191,7 @@ describe('Multiverse.getMoveTargets', () => {
 
     const targets = Multiverse.getMoveTargets(multiverse, { l: 0, t: 10, x: 3, y: 3 }, Player.W)
 
-    expect(targets).toContainEqual({ l: -8, t: 2, x: 3, y: 3 })
+    expect(targets).toContainEqual({ l: Multiverse.parseLine('-8'), t: 2, x: 3, y: 3 })
   })
 
   it('treats positive and negative zero timelines as adjacent when both exist', () => {
@@ -207,7 +208,7 @@ describe('Multiverse.getMoveTargets', () => {
     const targets = Multiverse.getMoveTargets(state.initialMultiverse, { l: 0, t: 1, x: 0, y: 3 }, Player.W)
 
     expect(targets.some(target => (
-      Multiverse.isSameLine(target.l, -0)
+      Multiverse.isSameLine(target.l, Multiverse.parseLine('-0'))
       && target.t === 1
       && target.x === 0
       && target.y === 3
@@ -352,7 +353,7 @@ describe('5DPGN import', () => {
 `)
 
     const positiveZeroBoard = Multiverse.getBoard(state.initialMultiverse, { l: 0, t: 1 }, Player.W)
-    const negativeZeroBoard = Multiverse.getBoard(state.initialMultiverse, { l: -0, t: 1 }, Player.B)
+    const negativeZeroBoard = Multiverse.getBoard(state.initialMultiverse, { l: Multiverse.parseLine('-0'), t: 1 }, Player.B)
     const lines = [...Multiverse.getLineEntries(state.initialMultiverse)]
       .filter(([, line]) => Boolean(line))
       .map(([l]) => Multiverse.formatLine(l))
@@ -362,6 +363,11 @@ describe('5DPGN import', () => {
     expect(negativeZeroBoard).not.toBeNull()
     expect(positiveZeroBoard && Board.getPiece({ x: 0, y: 3 }, positiveZeroBoard)).toBe(Piece.KW)
     expect(negativeZeroBoard && Board.getPiece({ x: 0, y: 0 }, negativeZeroBoard)).toBe(Piece.KB)
+    expect(Multiverse.parseLine('-0')).toBe(-1)
+    expect(Multiverse.formatLineLabel(0)).toBe('+0L')
+    expect(Multiverse.formatLineLabel(Multiverse.parseLine('-0'))).toBe('-0L')
+    expect(Multiverse.getLinePlayerForMultiverse(state.initialMultiverse, 0)).toBe(Player.W)
+    expect(Multiverse.getLinePlayerForMultiverse(state.initialMultiverse, Multiverse.parseLine('-0'))).toBe(Player.B)
     expect(FiveDPGN.exportFEN(state.initialMultiverse)).toContain(':-0:1:b')
     expect(GameState.findLegalAction(state)).not.toBeNull()
   })
@@ -465,7 +471,7 @@ describe('5DPGN import', () => {
     expect(state.actions).toHaveLength(3)
     expect(state.actions[1]?.moves[0]?.from).toMatchObject({ l: 0, t: 1, x: 6, y: 0 })
     expect(state.actions[1]?.moves[0]?.to).toMatchObject({ l: 0, t: 0, x: 6, y: 2 })
-    expect(state.actions[2]?.moves[0]?.from.l).toBe(-1)
+    expect(state.actions[2]?.moves[0]?.from.l).toBe(Multiverse.parseLine('-1'))
   })
 })
 

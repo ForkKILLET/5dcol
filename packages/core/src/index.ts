@@ -94,44 +94,60 @@ export interface TimelineStatus {
 }
 
 export namespace Multiverse {
-  export const isNegativeZeroLine = (l: number): boolean => Object.is(l, -0)
+  export const BLACK_ZERO_LINE = -1
 
-  export const isSameLine = (p: number, q: number): boolean => Object.is(p, q)
-
-  export const lineToIndexOffset = (l: number): number => (
-    l < 0 || isNegativeZeroLine(l) ? l - 1 : l
-  )
-
-  export const indexOffsetToLine = (offset: number): number => {
-    if (offset === -1) return -0
-    if (offset < -1) return offset + 1
-    return offset
+  export const normalizeLine = (l: number): number => {
+    if (l === 0 && 1 / l === Number.NEGATIVE_INFINITY) {
+      throw new Error('Negative zero is not a valid internal line index')
+    }
+    return l
   }
 
+  export const isSameLine = (p: number, q: number): boolean => (
+    normalizeLine(p) === normalizeLine(q)
+  )
+
+  export const lineToIndexOffset = (l: number): number => normalizeLine(l)
+
+  export const indexOffsetToLine = (offset: number): number => offset
+
   export const lineKey = (l: number): string => (
-    isNegativeZeroLine(l) ? '-0' : String(l)
+    String(normalizeLine(l))
   )
 
   export const compareLines = (p: number, q: number): number => (
-    lineToIndexOffset(p) - lineToIndexOffset(q)
+    normalizeLine(p) - normalizeLine(q)
   )
 
   export const addLineDelta = (multiverse: Multiverse, l: number, delta: number): number => {
-    const offset = lineToIndexOffset(l)
+    const offset = normalizeLine(l)
     let target = offset + delta
     if (! hasNegativeZeroLine(multiverse)) {
-      if (delta < 0 && offset >= 0 && target <= -1) target -= 1
-      else if (delta > 0 && offset <= -2 && target >= -1) target += 1
+      if (delta < 0 && offset >= 0 && target <= BLACK_ZERO_LINE) target -= 1
+      else if (delta > 0 && offset < BLACK_ZERO_LINE && target >= BLACK_ZERO_LINE) target += 1
     }
-    return indexOffsetToLine(target)
+    return target
   }
 
   export const formatLine = (l: number): string => (
-    isNegativeZeroLine(l) ? '-0' : String(l)
+    normalizeLine(l) === BLACK_ZERO_LINE
+      ? '-0'
+      : String(normalizeLine(l) < BLACK_ZERO_LINE ? normalizeLine(l) + 1 : normalizeLine(l))
+  )
+
+  export const parseLine = (value: string): number => {
+    if (! /^[+-]?\d+$/.test(value)) throw new Error(`Invalid line "${value}"`)
+    if (/^-0+$/.test(value)) return BLACK_ZERO_LINE
+    const displayLine = Number(value)
+    return displayLine < 0 ? displayLine - 1 : displayLine
+  }
+
+  export const formatLineLabel = (l: number): string => (
+    `${normalizeLine(l) >= 0 ? '+' : ''}${formatLine(l)}L`
   )
 
   export const hasNegativeZeroLine = (multiverse: Multiverse): boolean => (
-    Boolean(multiverse.lines[multiverse.lOffset - 1])
+    Boolean(multiverse.lines[multiverse.lOffset + BLACK_ZERO_LINE])
   )
 
   export const lineFromSideRank = (
@@ -140,22 +156,22 @@ export namespace Multiverse {
     rank: number,
   ): number => {
     if (rank === 0) return 0
-    if (player === Player.W) return rank
-    return hasNegativeZeroLine(multiverse) ? -(rank - 1) : -rank
+    if (player === Player.W) return hasNegativeZeroLine(multiverse) ? rank - 1 : rank
+    return hasNegativeZeroLine(multiverse) ? -rank : -(rank + 1)
   }
 
   const getLineSideRank = (
     multiverse: Multiverse,
     l: number,
   ): number => {
-    if (l > 0) return l
-    if (isNegativeZeroLine(l)) return 1
-    if (l < 0) return -l + (hasNegativeZeroLine(multiverse) ? 1 : 0)
-    return 0
+    const line = normalizeLine(l)
+    if (line > 0) return line + (hasNegativeZeroLine(multiverse) ? 1 : 0)
+    if (line === 0) return hasNegativeZeroLine(multiverse) ? 1 : 0
+    return hasNegativeZeroLine(multiverse) ? -line : -line - 1
   }
 
   const getLineStorageIndex = (multiverse: Multiverse, l: number): number => (
-    multiverse.lOffset + lineToIndexOffset(l)
+    multiverse.lOffset + normalizeLine(l)
   )
 
   export const expand = (multiverse: Multiverse) => {
@@ -236,22 +252,29 @@ export namespace Multiverse {
     let count = 0
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
-      if (Multiverse.getLinePlayer(l) === player) count += 1
+      if (Multiverse.getLinePlayerForMultiverse(multiverse, l) === player) count += 1
     }
     return count
   }
 
   export const getLinePlayer = (l: number): Player | null => {
-    if (l > 0) return Player.W
-    if (l < 0 || isNegativeZeroLine(l)) return Player.B
+    const line = normalizeLine(l)
+    if (line > 0) return Player.W
+    if (line < 0) return Player.B
     return null
+  }
+
+  export const getLinePlayerForMultiverse = (multiverse: Multiverse, l: number): Player | null => {
+    const line = normalizeLine(l)
+    if (line === 0 && hasNegativeZeroLine(multiverse)) return Player.W
+    return getLinePlayer(line)
   }
 
   export const isInactiveLine = (
     multiverse: Multiverse,
     l: number,
   ): boolean => {
-    const player = Multiverse.getLinePlayer(l)
+    const player = Multiverse.getLinePlayerForMultiverse(multiverse, l)
     if (player === null) return false
 
     const ownCount = Multiverse.getCreatedTimelineCount(multiverse, player)

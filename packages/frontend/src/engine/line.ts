@@ -23,7 +23,7 @@ export const getLineColors = (multiverse: Multiverse, l: number): LineColors => 
     }
   }
 
-  switch (Multiverse.getLinePlayer(l)) {
+  switch (Multiverse.getLinePlayerForMultiverse(multiverse, l)) {
     case Player.W:
       return {
         border: Colors.InactiveLineWhiteBorder,

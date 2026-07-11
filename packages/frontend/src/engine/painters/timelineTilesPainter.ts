@@ -207,6 +207,6 @@ export class TimelineTilesPainter {
   }
 
   private formatLineLabel(l: number): string {
-    return `${l > 0 ? '+' : ''}${Multiverse.formatLine(l)}L`
+    return Multiverse.formatLineLabel(l)
   }
 }
