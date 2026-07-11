@@ -168,14 +168,12 @@ function trapTab(e: KeyboardEvent) {
   max-height: max(160px, calc(var(--app-height) - var(--button-top) * 2));
   overflow: auto;
   padding: calc(var(--button-content-gap) * 5);
-  padding-right: calc(var(--button-content-gap) * 5 + var(--scrollbar-content-gap));
   border: var(--button-border) solid var(--menu-card-border-color);
   border-radius: 8px;
   background: var(--menu-card-fill-color);
   box-shadow: var(--button-shadow-offset) var(--button-shadow-offset) 0 var(--button-shadow-color);
   outline: none;
   pointer-events: auto;
-  scrollbar-gutter: stable;
 }
 
 .dialog-card--export {

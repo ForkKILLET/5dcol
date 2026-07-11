@@ -2220,7 +2220,8 @@ export class Game extends Disposable(Empty) {
       ...(studyToolbar ? [] : [{
         id: 'forfeit-game',
         disabled: this.ctx.canForfeitGame?.() === false,
-        colorPreset: getPlayerButtonColor(this.player),
+        colorPreset: ButtonColors.Red,
+        hoverColorPreset: ButtonColors.Red,
         turnPlayer: this.player,
         labelKey: 'button.forfeit',
         piece: null,

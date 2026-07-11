@@ -9,6 +9,7 @@ export interface ButtonConfig {
   id: string
   disabled: boolean
   colorPreset: ButtonColorPreset
+  hoverColorPreset?: ButtonColorPreset
   turnPlayer: Player
   labelKey: TranslationKey
   labelParams?: TranslationParams
@@ -53,7 +54,7 @@ export const toToolbarButtonView = (button: ButtonConfig): GameToolbarButton => 
   const colors = button.disabled
     ? (button.turnPlayer === Player.W ? ButtonColors.DisabledWhite : ButtonColors.DisabledBlack)
     : button.colorPreset
-  const hoverColors = getGreenButtonColors(button.turnPlayer)
+  const hoverColors = button.hoverColorPreset ?? getGreenButtonColors(button.turnPlayer)
   return {
     id: button.id,
     disabled: button.disabled,

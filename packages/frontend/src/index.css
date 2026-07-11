@@ -17,8 +17,6 @@
 .room-manage-panel__body::after,
 .online-server-settings-panel__list::after,
 .game-panel-picker::after,
-.dialog-card::after,
-.secondary-menu-card::after,
 .chat-message-list::after,
 .members-list::after {
   flex: 0 0 var(--scrollbar-content-bottom-gap);
