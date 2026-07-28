@@ -1,5 +1,9 @@
 import { reactive, ref, watch, type Ref, type UnwrapNestedRefs } from 'vue'
 import { getLocalStorage } from '@engine/gameState'
+import {
+  isRecoveryStorageBypassed,
+  reportStorageReadFailure,
+} from './recovery'
 
 interface StorageRefOptions<T> {
   deep?: boolean
@@ -61,12 +65,15 @@ function readStorageValue<T>(
   fallback: T,
   parse: ((raw: string) => T) | undefined,
 ): T {
+  if (isRecoveryStorageBypassed(key)) return cloneFallback(fallback)
+
   try {
     const raw = getLocalStorage()?.getItem(key)
     if (raw === null || raw === undefined) return cloneFallback(fallback)
     return parse ? parse(raw) : JSON.parse(raw) as T
   }
-  catch {
+  catch (error) {
+    reportStorageReadFailure(key, error)
     return cloneFallback(fallback)
   }
 }
@@ -76,6 +83,8 @@ function writeStorageValue<T>(
   value: T,
   serialize: ((value: T) => string | null) | undefined,
 ) {
+  if (isRecoveryStorageBypassed(key)) return
+
   try {
     const storage = getLocalStorage()
     if (! storage) return

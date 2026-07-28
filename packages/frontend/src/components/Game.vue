@@ -63,6 +63,15 @@ import { useLocalStudies, useStudyWorkspaces } from '@/composables/study'
 import { useDialogStack } from '@/composables/dialogStack'
 import { normalizeOnlineServerAddress } from '@/composables/online'
 import { usePanelLayout, type GamePanelGroup, type GamePanelGroupResizeEdge, type GamePanelId, type GamePanelSide } from '@/composables/panelLayout'
+import {
+  clearFatalRecoveryError,
+  fatalRecoveryError,
+  markRecoveryHealthy,
+  reportFatalRecoveryError,
+  safeModeActive,
+  safeModeNoticeOpen,
+  scheduleRecoveryHealthy,
+} from '@/composables/recovery'
 import { removeStorageValue, useStorageRef } from '@/composables/storage'
 import { UiSoundKey } from '@/composables/uiSound'
 import AxisViewPanel from './AxisViewPanel.vue'
@@ -79,6 +88,7 @@ import MainMenuAnimation from './MainMenuAnimation.vue'
 import MembersPanel from './MembersPanel.vue'
 import MinimapPanel from './MinimapPanel.vue'
 import RecordPanel from './RecordPanel.vue'
+import RecoveryDialog from './RecoveryDialog.vue'
 import RoomManagePanel from './RoomManagePanel.vue'
 import SettingsDialog from './SettingsDialog.vue'
 import StudyPage from './StudyPage.vue'
@@ -598,6 +608,8 @@ const uiOverlayOpen = computed(() => (
   || panelPickerOpen.value
   || panelDragState.value?.dragging === true
   || dialogMode.value !== 'none'
+  || fatalRecoveryError.value !== null
+  || (safeModeActive.value && safeModeNoticeOpen.value)
   || ! gameStarted.value
 ))
 const panelDragGhostStyle = computed<CSSProperties>(() => {
@@ -2752,7 +2764,7 @@ function isMobile() {
 }
 
 async function enterImmersiveModeIfNeeded() {
-  if (! gameSettings.autoFullscreen) return
+  if (safeModeActive.value || ! gameSettings.autoFullscreen) return
   if (! isMobile()) return
 
   if (! document.fullscreenElement) {
@@ -2784,12 +2796,14 @@ async function enterAfterLoading() {
   loading.value = false
   handleWindowResize()
   startAmbience()
-  void tryAutoEnterLastRoom()
+  await tryAutoEnterLastRoom()
+  if (! gameStarted.value) scheduleRecoveryHealthy()
 }
 
 async function tryAutoEnterLastRoom() {
   if (autoEnterLastRoomAttempted) return
   autoEnterLastRoomAttempted = true
+  if (safeModeActive.value) return
   if (! gameSettings.autoEnterLastRoom) return
   if (loading.value || gameStarted.value || dialogMode.value !== 'none' || sharedRoom.value !== null) return
   if (! gameRenderer || ! soundManager || ! lastRoom.value) return
@@ -2891,8 +2905,8 @@ function startLocalGame(
     onRecordChange: updateRecord,
     onStatusChange: updateGameStatus,
     viewPlayer: viewPlayer.value,
-    autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
-    showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
+    autoSwitchViewPlayer: safeModeActive.value ? false : gameSettings.autoSwitchViewPlayer,
+    showMoveTravelAnimation: safeModeActive.value ? false : gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
     squareMarkerDisplayMode: gameSettings.squareMarkerDisplayMode,
     getPointerDragThreshold: () => gameSettings.pointerDragThreshold,
@@ -2910,6 +2924,8 @@ function startLocalGame(
     getRecordGlyphColor,
     onWorkspaceChange: updateWorkspace,
     onRecordMoveFocusRequest: focusRecordMoveFromBoard,
+    onFatalError: handleGameFatalError,
+    onRenderHealthy: markRecoveryHealthy,
   })
   gameStarted.value = true
   syncGameInputState()
@@ -2954,8 +2970,8 @@ function startStudyGame(
     onRecordChange: updateRecord,
     onStatusChange: updateGameStatus,
     viewPlayer: viewPlayer.value,
-    autoSwitchViewPlayer: gameSettings.autoSwitchViewPlayer,
-    showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
+    autoSwitchViewPlayer: safeModeActive.value ? false : gameSettings.autoSwitchViewPlayer,
+    showMoveTravelAnimation: safeModeActive.value ? false : gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
     squareMarkerDisplayMode: gameSettings.squareMarkerDisplayMode,
     getPointerDragThreshold: () => gameSettings.pointerDragThreshold,
@@ -2977,6 +2993,8 @@ function startStudyGame(
     initialWorkspace: workspace,
     onWorkspaceChange: updateWorkspace,
     onRecordMoveFocusRequest: focusRecordMoveFromBoard,
+    onFatalError: handleGameFatalError,
+    onRenderHealthy: markRecoveryHealthy,
     onStudyCommandRequest: source.kind === 'online'
       ? command => sendOnlineStudyCommand(source.serverAddress, source.roomId, command)
       : undefined,
@@ -3073,7 +3091,7 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     localPlayer: state.session?.player ?? null,
     viewPlayer: viewPlayer.value,
     autoSwitchViewPlayer: false,
-    showMoveTravelAnimation: gameSettings.showMoveTravelAnimation,
+    showMoveTravelAnimation: safeModeActive.value ? false : gameSettings.showMoveTravelAnimation,
     fiveDPGNOptions: gameSettings.fiveDPGN,
     squareMarkerDisplayMode: gameSettings.squareMarkerDisplayMode,
     getPointerDragThreshold: () => gameSettings.pointerDragThreshold,
@@ -3098,6 +3116,8 @@ function startOnlineGame(serverAddress: string, state: MatchGameState) {
     getRecordGlyphColor,
     onWorkspaceChange: updateWorkspace,
     onRecordMoveFocusRequest: focusRecordMoveFromBoard,
+    onFatalError: handleGameFatalError,
+    onRenderHealthy: markRecoveryHealthy,
     onActionSubmitted: (action, actions) => {
       if (! state.session) {
         spectatorDeductionStartActionIndex.value ??= actions.length - 1
@@ -3712,6 +3732,34 @@ function returnToMainMenu(
   startAmbience()
 }
 
+function handleGameFatalError(error: unknown) {
+  reportFatalRecoveryError(error, { source: 'render' })
+  syncGameInputState()
+}
+
+function returnToMainMenuFromRecovery() {
+  returnToMainMenu({ clearSave: false })
+  clearFatalRecoveryError()
+}
+
+function exportRecoveryRecord() {
+  try {
+    const request = game?.getFiveDPGNExport('tree', 'pgn')
+    if (! request) return
+
+    const blob = new Blob([request.text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `5dcol-recovery-${new Date().toISOString().replaceAll(':', '-')}.5dpgn`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+  catch (error) {
+    logger.error(`Failed to export recovery record: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 function clickReturnToMainMenuButton() {
   playUISound()
   returnToMainMenu({ clearSave: false })
@@ -3811,7 +3859,9 @@ async function init() {
     soundManager = SoundManager.createSilent()
     syncGameSettings()
     const rendererResult = await createGameRenderer(canvas.value!, logger, {
-      backend: parseRendererPreferenceParam(query.get('renderer')) ?? gameSettings.renderer,
+      backend: safeModeActive.value
+        ? 'canvas'
+        : (parseRendererPreferenceParam(query.get('renderer')) ?? gameSettings.renderer),
       onProgress: progress => {
         textureLoadProgress.value = progress
       },
@@ -3830,6 +3880,7 @@ async function init() {
     loadingError.value = t('error.loadFailed')
     logger.error(String(err))
     console.error(err)
+    reportFatalRecoveryError(err, { source: 'startup' })
   }
 }
 
@@ -4791,6 +4842,15 @@ watch([exportFormat, exportMode], () => {
           </GameButton>
         </template>
       </GameDialog>
+
+      <RecoveryDialog
+        :active-renderer="activeRendererBackend"
+        :button-style="menuButtonStyle"
+        :can-export-record="gameStarted && game !== null"
+        :can-return-to-main-menu="gameStarted"
+        @export-record="exportRecoveryRecord"
+        @return-to-main-menu="returnToMainMenuFromRecovery"
+      />
     </div>
   </div>
 </template>

@@ -89,6 +89,8 @@ export interface GameContext {
   onViewPlayerChange?: (player: Player) => void
   onWorkspaceChange?: (workspace: GameWorkspaceState) => void
   onRecordMoveFocusRequest?: (target: GameRecordMoveFocusTarget) => void
+  onFatalError?: (error: unknown) => void
+  onRenderHealthy?: () => void
 }
 
 export interface GameRecordMoveFocusTarget {
@@ -444,6 +446,7 @@ export class Game extends Disposable(Empty) {
   private restoredWorkspace: GameWorkspaceState | null = null
 
   private animationFrame: number | null = null
+  private renderHealthyReported = false
   private resizeDirty = false
   private gameDisposed = false
   private canvasCursor = ''
@@ -2017,18 +2020,34 @@ export class Game extends Disposable(Empty) {
   }
 
   private loop = () => {
-    this.syncLayoutMultiverse()
-    this.updateScreen()
-    this.updateCameraMotion()
-    this.updateCameraBounds()
-    this.updateMoveTravelSound()
-    this.updateViewFlipTransition()
-    this.updateBoardActivationAnimation()
-    this.render()
-    this.renderer.flush()
-    this.finalizeSubmittedMoveAfterAnimation()
-    this.continueRemoteActionPlaybackAfterAnimation()
-    this.animationFrame = requestAnimationFrame(this.loop)
+    try {
+      this.syncLayoutMultiverse()
+      this.updateScreen()
+      this.updateCameraMotion()
+      this.updateCameraBounds()
+      this.updateMoveTravelSound()
+      this.updateViewFlipTransition()
+      this.updateBoardActivationAnimation()
+      this.render()
+      this.renderer.flush()
+      this.finalizeSubmittedMoveAfterAnimation()
+      this.continueRemoteActionPlaybackAfterAnimation()
+      if (! this.renderHealthyReported) {
+        this.renderHealthyReported = true
+        this.ctx.onRenderHealthy?.()
+      }
+      this.animationFrame = requestAnimationFrame(this.loop)
+    }
+    catch (error) {
+      this.animationFrame = null
+      this.gameInputDisabled = true
+      this.logger.error(`Render loop stopped: ${error instanceof Error ? error.message : String(error)}`)
+      console.error(error)
+      if (this.ctx.onFatalError) this.ctx.onFatalError(error)
+      else window.setTimeout(() => {
+        throw error
+      })
+    }
   }
 
   private updateScreen() {
