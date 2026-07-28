@@ -1,4 +1,12 @@
 work
 
+.env
+.env.local
+.env.*.local
+
 node_modules
 *.tsbuildinfo
+
+blob-report
+playwright-report
+test-results

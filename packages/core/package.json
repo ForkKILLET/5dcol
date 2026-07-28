@@ -25,10 +25,12 @@
     "build": "vite build && tsc -p tsconfig.build.json",
     "dev": "vite build --watch",
     "check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:ui": "vitest --ui"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
+    "@vitest/ui": "4.1.10",
     "typescript": "^5.9.3",
     "vite": "^8.0.10",
     "vitest": "^4.1.10"
