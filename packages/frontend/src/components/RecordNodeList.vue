@@ -293,7 +293,6 @@ function setBranchTransitionHeight(element: Element) {
   gap: var(--button-content-gap);
   box-sizing: border-box;
   min-width: var(--record-action-min-width);
-  padding: 0 0 calc(var(--record-table-row-gap) * 0.75);
   color: var(--main-arrow-fill-color);
 }
 
