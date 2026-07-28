@@ -38,13 +38,11 @@ export class GameLayout {
   }
 
   getDisplayLine(l: number): number {
-    const displayLine = this.getLineDisplayOffset(l)
-    return this.viewPlayer === Player.W ? displayLine : -displayLine
+    return this.orientDisplayLine(this.getLineDisplayOffset(l))
   }
 
   getLogicalLine(displayLine: number): number {
-    const displayOffset = this.viewPlayer === Player.W ? displayLine : -displayLine
-    return this.getLineFromDisplayOffset(displayOffset)
+    return this.getLineFromDisplayOffset(this.orientDisplayLine(displayLine))
   }
 
   setViewportInsets(insets: Partial<ViewportInsets>) {
@@ -255,6 +253,11 @@ export class GameLayout {
   private getLineDisplayOffset(l: number): number {
     const offset = Multiverse.lineToIndexOffset(l)
     return ! this.hasNegativeZeroLine && offset < 0 ? offset + 1 : offset
+  }
+
+  private orientDisplayLine(displayLine: number): number {
+    if (displayLine === 0) return 0
+    return this.viewPlayer === Player.W ? displayLine : -displayLine
   }
 
   private getLineFromDisplayOffset(displayOffset: number): number {
