@@ -1,0 +1,42 @@
+[Event "5D Chess Online"]
+[Site "https://icelava.top"]
+[Date "2026.08.01"]
+[Time "11:08:00"]
+[Round "-"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+[Mode "5D"]
+[Board "Standard"]
+[Size "8x8"]
+
+1w. (0T1)g1f3
+1b. (0T1)g8f6
+2w. (0T2)b1c3
+2b. (0T2)c7c5
+3w. (0T3)c3d5
+3b. (0T3)f6d5
+4w. (0T4)f3g5
+4b. (0T4)e7e5
+5w. (0T5)g5e6
+5b. (0T5)d7e6
+6w. (0T6)e2e3
+6b. (0T6)d8h4
+7w. (0T7)g2g3
+7b. (0T7)f7f5
+8w. (0T8)g3h4
+8b. (0T8)g7g6
+9w. (0T9)f2f4
+9b. (0T9)d5e3
+10w. (0T10)d2e3
+10b. (0T10)f8(0T4)f2
+11w. (-1T5)e1f2
+11b. (-1T5)d5f4
+12w. (0T11)f1(0T5)f7
+12b. (1T5)e8(0T6)d7
+13w. (1T6)f7(0T5)f7
+13b. (2T5)e8(1T6)e8
+14w. (2T6)f7(-1T6)f4
+14b. (-1T6)d8c7 (2T6)d8f6
+15w. (-1T7)g5e6 (2T7)g5e6 (1T7)g5e6 (-2T7)d1h5
+*

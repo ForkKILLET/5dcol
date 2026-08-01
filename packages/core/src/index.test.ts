@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { Board, GameState, Multiverse, Piece, Pieces, Player, type Board as BoardState } from './index'
 import * as FiveDPGN from './fiveDPGN'
@@ -321,6 +322,22 @@ describe('GameState.findLegalAction', () => {
 
     expect(action).not.toBeNull()
     expect(action?.moves.length).toBeGreaterThan(0)
+  })
+
+  it('propagates check constraints across a many-timeline search space', () => {
+    const fixture = readFileSync(new URL(
+      '../../../test/fixtures/records/many-timelines-checkmate.5dpgn',
+      import.meta.url,
+    ), 'utf8')
+    const state = FiveDPGN.importGameState(fixture)
+    const startedAt = performance.now()
+
+    const result = GameState.getCheckmateResult(state)
+
+    expect(result.status).toBe('checkmate')
+    expect(result.legalAction).toBeNull()
+    expect(result.checks).toHaveLength(7)
+    expect(performance.now() - startedAt).toBeLessThan(1_000)
   })
 })
 

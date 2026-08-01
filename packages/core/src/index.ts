@@ -1778,7 +1778,26 @@ const findLegalActionHypercuboid = (
 
     const problem = findHypercuboidProblem(info, point, hc)
     if (problem !== null) {
-      searchSpace.hcs.push(...removeHypercuboidSlice(hc, problem).hcs)
+      const reduced = removeHypercuboidSlice(hc, problem).hcs
+      let intersectCount = 1
+      let disjointCount = 0
+
+      while (
+        searchSpace.hcs.length > 0
+        && disjointCount * 10 < intersectCount
+      ) {
+        const other = searchSpace.hcs.pop()!
+        if (hypercuboidIntersectsSlice(other, problem)) {
+          reduced.push(...removeHypercuboidSliceCarefully(other, problem).hcs)
+          intersectCount += 1
+        }
+        else {
+          reduced.push(other)
+          disjointCount += 1
+        }
+      }
+
+      searchSpace.hcs.push(...reduced)
       continue
     }
 
@@ -2510,6 +2529,30 @@ const removeHypercuboidSlice = (
   return result
 }
 
+const removeHypercuboidSliceCarefully = (
+  hc: Hypercuboid,
+  slice: HypercuboidSlice,
+): HypercuboidSearchSpace => {
+  if (! hypercuboidIntersectsSlice(hc, slice)) return { hcs: [hc] }
+
+  return removeHypercuboidSlice(hc, createSlice(
+    [...slice.fixedAxes].map(([axis, coords]) => [
+      axis,
+      setIntersection(hc.axes[axis], coords),
+    ]),
+  ))
+}
+
+const hypercuboidIntersectsSlice = (
+  hc: Hypercuboid,
+  slice: HypercuboidSlice,
+): boolean => {
+  for (const [axis, coords] of slice.fixedAxes) {
+    if (! [...coords].some(coord => hc.axes[axis].has(coord))) return false
+  }
+  return true
+}
+
 const removeSelectedPointSlice = (point: number[]): HypercuboidSlice => {
   return createSlice(point.map((coord, axis) => [axis, new Set([coord])]))
 }
@@ -2533,6 +2576,14 @@ const createSlice = (
 const setMinus = <T>(a: Set<T>, b: Set<T>): Set<T> => {
   const result = new Set(a)
   for (const item of b) result.delete(item)
+  return result
+}
+
+const setIntersection = <T>(a: Set<T>, b: Set<T>): Set<T> => {
+  const result = new Set<T>()
+  for (const item of a) {
+    if (b.has(item)) result.add(item)
+  }
   return result
 }
 
