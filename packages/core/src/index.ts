@@ -364,18 +364,20 @@ export namespace Multiverse {
       optional: [],
       unplayable: [],
     }
+    const [activeMin, activeMax] = Multiverse.getActiveLBoundaries(multiverse)
 
     for (const [l, line] of Multiverse.getLineEntries(multiverse)) {
       if (! line) continue
 
       const m = Line.getLatestBoardIndex(line)
-      if (m === null || Multiverse.isInactiveLine(multiverse, l)) {
+      if (m === null) {
         status.unplayable.push(l)
         continue
       }
 
       const endPlayer = m % 2
-      if (m === presentM && endPlayer === player) {
+      const isInActiveRange = l >= activeMin && l <= activeMax
+      if (isInActiveRange && m === presentM && endPlayer === player) {
         status.mandatory.push(l)
       }
       else if (endPlayer === player) {
