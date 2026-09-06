@@ -1,0 +1,24 @@
+Sound effects and music used in 5D Chess With Multiverse Time Travel were created from the following files:
+
+
+SMALL BELL - 1 by SamuelGremaud -- https://freesound.org/s/517611/ -- License: Creative Commons 0
+shuffle-papers_1.wav by mohomran -- https://freesound.org/s/180244/ -- License: Creative Commons 0
+Pack: VSCO 2 CE - Strings - Solo Violin - tremolo by Samulis -- https://freesound.org/people/Samulis/packs/21039/ -- License: Creative Commons 0
+Pack: VSCO 2 CE - Strings - Violin Section - tremoloby Samulis -- https://freesound.org/people/Samulis/packs/21063/ -- License: Creative Commons 0
+Pack: VSCO 2 CE - Percussion - Timpani by Samulis -- https://freesound.org/people/Samulis/packs/21042/ -- License: Creative Commons 0
+Pack: VSCO 2 CE - Percussion - Timpani - roll by Samulis -- https://freesound.org/people/Samulis/packs/21043/ -- License: Creative Commons 0
+Guiro (guiro_long2.wav) by Samulis -- https://freesound.org/s/375647/ -- License: Creative Commons 0
+Guiro (guiro_short2.wav) by Samulis -- https://freesound.org/s/375649/ -- License: Creative Commons 0
+Vibraslap (vibraslap2.wav) by Samulis -- https://freesound.org/s/375731/ -- License: Creative Commons 0
+Vibraslap (vibraslap4.wav) by Samulis -- https://freesound.org/s/375733/ -- License: Creative Commons 0
+Spaceship Ambience by revolt2563 -- https://freesound.org/s/443499/ -- License: Creative Commons 0
+Switch Light 03.wav by tbrook -- https://freesound.org/s/348220/ -- License: Creative Commons 0
+wind1.wav by Anton -- https://freesound.org/s/2690/ -- License: Attribution
+Orch 006 Cymbal Roll by Karma-Ron -- https://freesound.org/s/151819 -- License: Creative Commons 0
+
+The Creative Commons 0 license can be found here:
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The Attribution license can be found here:
+https://creativecommons.org/licenses/by/3.0/
+
