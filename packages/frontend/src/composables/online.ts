@@ -8,7 +8,7 @@ export const ONLINE_SERVER_ORDER_STORAGE_KEY = '5dcol.onlineServerOrder'
 export const ONLINE_SERVER_INFO_CACHE_STORAGE_KEY = '5dcol.onlineServerInfoCache'
 
 export const DEFAULT_ONLINE_SERVERS: Record<string, { name: string }> = {
-  'https://genshin.asm.ms:5161': { name: 'Server (China)' },
+  'https://genshin.oi.dog:5161': { name: 'Server (China)' },
   'http://localhost:5161': { name: 'Debug Server' },
 }
 
